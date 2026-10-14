@@ -3,7 +3,7 @@
 Automated end-to-end order test for the **Watsons STAGING** website, built with
 [Playwright](https://playwright.dev) and TypeScript. It runs in Microsoft Edge.
 
-> ⚠️ **Staging only.** Never point this project at the production website.
+> ⚠️⚠️⚠️ **Staging only.** Never point this project at the production website.
 > Requirements: [PRD.md](PRD.md). Project rules and progress: [CLAUDE.md](CLAUDE.md).
 
 **Status:** all PRD phases (1–12) built. Open **WatsonsTester.exe** (or `npm run launcher`),
