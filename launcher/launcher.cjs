@@ -726,11 +726,15 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
   const automation = has(AUTOMATIONS, record?.automation) ? record.automation : has(AUTOMATIONS, result?.automation) ? result.automation : 'order';
   const fromFile = orderFile === null ? null : parseOrderText(orderFile);
 
+  // The test's own verdict. Once it has logged its PASS line (kept in the record as "passed"), its
+  // work is done: a failure reported after that, while it kept its browser open, doesn't undo it
+  // (seen 2026-10-14: runs ended with the hosted server's "Close browser" were saved as failed).
+  const passedAs = result?.status === 'passed' ? result.outcome : PASS_LINES.some((line) => line.outcome === record?.passed) ? record.passed : null;
   let status;
   if (runId === currentRunId) status = 'running';
   else if (record?.cancelled || (!record && !result && log.includes('[launcher] Test cancelled by user.'))) status = 'stopped';
-  else if (result?.status === 'passed') {
-    status = result.outcome === 'no_change' ? 'no_change' : result.outcome === 'order_placed_unapproved' ? 'awaiting_approval' : 'completed';
+  else if (passedAs) {
+    status = passedAs === 'no_change' ? 'no_change' : passedAs === 'order_placed_unapproved' ? 'awaiting_approval' : 'completed';
   }
   else if (result?.status === 'failed') status = 'failed';
   else if (record?.state === 'running') status = 'interrupted';
@@ -746,7 +750,7 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
     automationLabel: AUTOMATIONS[automation].label,
     status,
     statusLabel: STATUSES[status],
-    outcome: result?.outcome ?? null,
+    outcome: passedAs ?? result?.outcome ?? null,
     startedAt: record?.startedAt ?? result?.startedAt ?? timeFromRunId(runId),
     finishedAt: record?.finishedAt ?? result?.finishedAt ?? null,
     durationMs: result?.durationMs ?? null,

@@ -231,6 +231,28 @@ test.describe('launcher checks', () => {
     }
   });
 
+  test('a run stays passed when something failed only after its PASS line', () => {
+    // E.g. the browser was closed while the test kept its last page open (seen 2026-10-14).
+    const root = makeFakeProject();
+    try {
+      const write = (runId: string, passed: string | null) => {
+        const dir = join(root, 'reports', runId);
+        mkdirSync(dir, { recursive: true });
+        const startedAt = `${runId.slice(0, 10)}T${runId.slice(11).replace(/-/g, ':')}.000Z`;
+        writeFileSync(join(dir, 'launcher-run.json'), JSON.stringify({ runId, automation: 'order', operator: 'Felix', state: 'finished', startedAt, orderNumber: '07110006', passed, cancelled: false }));
+        const error = { step: 'Order confirmation', message: 'browserContext.close: Test ended.' };
+        writeFileSync(join(dir, 'result.json'), JSON.stringify({ status: 'failed', outcome: 'failed', automation: 'order', orderNumber: '07110006', error }));
+      };
+      write('2026-10-14_16-16-54', 'order_placed_unapproved');
+      write('2026-10-14_16-20-00', null);
+      const rows = launcher.readHistory(root);
+      expect(rows.find((row) => row.runId === '2026-10-14_16-16-54')).toMatchObject({ status: 'awaiting_approval', outcome: 'order_placed_unapproved', error: null, errorReport: null });
+      expect(rows.find((row) => row.runId === '2026-10-14_16-20-00')).toMatchObject({ status: 'failed', error: { step: 'Order confirmation' } });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('Logs / History also shows runs from before it existed', () => {
     const root = makeFakeProject();
     try {

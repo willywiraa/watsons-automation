@@ -14,7 +14,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const launcher = require('../../launcher/launcher.cjs');
-const { listFiles, removeSecrets } = require('./evidence.cjs');
+const { listFiles, removeSecrets, runFolder } = require('./evidence.cjs');
 const { LiveView } = require('./liveview.cjs');
 
 // The DevTools ports the runs' browsers open for the live view, on this computer only.
@@ -344,6 +344,31 @@ class RunManager {
     if (error) return { status: 409, error };
     this.store.audit({ username: session.username, ip, action: 'live-browser-closed', runId });
     return null;
+  }
+
+  /**
+   * Runs saved as failed although their test had passed: Close browser used to close the whole
+   * browser, which made the test's clean-up fail afterwards (until 2026-10-14). Read again from
+   * their evidence (launcher.cjs, rowFromFolder now goes by the test's PASS line). Returns how many
+   * rows changed.
+   */
+  recheckFailedRuns() {
+    const saved = this.store.listRuns(); // newest first
+    let changed = 0;
+    for (const old of saved) {
+      if (!['failed', 'interrupted'].includes(old.status)) continue;
+      const dir = runFolder(this.config.evidenceDir, old.runId);
+      const row = dir && fs.existsSync(dir) ? rowFromFolder(dir, old.runId, { folder: old.folder }) : null;
+      if (!row || ['failed', 'interrupted'].includes(row.status)) continue;
+      this.store.finishRun(row, listFiles(dir), { username: old.username, displayName: old.operator });
+      changed++;
+      // Approved meanwhile by an "Approve existing order" run: then it is approved too.
+      const approval =
+        row.status === 'awaiting_approval' &&
+        saved.findLast((other) => other.automation === 'approve' && other.orderNumber === row.orderNumber && ['completed', 'no_change'].includes(other.status) && other.startedAt >= row.startedAt);
+      if (approval) this.store.markApprovedLater(row.orderNumber, { runId: approval.runId, by: approval.operator, at: approval.finishedAt ?? approval.startedAt });
+    }
+    return changed;
   }
 
   /** A window that opens while the person's run goes on: the live view so far. */

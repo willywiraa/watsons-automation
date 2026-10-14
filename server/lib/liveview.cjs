@@ -247,17 +247,22 @@ class LiveView {
     }
   }
 
-  /** Closes the run's browser: a test keeping its last page open then ends. Returns what's wrong, or null. */
+  /**
+   * Close browser: closes the run's tabs, so a test keeping its last page open ends. Not the
+   * browser itself: the test's clean-up still needs it, and without it a run that had passed
+   * ended "Failed" (seen 2026-10-14). Returns what's wrong, or null.
+   */
   async closeBrowser() {
     try {
       const response = await fetch(`${this.base}/json/version`, { signal: AbortSignal.timeout(2_000) });
       const browser = new Connection((await response.json()).webSocketDebuggerUrl);
       try {
-        await Promise.race([browser.send('Browser.close'), new Promise((resolve) => setTimeout(resolve, 3_000))]);
-      } catch {
-        // The connection drops as the browser closes.
+        const { targetInfos } = await browser.send('Target.getTargets');
+        const tabs = targetInfos.filter((target) => target.type === 'page');
+        await Promise.all(tabs.map((tab) => browser.send('Target.closeTarget', { targetId: tab.targetId }).catch(() => {})));
+      } finally {
+        browser.close();
       }
-      browser.close();
       return null;
     } catch {
       return 'Could not reach the browser: it closes by itself within 5 minutes.';

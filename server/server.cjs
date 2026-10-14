@@ -55,6 +55,8 @@ async function startServer(overrides = {}) {
     for (const client of clients) write(client, event, data);
   };
   const runs = new RunManager({ config, store, sendTo, broadcast });
+  const corrected = runs.recheckFailedRuns();
+  if (corrected > 0) log(`${corrected} run(s) saved as failed had in fact passed (browser closed afterwards): corrected.`);
 
   /** What a person's window may know about one of their accounts: whether it is set (masked), and remembered. */
   const accountState = (account) => (account ? { set: true, masked: account.masked, remembered: account.remember } : { set: false });

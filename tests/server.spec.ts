@@ -650,6 +650,39 @@ test.describe('hosted server', () => {
     expect(rows.find((row) => row.runId === '2026-01-02_03-04-05')).toMatchObject({ status: 'interrupted', statusLabel: 'Interrupted' });
   });
 
+  test('runs saved as failed after their test had passed are corrected at the next start', async () => {
+    // Until 2026-10-14, Close browser closed the whole browser and the test's clean-up then failed.
+    const run = (runId: string, orderNumber: string, passed: string | null) => {
+      const dir = runFolder(setup, runId);
+      mkdirSync(dir, { recursive: true });
+      const startedAt = `${runId.slice(0, 10)}T${runId.slice(11).replace(/-/g, ':')}.000Z`;
+      const record = { runId, automation: 'order', operator: 'Felix', state: 'finished', startedAt, finishedAt: startedAt, orderNumber, passed, cancelled: false };
+      writeFileSync(join(dir, 'launcher-run.json'), JSON.stringify(record));
+      const error = { code: null, step: 'Order confirmation', message: 'browserContext.close: Test ended.' };
+      writeFileSync(join(dir, 'result.json'), JSON.stringify({ status: 'failed', outcome: 'failed', automation: 'order', orderNumber, error }));
+      setup.app.store.startRun(
+        { runId, automation: 'order', status: 'failed', statusLabel: 'Failed', startedAt, orderNumber, folder: `${runId.slice(0, 10)}\\${runId}` },
+        { username: 'bob', displayName: 'Felix' },
+      );
+    };
+    run('2026-10-14_16-16-54', '07110006', 'order_placed_unapproved'); // passed, then the browser was closed
+    run('2026-10-14_16-30-00', '07110007', 'order_placed_unapproved'); // the same, approved meanwhile below
+    run('2026-10-14_16-40-00', '07110008', null); // really failed
+    setup.app.store.startRun(
+      { runId: '2026-10-14_17-00-00', automation: 'approve', status: 'completed', statusLabel: 'Completed', startedAt: '2026-10-14T17:00:00.000Z', finishedAt: '2026-10-14T17:03:00.000Z', orderNumber: '07110007' },
+      { username: 'carol', displayName: 'Carol' },
+    );
+    await setup.app.close();
+    setup.app = await startServer(setup.options);
+    const carol = client(setup.app);
+    await carol.login('carol');
+    const rows = (await carol.history()).data.rows as { runId: string }[];
+    const row = (runId: string) => rows.find((candidate) => candidate.runId === runId);
+    expect(row('2026-10-14_16-16-54')).toMatchObject({ status: 'awaiting_approval', outcome: 'order_placed_unapproved', orderNumber: '07110006', error: null });
+    expect(row('2026-10-14_16-30-00')).toMatchObject({ status: 'completed', approvedLater: { runId: '2026-10-14_17-00-00', by: 'Carol' } });
+    expect(row('2026-10-14_16-40-00')).toMatchObject({ status: 'failed' });
+  });
+
   test('the page: sign in, both accounts, run, and the shared history', async ({ page }) => {
     // Bob ran something earlier: Alice sees it too.
     const bob = client(setup.app);

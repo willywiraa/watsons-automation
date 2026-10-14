@@ -254,6 +254,13 @@ it couldn't follow to the end shows as **Interrupted** in the history.
   - When the order is placed (or approved), the run has passed but its browser stays open until
     the owner clicks **Close browser**, at most 5 minutes. Meanwhile that person can't start
     another run; a service restart closes it.
+  - **Close browser** closes the run's tabs; the test then ends and closes the browser itself.
+    (Until 2026-10-14 it closed the whole browser, so the test's clean-up failed and runs that
+    had passed were saved as **Failed**. At its next start, the service corrects those from
+    their evidence: an order placed without a backoffice account then shows **Awaiting
+    approval**.)
+  - A run counts by the test's own PASS line: something failing after it, while the browser is
+    kept open, doesn't turn the run into a failure.
 - **Server admins:** while a run goes on, an administrator of the VM could read that run's
   passwords from the test process, and while someone is signed in, from the service's memory.
   Only trusted people should administer the VM.
