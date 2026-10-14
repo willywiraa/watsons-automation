@@ -7,7 +7,8 @@ import { closeChatPanelIfShown, closeCookieNoticeIfShown, throwIfServerErrorShow
 
 // The checkout summary page after the bag's "Next" (/checkout/single/summary): the delivery mode
 // options (Express, Standard) and the Checkout button (PRD §18–19). See docs/staging-notes.md,
-// "Checkout summary".
+// "Checkout summary". When the products can only go one way, it shows that one mode, already
+// chosen, and no options (2026-10-14).
 //
 // "Checkout" starts creating the order, so checkout() only works when placing an order is
 // switched on for the run (Settings.placeOrder; CLAUDE.md rule 3, approved 2026-10-05).
@@ -17,7 +18,7 @@ const normalize = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase
 const normalizeDay = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 /** How the tests name each mode: step names, messages, error codes. */
-const MODE_NAMES: Record<DeliveryMode, string> = { express: 'Express', standard: 'Standard' };
+export const MODE_NAMES: Record<DeliveryMode, string> = { express: 'Express', standard: 'Standard' };
 const NOT_FOUND_CODES = { express: 'EXPRESS_OPTION_NOT_FOUND', standard: 'STANDARD_OPTION_NOT_FOUND' } as const;
 
 /** One delivery mode's option on the page: its label, its radio and its "View N item(s)" button. */
@@ -28,8 +29,13 @@ interface ModeOption {
 }
 
 export class CheckoutPage {
-  // Verified 2026-10-05 (inspection/summary, express-*): two radios named "deliveryMethod" with
-  // empty values; the Express one is in the label that shows "Fastest".
+  // Every delivery option's radio, hidden or not. Verified 2026-10-05 (inspection/summary,
+  // express-*): two radios named "deliveryMethod" with empty values when there is a choice.
+  // Verified 2026-10-14 (the trace of the 2026-10-13 13:27 run, Standard-only PLUs 17562 and
+  // 21841): when the products can only go one way, the page shows that one option, already chosen,
+  // with its radio hidden (<e2-radio name="deliveryMethod" class="option standard checked">).
+  readonly deliveryOptions: Locator;
+  // The Express one is in the label that shows "Fastest".
   readonly expressLabel: Locator;
   readonly expressOption: Locator;
   // Verified 2026-10-05: the Express option's "View N item(s)" button opens an "Available items"
@@ -55,6 +61,7 @@ export class CheckoutPage {
 
   constructor(private readonly page: Page) {
     const itemsButton = (label: Locator) => label.getByRole('button', { name: /^View \d+ item\(s\)$/ });
+    this.deliveryOptions = page.locator('input[type="radio"][name="deliveryMethod"]');
     this.expressLabel = page.locator('label').filter({ hasText: 'Fastest' });
     this.expressOption = this.expressLabel.getByRole('radio');
     this.expressItemsButton = itemsButton(this.expressLabel);
@@ -80,13 +87,62 @@ export class CheckoutPage {
     try {
       await this.page.waitForURL(/\/checkout\/single\/summary/, { timeout: 60_000 });
       await expect(this.checkoutButton).toBeVisible({ timeout: 60_000 });
-      // The page first shows grey placeholders; wait for the real delivery options (seen 2026-10-05).
-      await expect(this.page.locator('input[type="radio"][name="deliveryMethod"]').first()).toBeAttached({ timeout: 60_000 });
+      // The page first shows grey placeholders; wait for the real delivery options (seen
+      // 2026-10-05): a radio, hidden or not, or else an option's "View N item(s)". Not Express or
+      // Standard in particular: the page may offer just one of them (2026-10-14).
+      const optionShown = this.deliveryOptions.or(this.page.getByRole('button', { name: /^View \d+ item\(s\)$/ }));
+      await expect(optionShown.first()).toBeAttached({ timeout: 60_000 });
     } catch (error) {
       await throwIfServerErrorShown(this.page, 'Checkout summary', error);
       throw new StepError('CHECKOUT_FAILED', 'Checkout summary', 'The checkout summary page did not load.', [
         'staging is slow',
         'the bag could not move to checkout',
+      ], error);
+    }
+  }
+
+  /** Whether the page shows delivery options to choose from: a radio to click, or two options. */
+  async showsChoice(): Promise<boolean> {
+    const [drawn, express, standard] = await Promise.all([this.deliveryOptions.count(), this.expressOption.count(), this.standardOption.count()]);
+    return drawn >= 2 || express + standard > 0;
+  }
+
+  /**
+   * The delivery modes the page lets you choose from: Express and Standard when it shows options.
+   * When the products can only go one way (user's request 2026-10-14, e.g. the Standard-only PLUs
+   * 46700, 46465 and 46358), there is no choice: just that mode, already chosen, its radio hidden.
+   * `wanted` is the run's mode. Call after waitUntilLoaded().
+   *
+   * A page can also draw one option a while before the other (seen 2026-10-14: "Fastest" alone,
+   * its radio hidden, for over 3 seconds; the Standard option came later). So a lone option only
+   * counts as "no choice" after 5 seconds when it is the Standard the run wants; any other lone
+   * option only after `patienceMs` (a minute, as long as the page was always given for its
+   * options).
+   */
+  async offeredModes(wanted: DeliveryMode, patienceMs = 60_000): Promise<DeliveryMode[]> {
+    const started = Date.now();
+    let lone: DeliveryMode | null = null;
+    let since = started;
+    for (;;) {
+      if (await this.showsChoice()) return ['express', 'standard'];
+      const now: DeliveryMode = (await this.expressLabel.count()) > 0 ? 'express' : 'standard';
+      if (now !== lone) [lone, since] = [now, Date.now()];
+      const needed = lone === 'standard' && wanted === 'standard' ? 5_000 : patienceMs;
+      if (Date.now() - since >= needed || Date.now() - started >= patienceMs + 30_000) return [lone];
+      await this.page.waitForTimeout(500);
+    }
+  }
+
+  /** The Checkout button is there and can be clicked; else a CHECKOUT_FAILED that says so. */
+  async expectReadyToCheckOut(step: string): Promise<void> {
+    try {
+      await expect(this.checkoutButton).toHaveCount(1);
+      await expect(this.checkoutButton).toBeEnabled({ timeout: 90_000 });
+    } catch (error) {
+      await throwIfServerErrorShown(this.page, step, error);
+      throw new StepError('CHECKOUT_FAILED', step, 'The Checkout button is not available on the checkout page.', [
+        'a message on the page is blocking (e.g. a delivery date or a pickup store is needed)',
+        'staging is slow',
       ], error);
     }
   }

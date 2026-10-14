@@ -170,9 +170,26 @@ Standard **home delivery** also asks for a delivery date ("Please Select a deliv
 test picks the earliest available one in the date list and confirms it (verified 2026-10-13).
 Click & Collect shows an estimated pickup date instead.
 
-Known gap (2026-10-13): with **Click & Collect**, the bag's **Next** stays locked, most likely
-because no pickup store is chosen, which the test doesn't do yet. Home Delivery works with
-both modes.
+**No delivery options** (since 2026-10-14): when all the products can only go one way, e.g. the
+Standard-only PLUs 46700, 46465 and 46358, the page shows just that one mode, already chosen,
+with no options to pick from. The test then doesn't look for options: it picks the delivery
+date if asked and goes straight on to **Checkout**, with every product. It tells the pages apart
+by the options themselves, not by whether Express shows:
+- a radio to click, or two options: a choice, handled as above;
+- one Standard option with its radio hidden, unchanged for 5 seconds: no choice;
+- anything else waits up to a minute for the other option, because the page sometimes draws one
+  option well before the other (seen 2026-10-14: "Fastest" alone for several seconds).
+
+If options still appear by the time Checkout is ready, the test selects the mode as usual. If the
+run asked for **Express** but the page offers only Standard, it stops before Checkout with
+`EXPRESS_OPTION_NOT_FOUND` ("offers only Standard for these products") and places no order. A
+page that doesn't load, or whose Checkout button stays unavailable, stops the run with
+`CHECKOUT_FAILED`.
+
+**Click & Collect** needs a pickup store on the account. Staging remembers the last one used
+("Recent Pickup Store"), and with one, Click & Collect runs reach Checkout (2026-10-14). Without
+one, the bag's **Next** stays locked (seen 2026-10-13); the test doesn't choose a store itself
+yet. Home Delivery works with both modes.
 
 To add another mode: give it a step in `src/flows/delivery-modes.ts`, then add it to `MODES` in
 `launcher/launcher.cjs`. The window, its checks, the order file and the progress steps follow
