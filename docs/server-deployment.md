@@ -2,8 +2,9 @@
 
 For IT and the tool's admins. This sets up WatsonsTester on one Windows Server VM in the
 intranet. Colleagues open it **by URL in Edge**, sign in, enter **their own staging accounts**
-(testing and backoffice) and run. The automation runs **on the VM**, headless, with several
-people's runs at the same time, and everyone sees **one shared history**.
+(testing, and backoffice if they approve orders) and run. The automation runs **on the VM**,
+headless, with several people's runs at the same time; each person watches and can use their
+run's browser in the page (**Live browser**), and everyone sees **one shared history**.
 
 The desktop version (`WatsonsTester.exe`, `Start without exe.cmd`) stays as it is and is separate.
 
@@ -14,6 +15,8 @@ Laptop (Edge, LAN/VPN) ──HTTPS 443──▶ IIS (company certificate; empty 
                                               • each person's testing and backoffice accounts: in memory for the session, and remembered
                                                 sealed with a key from their own portal password
                                               • runs: Playwright + Edge, headless, up to N in parallel (one per person)
+                                              • Live browser: each run's Edge on a debugging port on the VM only (127.0.0.1:9300–9899);
+                                                its screen goes to the run's owner, their clicks and typing come back
                                               • shared history: SQLite (automation.db) + evidence folders by day
                                                     └──HTTPS──▶ Watsons STAGING · login · CyberSource TEST · Cardinal TEST · backoffice
 ```
@@ -28,6 +31,7 @@ Laptop (Edge, LAN/VPN) ──HTTPS 443──▶ IIS (company certificate; empty 
 | Shared history, audit trail, each person's last order | `D:\WatsonsAutomation\data\automation.db` (+ nightly copies in `data\backups\`) | Service account and administrators; people see the history in the app |
 | Evidence of each run (screenshots, logs, report, error report) | `D:\WatsonsAutomation\evidence\<yyyy-mm-dd>\<run id>\` | Service account and administrators; signed-in people through the app |
 | Service log | `D:\WatsonsAutomation\logs\service.log` | Administrators |
+| Live browser pictures, and what people type into it | **Not kept**: passed between the run's browser and its owner's page while the run goes on | The run's owner only |
 
 The app never sends the following to a browser, never writes them to the evidence or logs, and
 never writes them to the database in readable form:
@@ -100,7 +104,10 @@ second lock.
 
 The server is set up without any staging account: each person enters their own testing account and
 backoffice account (Customer Support Manager role) in the page, in step 2, once. The server
-remembers them for that person, sealed with a key made from their portal password.
+remembers them for that person, sealed with a key made from their portal password. The backoffice
+account is optional for placing orders (decision 2026-10-14): without it, a run ends on "Thank you
+for your order" and the order shows **Awaiting approval** in Logs / History, where someone with a
+backoffice account approves it (**Approve in Backoffice**).
 
 ## 4. Run it as a Windows service (NSSM)
 
@@ -161,7 +168,9 @@ it couldn't follow to the end shows as **Interrupted** in the history.
 | Two people at once | Two people run orders, each with their own testing account | Both run; each sees the other under "Also on the server now" |
 | Shared history | The other person opens Logs / History | Sees both runs, with screenshots |
 | A failure | A run with an unknown PLU | Failed, with its error report and screenshot |
-| The first real run | **Only with the owner's go-ahead:** one full order + approval | Completed with an order number (proves payment and backoffice work headless) |
+| Live browser | Run **Approve existing order** with `00000000` (nothing changes on staging), and watch **Live browser** | The backoffice pages appear as the run goes; a click or typing in the picture reaches the page; another signed-in person doesn't see it. It ends after about 3 minutes with "not in the backoffice's Orders list" |
+| The first real run | **Only with the owner's go-ahead:** one full order + approval | Completed with an order number (proves payment and backoffice work headless); the last pages stay in Live browser until **Close browser** |
+| An order without a backoffice account | **Only with the owner's go-ahead:** a person with no backoffice account entered places an order | Ends on "Thank you for your order" in Live browser; **Awaiting approval** in Logs / History. Someone with a backoffice account clicks **Approve in Backoffice** on it and runs it: the approval completes and the order shows **Completed**, "approved later by …" |
 
 ## 7. Running it
 
@@ -169,6 +178,9 @@ it couldn't follow to the end shows as **Interrupted** in the history.
   - `node server\scripts\users.cjs add|reset|disable|enable|remove|list <name>`.
   - Changes apply right away, with no restart; a disabled or removed person is signed out at their next click.
   - Their runs stay in the history.
+- **Orders waiting for approval** (placed without a backoffice account): Logs / History →
+  Status **Awaiting approval** → open the run → **Approve in Backoffice** (with your own backoffice
+  account) → confirm. The order then shows **Completed**, "approved later by" you.
 - **Testing and backoffice accounts:** people enter their own, once; the server remembers them
   sealed with the person's portal password, unless they untick Remember.
   - Nobody can open them without that portal password, so nothing needs cleaning up when someone leaves.
@@ -219,8 +231,21 @@ it couldn't follow to the end shows as **Interrupted** in the history.
 - **Staging email on screenshots:** staging pages such as the order confirmation may show the
   testing account's **email** in screenshots that other signed-in people can see. Passwords never
   appear.
-- **Backoffice accounts:** each person enters their own. If several people use the same
-  backoffice account at the same time, the pilot checks that staging's backoffice allows this.
+- **Backoffice accounts:** each person enters their own, or none (their orders then wait for
+  approval). If several people use the same backoffice account at the same time, the pilot checks
+  that staging's backoffice allows this.
+- **Live browser:**
+  - Each run's Edge listens on a debugging port on the VM itself only (127.0.0.1, a free port
+    from 9300–9899 for each run). It can't be reached from the network, so the firewall needs no
+    change, and IIS needs no change either (the pictures use the live-update connection, with
+    Response buffer threshold `0`).
+  - Only the run's owner sees it and can click, scroll or type in it. While a run goes on, a
+    program on the VM itself could use that port too (see "Server admins").
+  - The pictures are about 40–80 KB each, at most about 3 a second, and only while the page
+    changes and its owner has it open.
+  - When the order is placed (or approved), the run has passed but its browser stays open until
+    the owner clicks **Close browser**, at most 5 minutes. Meanwhile that person can't start
+    another run; a service restart closes it.
 - **Server admins:** while a run goes on, an administrator of the VM could read that run's
   passwords from the test process, and while someone is signed in, from the service's memory.
   Only trusted people should administer the VM.

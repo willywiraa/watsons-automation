@@ -3,7 +3,8 @@ WatsonsTester: Watsons STAGING automation launcher
 
 A window with two tabs:
 - Automation: place a test order on the Watsons STAGING website (never the real shop) and
-  approve it in the staging backoffice, or approve an order that already exists.
+  approve it in the staging backoffice (with a backoffice account), or approve an order that
+  already exists.
 - Logs / History: every run, with its result, error and screenshots.
 
 
@@ -18,13 +19,16 @@ BEFORE THE FIRST RUN (once per PC)
    If you received the zip by email, Teams or a download: first right-click the zip,
    choose Properties, tick "Unblock", click OK, and only then unzip it.
 
-4. Open the file ".env" in that folder with Notepad and fill in the staging test account and
-   the staging backoffice account (ask the person who sent you this tool):
+4. Open the file ".env" in that folder with Notepad and fill in the staging test account and,
+   if you have one, the staging backoffice account (ask the person who sent you this tool):
 
        WATSONS_USERNAME=the account's email
        WATSONS_PASSWORD=the account's password
        WATSONS_BACKOFFICE_USERNAME=the backoffice user name
        WATSONS_BACKOFFICE_PASSWORD=the backoffice password
+
+   Without the two backoffice lines you can still place orders: they stop at "Thank you for
+   your order" and wait for someone with a backoffice account to approve them.
 
    Optional: WATSONS_OPERATOR=your name (shown in Logs / History; else your Windows user name).
    Save and close. Keep .env private, and leave it out if you ever pass the folder on.
@@ -46,31 +50,38 @@ RUNNING A TEST
    - Approve existing order: type the order number (07091012 or WTCSG07091012), click
      Approve in Backoffice and confirm. No new order is created.
 3. The Run list must show only ticks. Anything marked with a cross says what to fix.
-4. Edge does the work. A new order is placed, approved in the staging backoffice, and Edge stops
-   on the backoffice order showing ORDER_EXTRACTED (the shop's "Thank you" page is in the first
-   tab). Close that Edge window when you have seen it (it closes by itself after 5 minutes).
-   The launcher then shows Completed with the order number, No change, or Failed.
+4. Edge does the work; you can watch it and use it. A new order is placed, approved in the
+   staging backoffice, and Edge stops on the backoffice order showing ORDER_EXTRACTED (the shop's
+   "Thank you" page is in the first tab). Without a backoffice account, Edge stops on the
+   "Thank you for your order" page. Close that Edge window when you have seen it (it closes by
+   itself after 5 minutes). The launcher then shows Completed with the order number, Awaiting
+   approval (placed, not approved yet), No change, or Failed.
 5. When a run fails, the launcher shows an error report: the step, the time, the message, the
    page and a screenshot. "Copy error report" puts it on the clipboard for Teams or email; it is
    also saved as error-report.txt.
 6. The Logs / History tab lists every run. The evidence of each run (screenshots, log, report)
-   is in the "reports" folder.
+   is in the "reports" folder. An order that is Awaiting approval has an "Approve in Backoffice"
+   button in its details, for whoever has a backoffice account.
 
 
 THE HOSTED VERSION (if your team runs WatsonsTester on the server)
 ----------------------------------------------------------------
 Then you don't need this folder: open the address your admin gives you in Edge (on the Watsons
-network or VPN), sign in, enter your own staging testing account and backoffice account in step 2
-and run. You enter them once: the server remembers them for your next sign-in, locked with your
-sign-in password (untick Remember if you'd rather not). They are used only for your runs and never
-shown to anyone else. Logs / History shows everyone's runs.
+network or VPN), sign in, enter your own staging testing account (and backoffice account, if you
+have one) in step 2 and run. You enter them once: the server remembers them for your next sign-in,
+locked with your sign-in password (untick Remember if you'd rather not). They are used only for
+your runs and never shown to anyone else. Without a backoffice account, your orders stop at
+"Thank you for your order" and wait for someone to approve them. You watch and can use the run's
+browser in "Live browser"; click "Close browser" when you are done with the last page.
+Logs / History shows everyone's runs.
 
 
 GOOD TO KNOW
 ------------
 - Every "Place new order" run places a real order on STAGING (a test payment with OTP 1234)
-  and approves it in the staging backoffice. "Approve Order" is clicked at most once; if its
-  result is unclear, the launcher says so and you check the order in the backoffice yourself.
+  and, with a backoffice account, approves it in the staging backoffice. "Approve Order" is
+  clicked at most once; if its result is unclear, the launcher says so and you check the order
+  in the backoffice yourself.
 - Each order run first empties the test account's bag. Two people using the same test account
   at the same time spoil each other's runs: take turns, or each use your own test account.
 - If Windows refuses to start WatsonsTester.exe, double-click "Start without exe.cmd"

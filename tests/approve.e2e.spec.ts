@@ -39,10 +39,11 @@ test('approve an existing order in the backoffice', async ({ page, settings, ord
   if (approved) log(`Order approved successfully. Order number: ${orderNumber} (backoffice: ${finalStatus})`, 'PASS');
   else log(`No change needed. Order number: ${orderNumber} (backoffice: already ${finalStatus})`, 'PASS');
 
-  // With the browser shown (the launcher), leave the backoffice order open until the person closes
-  // the browser window, at most 5 minutes (as the order flow does).
-  if (!headless) {
-    log('The backoffice order stays open. Close the browser window to finish (it closes by itself after 5 minutes).');
+  // With the browser shown (the desktop launcher), or watched in the hosted server's live view
+  // (WATSONS_HOLD_LAST_PAGE), leave the backoffice order open until the person closes the browser,
+  // at most 5 minutes (as the order flow does).
+  if (!headless || settings.holdLastPage) {
+    log('The backoffice order stays open. Close the browser to finish (it closes by itself after 5 minutes).');
     test.setTimeout(test.info().timeout + 6 * 60_000);
     // Either way the test has passed, so a timeout here is not an error.
     await page.waitForEvent('close', { timeout: 5 * 60_000 }).catch(() => {});

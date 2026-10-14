@@ -153,9 +153,22 @@ export class BagPage {
   /** Checks the bag holds exactly the expected PLUs and quantities (PRD §14). */
   async expectContents(expected: OrderLine[]): Promise<void> {
     const sort = (lines: OrderLine[]) => [...lines].sort((a, b) => a.plu.localeCompare(b.plu));
-    const actual = sort(await this.contents());
     const wanted = sort(expected);
-    if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
+    // The item list can still be redrawing after the delivery method changed (seen 2026-10-13 and
+    // -14: the header said 2 items while the list showed 1 for a moment). Read it again for up to
+    // 20 seconds before calling it wrong.
+    let actual: OrderLine[] = [];
+    const matches = await expect
+      .poll(
+        async () => {
+          actual = sort(await this.contents());
+          return JSON.stringify(actual);
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(JSON.stringify(wanted))
+      .then(() => true, () => false);
+    if (!matches) {
       const show = (lines: OrderLine[]) => lines.map((line) => `${line.plu} x${line.quantity}`).join(', ') || '(empty)';
       throw new StepError('CART_VALIDATION_FAILED', 'Cart validation', `Expected ${show(wanted)} but the bag has ${show(actual)}.`, [
         'an item could not be added',

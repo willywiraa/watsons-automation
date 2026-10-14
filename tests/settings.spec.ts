@@ -22,6 +22,7 @@ test.describe('settings check', () => {
       addDelaySeconds: 10,
       approveOrder: undefined,
       backoffice: undefined,
+      holdLastPage: false,
     });
   });
 
@@ -64,16 +65,24 @@ test.describe('settings check', () => {
     expect(() => readSettings(noShopAccount)).toThrow('Missing settings in .env: WATSONS_USERNAME, WATSONS_PASSWORD.');
   });
 
-  test('needs the backoffice account only for runs that place an order', () => {
+  test('needs the backoffice account only to approve; placing an order works without it', () => {
     const backoffice = { WATSONS_BACKOFFICE_USERNAME: 'support@example.test', WATSONS_BACKOFFICE_PASSWORD: 'made-up-too' };
-    expect(() => readSettings({ ...complete, WATSONS_PLACE_ORDER: 'yes' })).toThrow(
-      'Missing settings in .env: WATSONS_BACKOFFICE_USERNAME, WATSONS_BACKOFFICE_PASSWORD.',
-    );
+    // Without it the order is placed and waits for approval (user's decision 2026-10-14).
+    expect(readSettings({ ...complete, WATSONS_PLACE_ORDER: 'yes' })).toMatchObject({ placeOrder: true, backoffice: undefined });
     expect(readSettings({ ...complete, ...backoffice, WATSONS_PLACE_ORDER: 'yes' }).backoffice).toEqual({
       username: 'support@example.test',
       password: 'made-up-too',
     });
     expect(readSettings({ ...complete, WATSONS_BACKOFFICE_USERNAME: 'support@example.test' }).backoffice).toBeUndefined();
+    expect(() => readSettings({ ...complete, WATSONS_APPROVE_ORDER: '07091012' })).toThrow(
+      'Missing settings in .env: WATSONS_BACKOFFICE_USERNAME, WATSONS_BACKOFFICE_PASSWORD.',
+    );
+  });
+
+  test('keeps the last page open only when asked to', () => {
+    expect(readSettings(complete).holdLastPage).toBe(false);
+    expect(readSettings({ ...complete, WATSONS_HOLD_LAST_PAGE: 'yes' }).holdLastPage).toBe(true);
+    expect(readSettings({ ...complete, WATSONS_HOLD_LAST_PAGE: 'true' }).holdLastPage).toBe(false);
   });
 
   test('uses OTP 1234 unless one is set', () => {

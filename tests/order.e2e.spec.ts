@@ -17,7 +17,9 @@ import { log } from '../src/utils/log';
 // - npm run test:e2e  stops at the Checkout button: no order is created.
 // - npm run order     also checks out, pays with the staging OTP and verifies the order number
 //                     on the confirmation page (sets WATSONS_PLACE_ORDER=yes for that run only).
-//                     Creates a real STAGING order. The launcher always runs it this way.
+//                     Creates a real STAGING order. The launcher always runs it this way. With a
+//                     backoffice account it then approves the order; without one (2026-10-14) it
+//                     stops at the confirmation page and the order waits for approval.
 // With the browser shown (--headed, as the launcher does), the run ends by leaving the order
 // confirmation page open until the person closes the browser window (at most 5 minutes).
 // Each run's evidence goes to reports/<run id>/ (src/reporting/result-reporter.ts).
@@ -118,6 +120,24 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
   const orderNumber = await orderRun.step('Order confirmation', () => confirmation.orderNumber());
   orderRun.data.orderNumber = orderNumber;
   await test.info().attach('order confirmation', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
+  // With the browser shown (the desktop launcher), or watched in the hosted server's live view
+  // (WATSONS_HOLD_LAST_PAGE), the last pages stay open until the browser is closed, at most 5 minutes.
+  const holdLastPage = !headless || settings.holdLastPage;
+
+  // No backoffice account for this run (user's decision 2026-10-14): the order is placed and waits
+  // for approval. Someone with a backoffice account approves it later ("Approve existing order",
+  // also from Logs / History). The run ends on the "Thank you for your order" page.
+  if (!settings.backoffice) {
+    // The launcher reads this line (launcher/launcher.cjs, PASS_LINES).
+    log(`Order placed (not approved yet: no backoffice account for this run). Order number: ${orderNumber}`, 'PASS');
+    if (holdLastPage) {
+      log('The order confirmation page stays open. Close the browser to finish (it closes by itself after 5 minutes).');
+      test.setTimeout(test.info().timeout + 6 * 60_000);
+      // Either way the test has passed, so a timeout here is not an error.
+      await page.waitForEvent('close', { timeout: 5 * 60_000 }).catch(() => {});
+    }
+    return;
+  }
 
   // Approve ("validate") the new order in the staging backoffice with the Customer Support role,
   // so it is extracted (user's request 2026-10-06). In a second tab: the confirmation page stays
@@ -134,10 +154,10 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
   log(`Order test completed successfully. Order number: ${orderNumber} (backoffice: ${orderRun.data.backoffice.statuses.at(-1)})`, 'PASS');
 
   // The run ends on the backoffice order; the shop's confirmation page stays in the first tab
-  // (user's choice 2026-10-06). Leave both open until the person closes the browser window, at
-  // most 5 minutes.
-  if (!headless) {
-    log('The backoffice order and the order confirmation page stay open. Close the browser window to finish (it closes by itself after 5 minutes).');
+  // (user's choice 2026-10-06). Leave both open until the person closes the browser, at most 5
+  // minutes.
+  if (holdLastPage) {
+    log('The backoffice order and the order confirmation page stay open. Close the browser to finish (it closes by itself after 5 minutes).');
     test.setTimeout(test.info().timeout + 6 * 60_000);
     await backofficeTab.bringToFront();
     // Either way the test has passed, so a timeout here is not an error.

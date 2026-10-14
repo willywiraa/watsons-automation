@@ -4,11 +4,21 @@
 // person's own staging accounts (testing and backoffice). Runs of different people go on in
 // parallel, up to WATSONS_MAX_PARALLEL_RUNS; beyond that they wait in line. One run per person, and
 // per testing account, at a time.
+//
+// Since 2026-10-14 (user's requests):
+// - The person watches and controls their run's browser in their page (LiveView), and the run
+//   keeps its last page open until they click Close browser (at most 5 minutes).
+// - The backoffice account is optional for a new order: without it the run stops at the order
+//   confirmation, and the order shows "Awaiting approval" until an approve run approves it.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const launcher = require('../../launcher/launcher.cjs');
 const { listFiles, removeSecrets } = require('./evidence.cjs');
+const { LiveView } = require('./liveview.cjs');
+
+// The DevTools ports the runs' browsers open for the live view, on this computer only.
+const LIVE_PORTS = { from: 9300, count: 600 };
 
 const { TestRunner, checkRunRequest, rowFromFolder, orderFileText, parseOrderText, readDefaults, STAGING_HOST, AUTOMATIONS } = launcher;
 
@@ -123,9 +133,15 @@ class RunManager {
     const account = session.testingAccount;
     const backoffice = session.backofficeAccount;
     if (placing && !account) problems.push('Enter your testing account first (step "Your accounts").');
-    if (!backoffice) problems.push('Enter your backoffice account first (step "Your accounts").');
+    // A new order can do without it: it then waits for approval (2026-10-14). Approving can't.
+    if (!placing && !backoffice) problems.push('Enter your backoffice account first (step "Your accounts").');
     if (problems.length > 0 || !checked.order) return { status: 400, body: { problems } };
-    if (this.activeOf(session.username)) return { status: 409, body: { problems: ['You already have a run going on. Wait until it ends, or stop it.'] } };
+    const own = this.activeOf(session.username);
+    if (own) {
+      const holding = own.state === 'running' && own.runner.current?.passed;
+      const problem = holding ? 'Your last run’s browser is still open: click Close browser first.' : 'You already have a run going on. Wait until it ends, or stop it.';
+      return { status: 409, body: { problems: [problem] } };
+    }
     if (placing && this.accountInUse(account.fingerprint)) {
       return { status: 409, body: { problems: ['This testing account is in use by another run. Use another testing account, or wait until that run ends.'] } };
     }
@@ -135,7 +151,7 @@ class RunManager {
       request: checked.order,
       // Copies for this run only: the person may change or forget theirs meanwhile.
       account: placing ? { username: account.username, password: account.password } : null,
-      backoffice: { username: backoffice.username, password: backoffice.password },
+      backoffice: backoffice ? { username: backoffice.username, password: backoffice.password } : null,
       fingerprint: placing ? account.fingerprint : null,
       ip,
     };
@@ -152,15 +168,28 @@ class RunManager {
     return { status: 200, body: { runId } };
   }
 
+  /** A DevTools port for a run's browser that no other run uses. */
+  livePort() {
+    const used = new Set([...this.active.values()].map((entry) => entry.live?.port));
+    let port;
+    do port = LIVE_PORTS.from + Math.floor(Math.random() * LIVE_PORTS.count);
+    while (used.has(port));
+    return port;
+  }
+
   start(entry) {
     const runner = this.runnerFor(entry.username, entry.displayName);
-    // This run's accounts go into the test's environment only (TestRunner option "env").
+    const port = this.livePort();
+    // This run's accounts go into the test's environment only (TestRunner option "env"). The
+    // browser opens a DevTools port for the live view and keeps its last page open at the end.
     runner.options.env = () => ({
       WATSONS_STAGING_URL: this.config.stagingUrl,
       WATSONS_USERNAME: entry.account?.username,
       WATSONS_PASSWORD: entry.account?.password,
-      WATSONS_BACKOFFICE_USERNAME: entry.backoffice.username,
-      WATSONS_BACKOFFICE_PASSWORD: entry.backoffice.password,
+      WATSONS_BACKOFFICE_USERNAME: entry.backoffice?.username,
+      WATSONS_BACKOFFICE_PASSWORD: entry.backoffice?.password,
+      WATSONS_LIVE_VIEW_PORT: String(port),
+      WATSONS_HOLD_LAST_PAGE: 'yes',
     });
     let run;
     try {
@@ -168,16 +197,19 @@ class RunManager {
     } finally {
       runner.options.env = null;
     }
+    const live = new LiveView({ runId: run.runId, port, send: (event, data) => this.sendTo(entry.username, event, data) });
     this.active.set(run.runId, {
       username: entry.username,
       displayName: entry.displayName,
       automation: run.automation,
       fingerprint: entry.fingerprint,
       // Kept until the run has ended, only to check its evidence for it (finished()).
-      secrets: [entry.account?.password, entry.backoffice.password],
+      secrets: [entry.account?.password, entry.backoffice?.password],
       runner,
+      live,
       startedAt: run.startedAt,
     });
+    live.start();
     entry.account = null;
     entry.backoffice = null;
     const row = rowFromFolder(run.dir, run.runId, { currentRunId: run.runId, folder: run.folder });
@@ -199,8 +231,20 @@ class RunManager {
       this.store.audit({ username, action: 'evidence-secret-removed', runId: run.runId, success: false, detail: { files: removed } });
     }
     if (row) this.store.finishRun(row, listFiles(run.dir), { username, displayName: entry?.displayName });
-    this.store.audit({ username, action: 'run-end', runId: run.runId, success: row?.status === 'completed' || row?.status === 'no_change', detail: { status: row?.status, orderNumber: row?.orderNumber ?? undefined } });
-    if (entry) entry.secrets = null;
+    const succeeded = ['completed', 'no_change', 'awaiting_approval'].includes(row?.status);
+    this.store.audit({ username, action: 'run-end', runId: run.runId, success: succeeded, detail: { status: row?.status, orderNumber: row?.orderNumber ?? undefined } });
+    // An approval of an order that was placed without one: that order run is now approved too.
+    if (row?.automation === 'approve' && ['completed', 'no_change'].includes(row.status) && row.orderNumber) {
+      const approval = { runId: run.runId, by: entry?.displayName ?? username, at: row.finishedAt ?? new Date().toISOString() };
+      if (this.store.markApprovedLater(row.orderNumber, approval) > 0) {
+        this.store.audit({ username, action: 'order-approved-later', runId: run.runId, detail: { orderNumber: row.orderNumber } });
+        this.broadcast('history', { approved: row.orderNumber });
+      }
+    }
+    if (entry) {
+      entry.secrets = null;
+      entry.live?.stop();
+    }
     this.active.delete(run.runId);
     setImmediate(() => this.next());
     this.changed();
@@ -283,10 +327,38 @@ class RunManager {
     if (this.queue.length !== before) this.changed();
   }
 
+  /** The live view of a run that the person may watch and control: their own. Returns { live } or { status, error }. */
+  liveOf(session, runId) {
+    const entry = typeof runId === 'string' ? this.active.get(runId) : undefined;
+    if (!entry) return { status: 404, error: 'That run has ended.' };
+    if (entry.username !== session.username) return { status: 403, error: 'You can only control your own run’s browser.' };
+    return { live: entry.live, entry };
+  }
+
+  /** Close browser: ends a run that keeps its last page open. Returns { status, error }, or null. */
+  async closeBrowser(session, runId, ip) {
+    const found = this.liveOf(session, runId);
+    if (found.error) return found;
+    if (!found.entry.runner.current?.passed) return { status: 409, error: 'The test is still running: use Stop to end it.' };
+    const error = await found.live.closeBrowser();
+    if (error) return { status: 409, error };
+    this.store.audit({ username: session.username, ip, action: 'live-browser-closed', runId });
+    return null;
+  }
+
+  /** A window that opens while the person's run goes on: the live view so far. */
+  replayLive(username, write) {
+    for (const entry of this.active.values()) if (entry.username === username) entry.live?.replay(write);
+  }
+
   /** The service is stopping: stop the runs (their rows become "interrupted" at the next start). */
   shutdown() {
     this.queue.length = 0;
-    for (const entry of this.active.values()) entry.runner.stop();
+    for (const entry of this.active.values()) {
+      // A run that has passed keeps its last page open: closing its browser ends it with its result.
+      if (entry.runner.current?.passed) entry.live?.closeBrowser();
+      else entry.runner.stop();
+    }
   }
 }
 

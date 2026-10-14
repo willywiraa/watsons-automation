@@ -43,8 +43,8 @@ Private settings live in a file called `.env` in the project folder. Git never s
 | `WATSONS_STAGING_URL` | The Watsons **staging** website address |
 | `WATSONS_USERNAME` | Staging test account email |
 | `WATSONS_PASSWORD` | Staging test account password |
-| `WATSONS_BACKOFFICE_USERNAME` | Staging backoffice account with the Customer Support Manager role (approves each order; needed for runs that place an order) |
-| `WATSONS_BACKOFFICE_PASSWORD` | That backoffice account's password |
+| `WATSONS_BACKOFFICE_USERNAME` | Staging backoffice account with the Customer Support Manager role. Approves each new order, and is needed to approve an existing one. Optional for new orders: without it, a run ends on "Thank you for your order" and the order waits for approval |
+| `WATSONS_BACKOFFICE_PASSWORD` | That backoffice account's password (fill in both backoffice settings, or neither) |
 | `WATSONS_PAYMENT_OTP` | Optional. One-time code for the staging payment step; `1234` (what staging shows) when not set |
 | `WATSONS_OPERATOR` | Optional. Your name in the launcher's Logs / History; your Windows user name when not set |
 
@@ -93,6 +93,8 @@ On the left, what to run, in numbered steps; on the right, **Run** and the **Cur
    - **Place new order** (the usual run) **places a real STAGING test order** (Checkout, Pay,
      OTP `1234`) and then **approves it in the staging backoffice** (Customer Support role →
      Orders → the order → Fraud Report → Approve Order), until its status is **ORDER_EXTRACTED**.
+     Without a backoffice account it stops at **"Thank you for your order"**, and the order
+     shows **Awaiting approval** until someone with a backoffice account approves it (below).
    - **Approve existing order** does only the backoffice part, for an order that already
      exists: type its number (`07091012` or `WTCSG07091012`). It never opens the shop, so it
      can't create an order. An order that is already extracted is left alone (**No change**).
@@ -108,19 +110,21 @@ On the left, what to run, in numbered steps; on the right, **Run** and the **Cur
 5. **Run** lists the checks of PRD §37 (staging address and accounts set in `.env`, products,
    delivery method and seconds between adds, or the order number). The Run button
    (**Run order test** or **Approve in Backoffice**) stays disabled until all show ✓, and always
-   asks you to confirm first. The browser is shown.
+   asks you to confirm first. The browser is shown. A missing backoffice account only blocks
+   approving; for a new order it shows ○ "the order will wait for approval".
 
 While a test runs, **Current status** shows the step it is on and the time so far, with the
 steps done and the log below; the header shows the status too. A new order ends on the
 backoffice's Orders list showing the order with **Status ORDER_EXTRACTED** (the order's bar at
 the bottom keeps the status it had when it was opened: the backoffice doesn't update it), with
-the shop's "Thank you for your order!!" page in the first tab; an approval ends on the backoffice
-order. Edge stays open until you close its window (or 5 minutes pass); the launcher already shows
-the order number. After you close it, the result shows **Completed** with the order number and
-the backoffice status, **No change**, or **Failed** with its error report (below), and buttons to
-open the report and the evidence folder. **Approve Order is clicked at most once**: if the result
-is unclear, the run stops with `ORDER_APPROVAL_UNKNOWN` and asks you to check the order in the
-backoffice by hand.
+the shop's "Thank you for your order!!" page in the first tab; without a backoffice account it
+ends on that page; an approval ends on the backoffice order. Edge stays open until you close its
+window (or 5 minutes pass), and you can use it; the launcher already shows the order number.
+After you close it, the result shows **Completed** with the order number and the backoffice
+status, **Awaiting approval** (placed, not approved yet), **No change**, or **Failed** with its
+error report (below), and buttons to open the report and the evidence folder. **Approve Order
+is clicked at most once**: if the result is unclear, the run stops with
+`ORDER_APPROVAL_UNKNOWN` and asks you to check the order in the backoffice by hand.
 
 **Stop** stops the test and its browser (once it is checking out, paying or approving, it asks
 first, because the order or its approval may then already exist); the result is then
@@ -143,8 +147,12 @@ run's evidence folder.
 ### Logs / History tab
 
 Every run in `reports/`, newest first: time, automation, order number, delivery, products (and
-how many were left out), status (**Running**, **Completed**, **Failed**, **Stopped**,
-**No change**), error code and step, operator, and screenshots. Search by order number, PLU,
+how many were left out), status (**Running**, **Completed**, **Awaiting approval**, **Failed**,
+**Stopped**, **No change**), error code and step, operator, and screenshots. An order with
+status **Awaiting approval** ("Needs approval") has an **Approve in Backoffice** button in its
+details: it fills in an "Approve existing order" run for that order number. Once that approval completes
+(or finds the order already extracted), the order shows **Completed**, "approved later by …".
+Search by order number, PLU,
 error code or operator, filter by status or automation, and click a run for its details, error
 report and screenshots. **Export CSV** saves the runs shown as `reports/history-<date_time>.csv`
 and opens it (order numbers as backoffice codes, so Excel keeps their zeros). Runs from before the
@@ -179,7 +187,8 @@ on the server, headless, and everyone sees **one shared Logs / History**.
 | Topic | Hosted version |
 |---|---|
 | Sign-in | With an account the admin creates (`server/scripts/users.cjs`; bcrypt hashes in `users.json` on the server). |
-| Testing and backoffice accounts | Each person enters their own in step 2, once: the staging shop account (to place orders) and the staging backoffice account (to approve them; approving an existing order needs only this one). The server **remembers them** for the person's next sign-in (unless they untick Remember), **sealed with a key made from their own portal password**, so only their sign-in opens them. They are used only for their runs, and never logged or shown to anyone else. |
+| Testing and backoffice accounts | Each person enters their own in step 2, once: the staging shop account (to place orders) and the staging backoffice account (to approve them; approving an existing order needs only this one). The backoffice account is **optional for new orders**: without it, the order stops at "Thank you for your order" and shows **Awaiting approval** in Logs / History until someone with a backoffice account approves it there (**Approve in Backoffice**). The server **remembers them** for the person's next sign-in (unless they untick Remember), **sealed with a key made from their own portal password**, so only their sign-in opens them. They are used only for their runs, and never logged or shown to anyone else. |
+| Live browser | While a run goes on, its owner sees the server's browser in the page (**Live browser**, about 3 pictures a second) and can use it: click, scroll, type, and switch between its tabs. Nobody else sees it. When the order is placed, the last page (e.g. "Thank you for your order") stays open until **Close browser**, at most 5 minutes. |
 | Parallel runs | One run per person, and per testing account, at a time; up to `WATSONS_MAX_PARALLEL_RUNS` runs at once, then a waiting line. |
 | Logs / History | Everyone's runs, from a database on the server (SQLite), with a **Mine / All** filter. Evidence is downloaded (zip, error report) or shown in the browser (screenshots, Playwright report). |
 
@@ -250,10 +259,10 @@ What the other person needs (all in `START-HERE.txt`):
 2. **Node.js** 20 or newer (LTS) from <https://nodejs.org>. The exe runs the test with it.
 3. Unzip into a folder of their own. If the zip came by email, Teams or a download, first
    right-click it → Properties → tick **Unblock**, so Windows doesn't block the exe.
-4. Fill in `WATSONS_USERNAME` and `WATSONS_PASSWORD` (shop test account) and
-   `WATSONS_BACKOFFICE_USERNAME` and `WATSONS_BACKOFFICE_PASSWORD` (backoffice account) in the
-   `.env` in that folder. **Send the account details separately** (never in the zip or a
-   shared chat).
+4. Fill in `WATSONS_USERNAME` and `WATSONS_PASSWORD` (shop test account) and, if they approve
+   orders, `WATSONS_BACKOFFICE_USERNAME` and `WATSONS_BACKOFFICE_PASSWORD` (backoffice account)
+   in the `.env` in that folder. Without a backoffice account their orders wait for approval.
+   **Send the account details separately** (never in the zip or a shared chat).
 5. Access to the staging website from their PC.
 
 Then they double-click `WatsonsTester.exe`. If Windows shows "Windows protected your PC": More
@@ -305,7 +314,7 @@ Every `npm run test:e2e` or `npm run order` run saves its evidence in its own fo
 
 | File | Contents |
 |---|---|
-| `result.json` | Passed/failed, the automation (`order` or `approve`), the outcome (`order_placed`, `ready_to_check_out`, `approved`, `no_change` or `failed`), the order number, the failed step and error code with the time it failed, the pages open then and their screenshots, the products ordered / skipped as sold out / left out as not eligible, browser console errors |
+| `result.json` | Passed/failed, the automation (`order` or `approve`), the outcome (`order_placed`, `order_placed_unapproved` (placed without a backoffice account), `ready_to_check_out`, `approved`, `no_change` or `failed`), the order number, the failed step and error code with the time it failed, the pages open then and their screenshots, the products ordered / skipped as sold out / left out as not eligible, browser console errors |
 | `log.txt` | The step-by-step log of the run |
 | `screenshot-*.png` | The checkout summary, the order confirmation and the backoffice order (when an order is placed or approved), and `screenshot-N-failure.png`: each open page when the run failed |
 | `order.txt`, `launcher-log.txt`, `launcher-run.json` | Launcher runs only: what was asked, the full log, and what the launcher knows about the run (automation, operator, status, seconds between adds) for Logs / History |
@@ -313,10 +322,10 @@ Every `npm run test:e2e` or `npm run order` run saves its evidence in its own fo
 | `trace.zip` | Step-by-step recording, kept only when the run fails. Open it with `npx playwright show-trace <path>` |
 | `html-report/index.html` | The full Playwright report of the run |
 
-The run ends with a summary box: **ORDER TEST PASSED** (with the order number), **READY TO
-CHECK OUT (NO ORDER PLACED)**, or **ORDER TEST FAILED** with the step, the error code and the
-reason (for approvals: **ORDER APPROVED**, **NO CHANGE (ALREADY EXTRACTED)** or **APPROVAL
-FAILED**). If it says `PAYMENT_RESULT_UNKNOWN`, check My Account → Order History on staging
+The run ends with a summary box: **ORDER TEST PASSED** (with the order number), **ORDER PLACED
+(NOT APPROVED YET)** (no backoffice account), **READY TO CHECK OUT (NO ORDER PLACED)**, or
+**ORDER TEST FAILED** with the step, the error code and the reason (for approvals: **ORDER
+APPROVED**, **NO CHANGE (ALREADY EXTRACTED)** or **APPROVAL FAILED**). If it says `PAYMENT_RESULT_UNKNOWN`, check My Account → Order History on staging
 before running again: the order may have been created.
 
 The `reports/` folder is never saved in Git. Delete old run folders whenever you like.

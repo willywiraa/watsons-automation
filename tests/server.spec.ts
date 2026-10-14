@@ -33,6 +33,8 @@ const skipReason = 'The hosted server is not installed here: run "npm install" i
 /* eslint-disable @typescript-eslint/no-require-imports */
 const startServer = (options: Record<string, unknown>): Promise<ServerApp> => require('../server/server.cjs').startServer(options);
 const hashPassword = (password: string): Promise<string> => require('../server/scripts/users.cjs').hashPassword(password);
+// For the stand-in runner's real browser (PLU 555, the live view): where Playwright is.
+const PLAYWRIGHT_MODULE = require.resolve('@playwright/test');
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 type Person = 'alice' | 'bob' | 'carol';
@@ -198,10 +200,12 @@ test.describe('hosted server', () => {
   test.skip(!SERVER_INSTALLED, skipReason);
   let setup: Setup;
   test.beforeEach(async () => {
+    process.env.FAKE_PLAYWRIGHT_MODULE = PLAYWRIGHT_MODULE;
     setup = await makeServer();
   });
   test.afterEach(async () => {
     await closeServer(setup);
+    delete process.env.FAKE_PLAYWRIGHT_MODULE;
   });
 
   test('signs people in, and answers nothing else without a session', async () => {
@@ -215,6 +219,8 @@ test.describe('hosted server', () => {
       ['POST', '/api/history'],
       ['POST', '/api/testing-account'],
       ['POST', '/api/backoffice-account'],
+      ['POST', '/api/live/input'],
+      ['POST', '/api/live/close'],
       ['GET', '/api/events'],
       ['GET', '/api/screenshot?run=2026-10-08_10-00-00&name=screenshot-1.png'],
       ['GET', '/api/runs/2026-10-08_10-00-00/files/log.txt'],
@@ -338,10 +344,9 @@ test.describe('hosted server', () => {
     const bob = client(setup.app);
     const carol = client(setup.app);
     for (const [person, browser] of [['alice', alice], ['bob', bob], ['carol', carol]] as const) await browser.login(person);
-    expect((await alice.run({ ...ORDER, products: '10117' })).data).toEqual({ problems: [NEEDS_TESTING, NEEDS_BACKOFFICE] });
-    await alice.useTestingAccount('alice');
-    expect((await alice.run({ ...ORDER, products: '10117' })).data).toEqual({ problems: [NEEDS_BACKOFFICE] });
-    await alice.useBackofficeAccount('alice');
+    // A new order needs the testing account; the backoffice account is optional (2026-10-14).
+    expect((await alice.run({ ...ORDER, products: '10117' })).data).toEqual({ problems: [NEEDS_TESTING] });
+    await alice.useAccounts('alice');
     await bob.useAccounts('bob');
 
     // PLU 99: the fake run waits at "Pay" until it is stopped, so both go on at the same time.
@@ -424,6 +429,108 @@ test.describe('hosted server', () => {
     expect(log).toContain(`account=none/none backoffice=${fingerprint(PEOPLE.alice.backoffice.username)}/${fingerprint(PEOPLE.alice.backoffice.password)}`);
     const row = (await alice.history()).data.rows[0];
     expect(row).toMatchObject({ runId: started.data.runId, status: 'completed', automation: 'approve', orderNumber: '07091012', username: 'alice', operator: 'Alice' });
+  });
+
+  test('an order placed without a backoffice account awaits approval, until someone approves it', async () => {
+    const alice = client(setup.app);
+    const carol = client(setup.app);
+    await alice.login('alice');
+    await alice.useTestingAccount('alice'); // no backoffice account
+    const placed = (await alice.run({ ...ORDER, products: '10117' })).data.runId as string;
+    await ended(setup, placed);
+    const log = runLog(setup, placed);
+    expect(log).toContain('backoffice=none/none');
+    expect(log).toContain('[PASS] Order placed (not approved yet: no backoffice account for this run). Order number: 12345678');
+    expect(log).not.toContain('Step: Backoffice login');
+
+    await carol.login('carol');
+    const row = async () => ((await carol.history()).data.rows as { runId: string }[]).find((candidate) => candidate.runId === placed);
+    expect(await row()).toMatchObject({ status: 'awaiting_approval', statusLabel: 'Awaiting approval', outcome: 'order_placed_unapproved', orderNumber: '12345678' });
+
+    // Carol approves it (Logs / History's "Approve in Backoffice" starts this run): the order run is then approved too.
+    await carol.useBackofficeAccount('carol');
+    const approval = (await carol.run({ automation: 'approve', orderNumber: '12345678', confirmed: true })).data.runId as string;
+    await ended(setup, approval);
+    expect(await row()).toMatchObject({ status: 'completed', statusLabel: 'Completed', approvedLater: { runId: approval, by: 'Carol' } });
+    expect(setup.app.store.auditEvents().map((event) => event.action)).toContain('order-approved-later');
+  });
+
+  test('shows a run’s browser live to its owner only, passes clicks and typing on, and keeps the last page until Close browser', async () => {
+    const alice = client(setup.app);
+    const bob = client(setup.app);
+    await alice.login('alice');
+    await alice.useTestingAccount('alice');
+    await bob.login('bob');
+    const aliceLive = liveUpdates(setup.app, alice.cookie, 12_000);
+    const bobLive = liveUpdates(setup.app, bob.cookie, 12_000);
+    // PLU 555: the stand-in runner opens a real headless Edge with the run's DevTools port.
+    const runId = (await alice.run({ ...ORDER, products: '555' })).data.runId as string;
+    const live = () => (setup.app.runs.active.get(runId) as { live?: { lastFrame: unknown } } | undefined)?.live;
+    await expect.poll(() => Boolean(live()?.lastFrame), { timeout: 20_000 }).toBe(true);
+    await expect.poll(() => runLog(setup, runId), { timeout: 15_000 }).toContain('[PASS] Order placed (not approved yet');
+
+    // Only Alice controls it: a click on the page's button, then typing into its field.
+    expect((await bob.call('POST', '/api/live/input', { runId, kind: 'click', x: 100, y: 50 })).status).toBe(403);
+    expect((await alice.call('POST', '/api/live/input', { runId, kind: 'click', x: 100, y: 50 })).data).toEqual({ ok: true });
+    expect((await alice.call('POST', '/api/live/input', { runId, kind: 'click', x: 150, y: 220 })).data).toEqual({ ok: true });
+    expect((await alice.call('POST', '/api/live/input', { runId, kind: 'text', text: 'hello' })).data).toEqual({ ok: true });
+    expect((await alice.call('POST', '/api/live/input', { runId, kind: 'key', key: 'Backspace' })).data).toEqual({ ok: true });
+    expect((await alice.call('POST', '/api/live/input', { runId, kind: 'key', key: 'F12' })).status).toBe(409);
+    await expect.poll(() => runLog(setup, runId)).toContain('fake page: clicked');
+    await expect.poll(() => runLog(setup, runId)).toContain('fake page: typed hell');
+
+    // The test has passed, but its page stays open until Close browser.
+    expect(setup.app.runs.active.has(runId)).toBe(true);
+    expect((await bob.call('POST', '/api/live/close', { runId })).status).toBe(403);
+    expect((await alice.call('POST', '/api/live/close', { runId })).data).toEqual({ closed: true });
+    await ended(setup, runId);
+    const row = ((await alice.history()).data.rows as { runId: string }[]).find((candidate) => candidate.runId === runId);
+    expect(row).toMatchObject({ status: 'awaiting_approval' });
+
+    // The screen went to Alice's windows only.
+    expect(await aliceLive).toContain('event: frame');
+    expect(await bobLive).not.toContain('event: frame');
+  });
+
+  test('the page: Live browser, Close browser, and Approve in Backoffice from Logs / History', async ({ page }) => {
+    await page.goto(setup.app.url);
+    await page.locator('#login-username').fill('alice');
+    await page.locator('#login-password').fill(PEOPLE.alice.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.locator('#testing-username').fill(PEOPLE.alice.testing.username);
+    await page.locator('#testing-password').fill(PEOPLE.alice.testing.password);
+    await page.locator('#testing-save').click();
+    await expect(page.locator('#testing-masked')).toHaveText('al•••@e•••.com');
+    await page.getByLabel('One PLU per line').fill('555');
+    await page.locator('#run').click();
+    await expect(page.locator('#confirm')).toContainText('None: the order waits for approval');
+    await page.locator('#confirm').getByRole('button', { name: 'Run test' }).click();
+
+    // The run's browser shows in the page; a click on its button reaches the real page.
+    const screen = page.locator('#live-img');
+    await expect(screen).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('#live-close')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('#banner-title')).toHaveText('Order placed, awaiting approval');
+    const runId = [...setup.app.runs.active.keys()][0];
+    const box = (await screen.boundingBox())!;
+    await screen.click({ position: { x: box.width * (100 / 800), y: box.height * (50 / 450) } });
+    await expect.poll(() => runLog(setup, runId)).toContain('fake page: clicked');
+
+    await page.locator('#live-close').click();
+    await expect(page.locator('#result .verdict')).toHaveText('Awaiting approval', { timeout: 15_000 });
+    await expect(page.locator('#live-card')).toBeHidden();
+    await expect(page.locator('#steps li.skipped')).toHaveCount(4); // the approval steps
+
+    // Logs / History: the order waits for approval; Approve in Backoffice fills in that approval.
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    const row = page.locator('tr.hrow').first();
+    await expect(row).toContainText('Awaiting approval');
+    await expect(row).toContainText('Needs approval');
+    await row.click();
+    await page.getByRole('button', { name: 'Approve in Backoffice' }).click();
+    await expect(page.locator('input[name="automation"][value="approve"]')).toBeChecked();
+    await expect(page.locator('#order-number')).toHaveValue('12345678');
+    await expect(page.locator('.check-bad', { hasText: 'Backoffice account entered' })).toBeVisible();
   });
 
   test('shares the history: everyone sees every run, and its evidence only when signed in', async () => {
@@ -566,7 +673,8 @@ test.describe('hosted server', () => {
     const run = page.locator('#run');
     await expect(page.locator('#section-accounts')).toBeVisible();
     await expect(page.locator('.check-bad', { hasText: 'Testing account entered' })).toBeVisible();
-    await expect(page.locator('.check-bad', { hasText: 'Backoffice account entered' })).toBeVisible();
+    // The backoffice account is optional for a new order: without it, the order waits for approval.
+    await expect(page.locator('.check-optional', { hasText: 'No backoffice account: the order will wait for approval' })).toBeVisible();
     await expect(run).toBeDisabled();
     await page.locator('#testing-username').fill(PEOPLE.alice.testing.username);
     await page.locator('#testing-password').fill(PEOPLE.alice.testing.password);
@@ -574,7 +682,7 @@ test.describe('hosted server', () => {
     await expect(page.locator('#testing-masked')).toHaveText('al•••@e•••.com');
     await expect(page.locator('#testing-password')).toHaveValue('');
     await expect(page.locator('.check-ok', { hasText: 'Testing account entered' })).toBeVisible();
-    await expect(run).toBeDisabled(); // the backoffice account is still missing
+    await expect(run).toBeEnabled();
     await page.locator('#backoffice-username').fill(PEOPLE.alice.backoffice.username);
     await page.locator('#backoffice-password').fill(PEOPLE.alice.backoffice.password);
     await page.locator('#backoffice-password').press('Enter');

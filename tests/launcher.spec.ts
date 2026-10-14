@@ -12,7 +12,7 @@ import { STAGING_HOST } from '../src/safety/staging-guard';
 // never open the Watsons site.
 
 interface SetupResult {
-  checks: { label: string; ok: boolean; help: string }[];
+  checks: { label: string; ok: boolean; help: string; key?: string; optionalFor?: string; optionalLabel?: string }[];
   ready: boolean;
 }
 interface HistoryRow {
@@ -205,6 +205,32 @@ test.describe('launcher checks', () => {
     expect(launcher.checkRunRequest(approve, { checks: [{ label: 'Backoffice account configured', ok: false, help: 'Fill in .env.' }], ready: false }).order).toBeUndefined();
   });
 
+  test('a new order can do without the backoffice account; approving cannot (2026-10-14)', async () => {
+    const root = makeFakeProject(false);
+    try {
+      const env = `WATSONS_STAGING_URL=https://${STAGING_HOST}/\nWATSONS_USERNAME=a\nWATSONS_PASSWORD=b\n`;
+      writeFileSync(join(root, '.env'), env);
+      const setup = await withoutSettings(() => launcher.checkSetup(root, true));
+      expect(setup.ready).toBe(true);
+      expect(setup.checks.find((check) => check.key === 'backoffice')).toMatchObject({ ok: false, optionalFor: 'order' });
+      const order = { products: '10321', deliveryMethod: 'home_delivery', mode: 'express', confirmed: true };
+      expect(launcher.checkRunRequest(order, setup).problems).toEqual([]);
+      const approve = { automation: 'approve', orderNumber: '07091012', confirmed: true };
+      expect(launcher.checkRunRequest(approve, setup).problems).toEqual([
+        'Backoffice account configured: no. Fill in WATSONS_BACKOFFICE_USERNAME and WATSONS_BACKOFFICE_PASSWORD in .env (needed to approve orders).',
+      ]);
+      // Half filled in is a mistake for both.
+      writeFileSync(join(root, '.env'), `${env}WATSONS_BACKOFFICE_USERNAME=c\n`);
+      const half = await withoutSettings(() => launcher.checkSetup(root, true));
+      expect(half.ready).toBe(false);
+      expect(launcher.checkRunRequest(order, half).problems).toEqual([
+        'Backoffice account configured: no. Fill in both WATSONS_BACKOFFICE_USERNAME and WATSONS_BACKOFFICE_PASSWORD in .env, or neither (new orders then wait for approval).',
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('Logs / History also shows runs from before it existed', () => {
     const root = makeFakeProject();
     try {
@@ -269,9 +295,17 @@ test.describe('launcher window', () => {
   let app: { url: string; close(): Promise<void> };
   let opened: string[];
   const savedOperator = process.env.WATSONS_OPERATOR;
+  // The desktop's tests read the backoffice account from .env; the stand-in reads it from here.
+  const savedBackoffice = [process.env.WATSONS_BACKOFFICE_USERNAME, process.env.WATSONS_BACKOFFICE_PASSWORD];
+  const restore = (name: string, value: string | undefined) => {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  };
 
   test.beforeEach(async () => {
     process.env.WATSONS_OPERATOR = 'Test Operator';
+    process.env.WATSONS_BACKOFFICE_USERNAME = 'fake-backoffice';
+    process.env.WATSONS_BACKOFFICE_PASSWORD = 'fake-value';
     root = makeFakeProject();
     opened = [];
     // Files and folders the window asks to open are only noted here (no Explorer during tests).
@@ -281,8 +315,9 @@ test.describe('launcher window', () => {
     await app.close();
     // Windows keeps the folder locked for a moment while stopped processes end.
     rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
-    if (savedOperator === undefined) delete process.env.WATSONS_OPERATOR;
-    else process.env.WATSONS_OPERATOR = savedOperator;
+    restore('WATSONS_OPERATOR', savedOperator);
+    restore('WATSONS_BACKOFFICE_USERNAME', savedBackoffice[0]);
+    restore('WATSONS_BACKOFFICE_PASSWORD', savedBackoffice[1]);
   });
 
   /** Waits until the run just started has ended (Logs / History counts it from its start). */
@@ -395,6 +430,51 @@ test.describe('launcher window', () => {
     await expect(page.locator('#result .verdict')).toHaveText('Completed');
     await expect(page.locator('#result .callout.warn')).toHaveText('Not available for Express, left out of this order: PLU 46465');
     await expect(page.locator('#result')).toContainText('Left out (not eligible)');
+  });
+
+  test('places an order without a backoffice account: it ends at the confirmation and waits for approval', async ({ page }) => {
+    // No backoffice account in .env, nor for the stand-in (user's decision 2026-10-14).
+    writeFileSync(join(root, '.env'), `WATSONS_STAGING_URL=https://${STAGING_HOST}/\nWATSONS_USERNAME=fake-user\nWATSONS_PASSWORD=fake-value\n`);
+    delete process.env.WATSONS_BACKOFFICE_USERNAME;
+    delete process.env.WATSONS_BACKOFFICE_PASSWORD;
+    await page.goto(app.url);
+    await expect(page.locator('.check-optional', { hasText: 'No backoffice account in .env: the order will wait for approval' })).toBeVisible();
+    await expect(page.locator('#run-note')).toContainText('stops at "Thank you for your order"');
+    await page.getByLabel('One PLU per line').fill('10117');
+    await page.locator('#run').click();
+    await expect(page.locator('#confirm')).toContainText('None: the order waits for approval');
+    await page.locator('#confirm').getByRole('button', { name: 'Run test' }).click();
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Awaiting approval');
+    await expect(page.locator('#result .order-number')).toHaveText('Order Number: 12345678');
+    await expect(page.locator('#steps li.skipped')).toHaveCount(4); // the approval steps
+
+    // Approving needs the backoffice account.
+    await page.getByLabel('Approve existing order').check();
+    await page.getByLabel('Order number').fill('12345678');
+    await expect(page.locator('.check-bad', { hasText: 'Backoffice account configured' })).toBeVisible();
+    await expect(page.locator('#run')).toBeDisabled();
+
+    // With one, Logs / History's Approve in Backoffice fills in the approval; the order then counts as approved.
+    writeFileSync(join(root, '.env'), `WATSONS_STAGING_URL=https://${STAGING_HOST}/\nWATSONS_USERNAME=fake-user\nWATSONS_PASSWORD=fake-value\nWATSONS_BACKOFFICE_USERNAME=fake-support\nWATSONS_BACKOFFICE_PASSWORD=fake-value\n`);
+    process.env.WATSONS_BACKOFFICE_USERNAME = 'fake-backoffice';
+    process.env.WATSONS_BACKOFFICE_PASSWORD = 'fake-value';
+    await page.reload();
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    const rows = page.locator('tr.hrow');
+    await expect(rows.first()).toContainText('Awaiting approval');
+    await expect(rows.first()).toContainText('Needs approval');
+    await rows.first().click();
+    await page.locator('tr.hdetail').getByRole('button', { name: 'Approve in Backoffice' }).click();
+    await expect(page.locator('#order-number')).toHaveValue('12345678');
+    await page.locator('#run').click();
+    await page.locator('#confirm').getByRole('button', { name: 'Approve in Backoffice' }).click();
+    await runEnded(page, 1);
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    await expect(rows.nth(1)).toContainText('Place new order');
+    await expect(rows.nth(1)).toContainText('Completed');
+    // Its details are still open from before.
+    await expect(page.locator('tr.hdetail')).toContainText('Approved later by Test Operator');
   });
 
   test('places a Standard order: the test gets Standard, and its progress and result say so', async ({ page }) => {

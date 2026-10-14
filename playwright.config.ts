@@ -9,6 +9,11 @@ if (existsSync(envFile)) {
   process.loadEnvFile(envFile);
 }
 
+// The hosted server's live browser view (2026-10-14): with WATSONS_LIVE_VIEW_PORT set, the browser
+// also opens a DevTools port on this computer only (127.0.0.1), so the server can show the run in
+// the person's page and pass their clicks and typing on (server/lib/liveview.cjs).
+const liveViewPort = /^\d{2,5}$/.test(process.env.WATSONS_LIVE_VIEW_PORT?.trim() ?? '') ? process.env.WATSONS_LIVE_VIEW_PORT!.trim() : null;
+
 // One id per run, e.g. "2026-10-05_21-26-50": order runs save their evidence in
 // reports/<id>/. Set once here (the test workers inherit it), or by the launcher.
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -54,6 +59,8 @@ export default defineConfig({
     // Don't let websites install a service worker (a background script). It could load
     // pages without the safety lock seeing them (src/safety/staging-guard.ts).
     serviceWorkers: 'block',
+
+    launchOptions: liveViewPort ? { args: [`--remote-debugging-port=${liveViewPort}`] } : {},
 
     // When a test fails, keep a screenshot so we can see what went wrong.
     screenshot: 'only-on-failure',

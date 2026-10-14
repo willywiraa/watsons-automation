@@ -250,6 +250,8 @@ async function startServer(overrides = {}) {
     const client = { res, sessionId: req.session.id, username: req.session.username };
     clients.add(client);
     write(client, 'state', state(req.session));
+    // A run going on: its live browser view so far.
+    runs.replayLive(req.session.username, (event, data) => write(client, event, data));
     req.on('close', () => clients.delete(client));
   });
   // Keeps the connections open through IIS, and closes those of sessions that have ended.
@@ -272,6 +274,25 @@ async function startServer(overrides = {}) {
     const outcome = runs.submit(req.session, req.body, req.ip);
     res.status(outcome.status).json(outcome.body);
   });
+  // The live browser view of the person's own run (2026-10-14): clicks, scrolling and typing; the
+  // tab shown; Close browser once the test has passed and keeps its last page open.
+  app.post('/api/live/input', ...changes, async (req, res) => {
+    const found = runs.liveOf(req.session, req.body?.runId);
+    if (found.error) return res.status(found.status).json({ error: found.error });
+    const problem = await found.live.input(req.body);
+    res.status(problem ? 409 : 200).json(problem ? { error: problem } : { ok: true });
+  });
+  app.post('/api/live/select', ...changes, async (req, res) => {
+    const found = runs.liveOf(req.session, req.body?.runId);
+    if (found.error) return res.status(found.status).json({ error: found.error });
+    const problem = await found.live.select(text(req.body?.targetId));
+    res.status(problem ? 409 : 200).json(problem ? { error: problem } : { ok: true });
+  });
+  app.post('/api/live/close', ...changes, async (req, res) => {
+    const problem = await runs.closeBrowser(req.session, req.body?.runId, req.ip);
+    res.status(problem ? problem.status : 200).json(problem ? { error: problem.error } : { closed: true });
+  });
+
   app.post('/api/stop', ...changes, (req, res) => {
     const problem = runs.stop(req.session, typeof req.body?.runId === 'string' ? req.body.runId : null, req.ip);
     res.status(problem ? 409 : 200).json(problem ? { stopped: false, error: problem } : { stopped: true });

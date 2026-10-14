@@ -9,10 +9,12 @@ export interface OrderTestResult {
   /** "order" (the order flow) or "approve" (approving an existing order in the backoffice). */
   automation: Automation;
   /**
-   * "order_placed", "ready_to_check_out" (placing orders was off), "approved" (Approve Order
-   * clicked by this run), "no_change" (the order to approve was already extracted) or "failed".
+   * "order_placed" (and approved in the backoffice), "order_placed_unapproved" (placed, not
+   * approved: the run had no backoffice account, 2026-10-14), "ready_to_check_out" (placing orders
+   * was off), "approved" (Approve Order clicked by this run), "no_change" (the order to approve
+   * was already extracted) or "failed".
    */
-  outcome: 'order_placed' | 'ready_to_check_out' | 'approved' | 'no_change' | 'failed';
+  outcome: 'order_placed' | 'order_placed_unapproved' | 'ready_to_check_out' | 'approved' | 'no_change' | 'failed';
   runId: string;
   orderNumber?: string;
   durationMs: number;
@@ -49,7 +51,8 @@ const stripColors = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, '');
 function outcomeOf(input: ResultInput, automation: Automation): OrderTestResult['outcome'] {
   if (!input.passed) return 'failed';
   if (automation === 'approve') return input.run.backoffice?.approved ? 'approved' : 'no_change';
-  return input.run.orderNumber ? 'order_placed' : 'ready_to_check_out';
+  if (!input.run.orderNumber) return 'ready_to_check_out';
+  return input.run.backoffice ? 'order_placed' : 'order_placed_unapproved';
 }
 
 export function buildOrderResult(input: ResultInput): OrderTestResult {
@@ -99,6 +102,7 @@ const minutes = (ms: number) => {
 
 const TITLES: Record<OrderTestResult['outcome'], string> = {
   order_placed: 'ORDER TEST PASSED',
+  order_placed_unapproved: 'ORDER PLACED (NOT APPROVED YET)',
   ready_to_check_out: 'READY TO CHECK OUT (NO ORDER PLACED)',
   approved: 'ORDER APPROVED',
   no_change: 'NO CHANGE (ALREADY EXTRACTED)',
@@ -115,6 +119,7 @@ export function formatResultBox(result: OrderTestResult): string {
   if (result.status === 'passed') {
     if (result.orderNumber) rows.push(`Order Number: ${result.orderNumber}`);
     if (result.backoffice?.finalStatus) rows.push(`Backoffice: ${result.backoffice.finalStatus}`);
+    if (result.outcome === 'order_placed_unapproved') rows.push('Backoffice: not approved yet');
     if (!approving) {
       rows.push(`Delivery: ${result.delivery.mode ?? '?'} (${result.delivery.method ?? '?'})`);
       rows.push(`Products: ${result.products.ordered.length}`);

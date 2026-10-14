@@ -28,9 +28,17 @@ export interface Settings {
   approveOrder?: string;
   /**
    * The staging backoffice account (Customer Support role) that approves each new order.
-   * Required when placeOrder is on or an order is to be approved; may be missing otherwise.
+   * Required to approve an existing order. Optional when placing one (user's decision
+   * 2026-10-14): without it, the run stops at the order confirmation and the order waits for
+   * someone with a backoffice account to approve it.
    */
   backoffice?: { username: string; password: string };
+  /**
+   * Keep the last page open at the end until the browser is closed, at most 5 minutes:
+   * WATSONS_HOLD_LAST_PAGE=yes. The hosted server sets it (its live browser view shows that page);
+   * with the browser shown (--headed) the tests always do it.
+   */
+  holdLastPage: boolean;
 }
 
 // The .env name each required setting is read from.
@@ -39,11 +47,12 @@ const ENV_NAMES = {
   username: 'WATSONS_USERNAME',
   password: 'WATSONS_PASSWORD',
 } as const satisfies Record<
-  Exclude<keyof Settings, 'paymentOtp' | 'placeOrder' | 'orderFile' | 'addDelaySeconds' | 'approveOrder' | 'backoffice'>,
+  Exclude<keyof Settings, 'paymentOtp' | 'placeOrder' | 'orderFile' | 'addDelaySeconds' | 'approveOrder' | 'backoffice' | 'holdLastPage'>,
   string
 >;
 
-// Needed only for runs that place or approve an order (each new order is approved in the backoffice).
+// Needed to approve an existing order. A run that places an order uses it when it is there, to
+// approve the new order (since 2026-10-14 it may be missing: the order then waits for approval).
 const BACKOFFICE_ENV_NAMES = { username: 'WATSONS_BACKOFFICE_USERNAME', password: 'WATSONS_BACKOFFICE_PASSWORD' } as const;
 
 // Staging always shows 1234 for its test payments (user, 2026-10-05), so it needn't be set.
@@ -78,7 +87,7 @@ export function readSettings(env: Record<string, string | undefined> = process.e
   // then (on the hosted server, people enter a testing account only to place orders; 2026-10-08).
   const approvingOnly = Boolean(approveText) && !placeOrder;
   const shopAccount = approvingOnly ? [] : [ENV_NAMES.username, ENV_NAMES.password];
-  const required = [ENV_NAMES.stagingUrl, ...shopAccount, ...(placeOrder || approveText ? Object.values(BACKOFFICE_ENV_NAMES) : [])];
+  const required = [ENV_NAMES.stagingUrl, ...shopAccount, ...(approveText ? Object.values(BACKOFFICE_ENV_NAMES) : [])];
   const missing = required.filter((name) => !env[name]?.trim());
   if (missing.length > 0) {
     throw new SettingsError(
@@ -105,5 +114,6 @@ export function readSettings(env: Record<string, string | undefined> = process.e
       env[BACKOFFICE_ENV_NAMES.username]?.trim() && env[BACKOFFICE_ENV_NAMES.password]?.trim()
         ? { username: env[BACKOFFICE_ENV_NAMES.username]!, password: env[BACKOFFICE_ENV_NAMES.password]! }
         : undefined,
+    holdLastPage: env.WATSONS_HOLD_LAST_PAGE?.trim().toLowerCase() === 'yes',
   };
 }

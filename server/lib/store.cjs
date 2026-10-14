@@ -161,6 +161,22 @@ class Store {
       .run(now()).changes;
   }
 
+  /**
+   * An approve run approved this order (or found it extracted already): the order runs that
+   * placed it without approving it are now "Completed", noting who approved it, in which run and
+   * when (user's request 2026-10-14). Returns how many rows changed.
+   */
+  markApprovedLater(orderNumber, { runId, by, at }) {
+    return this.db
+      .prepare(
+        `UPDATE runs SET status = 'completed',
+           detail_json = json_set(detail_json, '$.status', 'completed', '$.statusLabel', 'Completed', '$.approvedLater', json(?)),
+           updated_at = ?
+         WHERE automation = 'order' AND status = 'awaiting_approval' AND order_number = ?`,
+      )
+      .run(JSON.stringify({ runId, by, at }), now(), orderNumber).changes;
+  }
+
   markEvidenceDeleted(runId) {
     this.db.prepare("UPDATE runs SET evidence_state = 'deleted', updated_at = ? WHERE run_id = ?").run(now(), runId);
     this.db.prepare('DELETE FROM run_files WHERE run_id = ?').run(runId);

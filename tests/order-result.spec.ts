@@ -34,6 +34,14 @@ test.describe('order result', () => {
     expect(box).toContain('Duration: 04:12');
   });
 
+  test('a placed order without a backoffice account is placed, not approved yet', () => {
+    const result = buildOrderResult({ runId: 'x', run: { ...run, backoffice: undefined }, passed: true, durationMs: 1_000, artifacts });
+    expect(result).toMatchObject({ status: 'passed', outcome: 'order_placed_unapproved', orderNumber: '07088016', backoffice: undefined });
+    const box = formatResultBox(result);
+    expect(box).toContain('ORDER PLACED (NOT APPROVED YET)');
+    expect(box).toContain('Backoffice: not approved yet');
+  });
+
   test('a run with ordering switched off is "ready to check out"', () => {
     const dryRun = { ...run, placeOrder: false, orderNumber: undefined, completedStep: 'Express Delivery Selection' };
     const result = buildOrderResult({ runId: 'x', run: dryRun, passed: true, durationMs: 1_000, artifacts });

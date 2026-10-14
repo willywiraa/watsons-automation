@@ -76,6 +76,7 @@
   [data-state="failed"], [data-state="offline"] { --tone: var(--bad); --tone-soft: var(--bad-soft); }
   [data-state="stopped"], [data-state="blocked"], [data-state="interrupted"] { --tone: var(--warn); --tone-soft: var(--warn-soft); }
   [data-state="no_change"], [data-state="queued"] { --tone: var(--info); --tone-soft: var(--info-soft); }
+  [data-state="awaiting_approval"] { --tone: var(--warn); --tone-soft: var(--warn-soft); }
   .pill[data-state] { color: var(--tone); background: var(--tone-soft); }
   .pill[data-state]::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
   .pill[data-state="running"]::before { animation: pulse 1.2s ease-in-out infinite; }
@@ -192,6 +193,8 @@
   .check-bad::before { content: "✗"; color: var(--bad); }
   .check-bad { color: var(--text); font-weight: 600; }
   .check-bad .help { grid-column: 2; display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .check-optional { color: var(--muted); }
+  .check-optional::before { content: "○"; color: var(--muted); }
   .run-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
   .run-note { flex: 1 1 200px; margin: 0; color: var(--muted); font-size: 12.5px; }
 
@@ -217,6 +220,19 @@
   ol.steps li.now::before { border-color: var(--info); border-right-color: transparent; animation: spin 1s linear infinite; }
   ol.steps li.failed { color: var(--bad); font-weight: 650; }
   ol.steps li.failed::before { content: "✕"; background: var(--bad); border-color: var(--bad); }
+  ol.steps li.skipped { color: var(--faint); text-decoration: line-through; }
+  ol.steps li.skipped::before { content: "–"; color: var(--faint); border-style: dashed; }
+
+  /* ---- Live browser (server mode, 2026-10-14) ---------------------------------------------- */
+  .live-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .live-tab { font: inherit; font-size: 12.5px; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); cursor: pointer; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .live-tab[aria-pressed="true"] { border-color: var(--brand-strong); background: var(--brand-soft); font-weight: 650; }
+  .live-screen { position: relative; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; background: var(--surface-2); aspect-ratio: 16 / 9; cursor: pointer; outline: none; }
+  .live-screen:focus-visible, .live-screen.focused { box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 40%, transparent); border-color: var(--brand); }
+  .live-screen img { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+  .live-wait { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; color: var(--muted); font-size: 13px; }
+  .live-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+  .live-foot .muted { flex: 1 1 220px; font-size: 12px; }
 
   .result { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
   .result-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--tone-soft); border-bottom: 1px solid color-mix(in srgb, var(--tone) 25%, transparent); }
@@ -534,6 +550,20 @@
           <div class="server-runs" id="server-runs" hidden></div>
         </section>
 
+        <!-- Server mode: the run's browser on the server, live; click, scroll and type into it (2026-10-14). -->
+        <section class="card" id="live-card" hidden>
+          <header class="card-head"><h2>Live browser</h2><span class="card-hint">Your run’s browser on the server</span></header>
+          <div class="live-tabs" id="live-tabs"></div>
+          <div class="live-screen" id="live-screen" tabindex="0" role="application" aria-label="Your run’s browser. Click into it to control it; when it is selected, typing goes to it.">
+            <img id="live-img" alt="" draggable="false" hidden>
+            <div class="live-wait" id="live-wait">Starting the browser…</div>
+          </div>
+          <div class="live-foot">
+            <span class="muted" id="live-note">Clicks, scrolling and typing here go to the real browser. While the test runs, they can disturb it.</span>
+            <button type="button" class="btn" id="live-close" hidden><span data-icon="stop"></span>Close browser</button>
+          </div>
+        </section>
+
         <!-- After a run: its result first, then the steps (the failed one marked). -->
         <section class="result" id="result" hidden></section>
 
@@ -834,10 +864,18 @@ function checkProducts() {
   checkTimer = setTimeout(refreshProducts, 200);
 }
 
+/** Whether a new order gets approved in this run: the person's backoffice account (hosted server), or .env's (desktop). */
+function approvesNewOrders() {
+  return serverMode ? accountInfo('backoffice').set : Boolean(info.setup.checks.find((check) => check.key === 'backoffice')?.ok);
+}
+
 // The checks of PRD §37 (and, for approving, a valid order number). Run stays disabled until all pass.
 function checklist() {
   const values = formValues();
-  const checks = info ? [...info.setup.checks] : [];
+  // The desktop's backoffice account in .env is optional for a new order (2026-10-14): shown as a note then.
+  const checks = (info?.setup.checks ?? []).map((check) =>
+    !check.ok && check.optionalFor === values.automation ? { label: check.optionalLabel, ok: true, optional: true } : check,
+  );
   // Hosted server: each person's own staging accounts (decisions 2026-10-08 and 2026-10-09).
   const accountCheck = (kind) => ({ label: `${ACCOUNTS[kind].name} entered`, ok: accountInfo(kind).set, help: `Enter your own staging ${ACCOUNTS[kind].name.toLowerCase()} (step 2).` });
   if (values.automation === 'approve') {
@@ -846,7 +884,13 @@ function checklist() {
     checks.push({ label: 'Order number entered (8 digits)', ok: Boolean(orderNumberOf(typed)), help: typed ? 'Use 8 digits, optionally with WTCSG in front.' : '' });
     return checks;
   }
-  if (serverMode) checks.push(accountCheck('testing'), accountCheck('backoffice'));
+  if (serverMode) {
+    checks.push(accountCheck('testing'));
+    // Optional for a new order (user's decision 2026-10-14): without it, the order waits for approval.
+    checks.push(
+      accountInfo('backoffice').set ? accountCheck('backoffice') : { label: 'No backoffice account: the order will wait for approval', ok: true, optional: true },
+    );
+  }
   // Quantity problems read "Line N: the quantity for PLU …" (launcher.cjs, parseProducts).
   const isQuantityProblem = (problem) => /^Line \d+: the quantity for PLU /.test(problem);
   const quantityProblem = parsed.problems.some(isQuantityProblem);
@@ -863,7 +907,7 @@ function checklist() {
 
 // ---- Rendering: Automation ------------------------------------------------------------------
 
-const STATE_ICONS = { ready: 'check', completed: 'check', failed: 'alert', offline: 'alert', blocked: 'alert', stopped: 'stop', interrupted: 'alert', no_change: 'minus', queued: 'clock', running: '' };
+const STATE_ICONS = { ready: 'check', completed: 'check', awaiting_approval: 'clock', failed: 'alert', offline: 'alert', blocked: 'alert', stopped: 'stop', interrupted: 'alert', no_change: 'minus', queued: 'clock', running: '' };
 
 function render() {
   if (!info) return;
@@ -881,7 +925,12 @@ function render() {
   const checks = checklist();
   $('checklist').replaceChildren(
     ...checks.map((check) =>
-      el('li', { className: check.ok ? 'check-ok' : 'check-bad' }, el('span', { textContent: check.label }), check.ok || !check.help ? null : el('span', { className: 'help', textContent: check.help })),
+      el(
+        'li',
+        { className: check.optional ? 'check-optional' : check.ok ? 'check-ok' : 'check-bad' },
+        el('span', { textContent: check.label }),
+        check.ok || !check.help ? null : el('span', { className: 'help', textContent: check.help }),
+      ),
     ),
   );
   const running = Boolean(current);
@@ -897,8 +946,12 @@ function render() {
     kind === 'approve'
       ? `Approves the order in the STAGING backoffice${serverMode ? ' with your backoffice account' : ''}. Approve Order is clicked at most once. You confirm first.`
       : serverMode
-        ? 'Runs on the server with your accounts: places a real STAGING test order and approves it in the backoffice. You confirm first.'
-        : 'Places a real STAGING test order and approves it in the backoffice. You confirm first.';
+        ? approvesNewOrders()
+          ? 'Runs on the server with your accounts: places a real STAGING test order and approves it in the backoffice. Watch it in Live browser. You confirm first.'
+          : 'Runs on the server: places a real STAGING test order and stops at "Thank you for your order"; the order then waits for approval. Watch it in Live browser. You confirm first.'
+        : approvesNewOrders()
+          ? 'Places a real STAGING test order and approves it in the backoffice. You confirm first.'
+          : 'Places a real STAGING test order and stops at "Thank you for your order"; the order then waits for approval (no backoffice account in .env). You confirm first.';
 
   // Timing: what the chosen seconds mean for this order.
   const delay = values.addDelaySeconds;
@@ -917,6 +970,7 @@ function render() {
   renderStatus(allOk);
   renderProgress();
   renderResult();
+  renderLive();
 }
 
 function statusOf(allOk) {
@@ -927,8 +981,15 @@ function statusOf(allOk) {
   }
   if (current) {
     const code = `WTCSG${current.orderNumber}`;
-    // On the server nobody closes a browser window: the run ends right after it has passed.
-    const ending = serverMode ? ' Saving the evidence…' : null;
+    // On the server the browser stays open in Live browser until Close browser (2026-10-14).
+    const ending = serverMode ? ' The browser stays open in Live browser: click Close browser when you’re done (it closes by itself after 5 minutes).' : null;
+    if (current.passed === 'order_placed_unapproved') {
+      return {
+        state: 'awaiting_approval',
+        title: 'Order placed, awaiting approval',
+        text: `Status: order ${current.orderNumber} placed ✓, not approved yet (no backoffice account).${ending ?? ' The browser shows the order confirmation: close the browser window to finish.'}`,
+      };
+    }
     if (current.passed === 'order_placed') {
       return { state: 'completed', title: 'Order placed', text: `Status: order ${current.orderNumber} placed and extracted ✓.${ending ?? ' The browser shows the backoffice order and the confirmation page: close the browser window to finish.'}` };
     }
@@ -1000,6 +1061,138 @@ function renderAccounts() {
   }
 }
 
+// ---- Server mode: my run's browser, live (user's request 2026-10-14) -------------------------
+
+// What the server last said about the live view of my run (events "live" and "frame"). Frames
+// are JPEG screenshots of the page shown; width and height are its size in the page's pixels.
+const live = { runId: null, state: 'off', tabs: [], selected: null, width: 1280, height: 720, hasFrame: false };
+let liveQueue = Promise.resolve(); // my clicks and typing, in order
+
+function resetLive(runId = null) {
+  Object.assign(live, { runId, state: runId ? 'connecting' : 'off', tabs: [], selected: null, hasFrame: false });
+  $('live-img').hidden = true;
+  $('live-img').removeAttribute('src');
+}
+
+function renderLive() {
+  const run = serverMode ? current : null;
+  $('live-card').hidden = !run;
+  if (!run) return;
+  if (live.runId !== run.runId) resetLive(run.runId);
+  $('live-wait').hidden = live.hasFrame;
+  $('live-wait').textContent = live.state === 'on' ? 'Waiting for the page…' : 'Starting the browser…';
+  $('live-close').hidden = !run.passed;
+  $('live-note').textContent = run.passed
+    ? 'The test has passed. Look around if you like, then click Close browser to finish.'
+    : 'Clicks, scrolling and typing here go to the real browser. While the test runs, they can disturb it.';
+  $('live-tabs').hidden = live.tabs.length < 2;
+  $('live-tabs').replaceChildren(
+    ...live.tabs.map((tab) =>
+      el('button', {
+        type: 'button',
+        className: 'live-tab',
+        textContent: tab.title || 'Tab',
+        title: tab.title,
+        attrs: { 'aria-pressed': String(tab.id === live.selected) },
+        onclick: () => sendLive('/api/live/select', { targetId: tab.id }),
+      }),
+    ),
+  );
+}
+
+function showFrame(frame) {
+  Object.assign(live, { width: frame.width, height: frame.height, hasFrame: true, selected: frame.targetId });
+  $('live-img').src = `data:image/jpeg;base64,${frame.data}`;
+  $('live-img').hidden = false;
+  $('live-screen').style.aspectRatio = `${frame.width} / ${frame.height}`;
+  $('live-wait').hidden = true;
+}
+
+function sendLive(path, body) {
+  const runId = live.runId;
+  if (!runId) return;
+  liveQueue = liveQueue
+    .then(() => api(path, { runId, ...body }))
+    .then(({ ok, data }) => {
+      if (!ok && data?.error) toast(data.error);
+    })
+    .catch(() => {});
+}
+
+/** Where on the page a mouse event on the picture is, in the page's own pixels. */
+function livePoint(event) {
+  const box = $('live-img').getBoundingClientRect();
+  return {
+    x: Math.round(((event.clientX - box.left) / box.width) * live.width),
+    y: Math.round(((event.clientY - box.top) / box.height) * live.height),
+  };
+}
+
+$('live-img').addEventListener('click', (event) => {
+  $('live-screen').focus();
+  sendLive('/api/live/input', { kind: 'click', ...livePoint(event) });
+});
+let liveWheel = null;
+$('live-screen').addEventListener(
+  'wheel',
+  (event) => {
+    if (!live.hasFrame) return;
+    event.preventDefault();
+    const scale = event.deltaMode === 1 ? 40 : 1; // lines → pixels
+    liveWheel = { kind: 'wheel', ...livePoint(event), deltaX: (liveWheel?.deltaX ?? 0) + event.deltaX * scale, deltaY: (liveWheel?.deltaY ?? 0) + event.deltaY * scale };
+    if (liveWheel.timer) return;
+    liveWheel.timer = setTimeout(() => {
+      const { timer, ...wheel } = liveWheel;
+      liveWheel = null;
+      sendLive('/api/live/input', wheel);
+    }, 120);
+  },
+  { passive: false },
+);
+// Typing: characters go as text, a few at a time; these keys as key presses.
+const LIVE_KEYS = new Set(['Enter', 'Backspace', 'Tab', 'Escape', 'Delete', 'ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+let liveTyped = '';
+let liveTypedTimer = null;
+function flushLiveTyped() {
+  clearTimeout(liveTypedTimer);
+  liveTypedTimer = null;
+  if (liveTyped) sendLive('/api/live/input', { kind: 'text', text: liveTyped });
+  liveTyped = '';
+}
+$('live-screen').addEventListener('keydown', (event) => {
+  if (!live.hasFrame || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (event.key.length === 1) {
+    event.preventDefault();
+    liveTyped += event.key;
+    clearTimeout(liveTypedTimer);
+    liveTypedTimer = setTimeout(flushLiveTyped, 120);
+  } else if (LIVE_KEYS.has(event.key)) {
+    event.preventDefault();
+    flushLiveTyped();
+    sendLive('/api/live/input', { kind: 'key', key: event.key });
+  }
+});
+$('live-screen').addEventListener('paste', (event) => {
+  const text = event.clipboardData?.getData('text');
+  if (!text || !live.hasFrame) return;
+  event.preventDefault();
+  flushLiveTyped();
+  sendLive('/api/live/input', { kind: 'text', text });
+});
+$('live-screen').addEventListener('focus', () => $('live-screen').classList.add('focused'));
+$('live-screen').addEventListener('blur', () => $('live-screen').classList.remove('focused'));
+$('live-close').addEventListener('click', async () => {
+  $('live-close').disabled = true;
+  try {
+    const { ok, data } = await api('/api/live/close', { runId: live.runId });
+    toast(ok ? 'Closing the browser: the result follows in a moment.' : (data.error ?? 'Could not close the browser.'));
+  } catch {
+    toast('Could not reach the server. Try again in a moment.');
+  } finally {
+    $('live-close').disabled = false;
+  }
+});
+
 function renderServerRuns() {
   const overview = info.overview ?? { running: [], waiting: [], maxParallelRuns: 0 };
   const others = overview.running.filter((run) => run.runId !== current?.runId);
@@ -1028,15 +1221,24 @@ function renderProgress() {
   if (!run) return;
   const steps = stepsOf(run);
   const row = current ? null : run.row;
-  const succeeded = current ? Boolean(run.passed) : ['completed', 'no_change'].includes(row?.status);
+  const succeeded = current ? Boolean(run.passed) : ['completed', 'no_change', 'awaiting_approval'].includes(row?.status);
+  // Placed without a backoffice account (2026-10-14): the approval steps didn't run in this run.
+  const unapproved = current ? run.passed === 'order_placed_unapproved' : row?.outcome === 'order_placed_unapproved';
   const failedStep = !current && !succeeded ? ([row?.error?.step, run.step].find((step) => steps.includes(step)) ?? null) : null;
-  const doneUpTo = succeeded ? steps.length - 1 : current ? steps.indexOf(run.step) - 1 : steps.indexOf(failedStep) - 1;
+  const doneUpTo = unapproved
+    ? steps.indexOf('Order confirmation')
+    : succeeded
+      ? steps.length - 1
+      : current
+        ? steps.indexOf(run.step) - 1
+        : steps.indexOf(failedStep) - 1;
   const item = (step, index) => {
     let state = 'todo';
     if (index <= doneUpTo) state = 'done';
+    else if (unapproved) state = 'skipped';
     else if (current && step === run.step) state = 'now';
     else if (!current && step === failedStep) state = 'failed';
-    return el('li', { className: state, textContent: step });
+    return el('li', { className: state, textContent: step, title: state === 'skipped' ? 'Not in this run: no backoffice account (the order waits for approval)' : '' });
   };
   const groups = run.automation === 'approve' ? [['Backoffice', 0, steps.length]] : [['Prepare the bag', 0, 6], ['Order and approval', 6, steps.length]];
   $('steps').className = `step-groups${groups.length === 1 ? ' single' : ''}`;
@@ -1058,13 +1260,40 @@ function renderResult() {
   box.replaceChildren(...resultCard(run, row));
 }
 
-const STATUS_ICONS = { completed: 'check', failed: 'alert', stopped: 'stop', no_change: 'minus', interrupted: 'alert', running: 'pulse' };
+const STATUS_ICONS = { completed: 'check', awaiting_approval: 'clock', failed: 'alert', stopped: 'stop', no_change: 'minus', interrupted: 'alert', running: 'pulse' };
+
+/** An order placed without a backoffice account (2026-10-14): what to do, or who approved it later. */
+function approvalNotes(row) {
+  if (row.status === 'awaiting_approval') {
+    return [callout('warn', 'alert', `Order WTCSG${row.orderNumber} is placed but not approved yet: no backoffice account was entered. Someone with a backoffice account approves it with Approve in Backoffice.`)];
+  }
+  if (row.approvedLater) {
+    return [callout('info', 'check', `Approved later by ${row.approvedLater.by} on ${formatTime(row.approvedLater.at, false)} (run ${row.approvedLater.runId}).`)];
+  }
+  return [];
+}
+
+const approveButton = (row) =>
+  row.status === 'awaiting_approval' && row.orderNumber ? button('Approve in Backoffice', 'approve', () => prefillApprove(row.orderNumber), 'btn small primary') : null;
+
+/** Approve in Backoffice (Logs / History, the result): the approval of that order, ready to confirm. */
+function prefillApprove(orderNumber) {
+  showTab('automation');
+  const approve = document.querySelector('input[name="automation"][value="approve"]');
+  if (approve.disabled) return toast('Wait until your run has ended, then approve the order.');
+  approve.checked = true;
+  $('order-number').value = orderNumber;
+  render();
+  $('section-run').scrollIntoView({ block: 'center', behavior: 'smooth' });
+  toast(`WTCSG${orderNumber} is filled in: check the Run list, then click Approve in Backoffice.`);
+}
 
 function resultCard(run, row) {
   const body = [];
   if (row.orderNumber) body.push(el('div', { className: 'order-number', textContent: `Order Number: ${row.orderNumber}` }));
   else if (row.status === 'completed' && row.automation === 'order') body.push(el('div', { textContent: 'Ready to check out. No order placed (placing an order was off).' }));
   if (row.status === 'no_change') body.push(callout('info', 'info', `WTCSG${row.orderNumber} was already ${row.backoffice?.finalStatus ?? 'extracted'}, so Approve Order was not clicked.`));
+  body.push(...approvalNotes(row));
   if (row.status === 'stopped') {
     body.push(el('div', { textContent: 'Test cancelled by user.' }));
     if (row.warning) body.push(callout('warn', 'alert', riskText(row.automation)));
@@ -1078,6 +1307,7 @@ function resultCard(run, row) {
     el(
       'div',
       { className: 'actions' },
+      approveButton(row),
       row.hasReport ? button('Open report', 'file', () => openReport(row)) : null,
       button(evidenceLabel, serverMode ? 'download' : 'folder', () => openEvidence(row)),
       button('View in Logs / History', 'list', () => openInHistory(row.runId)),
@@ -1103,7 +1333,7 @@ function factsList(pairs) {
 }
 
 function backofficeText(row) {
-  if (!row.backoffice) return null;
+  if (!row.backoffice) return row.outcome === 'order_placed_unapproved' ? (row.approvedLater ? `Approved later by ${row.approvedLater.by}` : 'Not approved yet') : null;
   const status = row.backoffice.finalStatus ?? '?';
   return `${status}${row.backoffice.approved ? ' (approved by this run)' : ' (was already extracted)'}`;
 }
@@ -1307,6 +1537,7 @@ function errorCell(row) {
     return el('div', { title: row.error.reason }, el('span', { className: 'err-code clip', style: 'display:block', textContent: row.error.code ?? 'Error' }), el('span', { className: 'sub clip', textContent: row.error.step ?? '' }));
   }
   if (row.warning) return el('span', { className: 'note-warn', textContent: 'Check the order', title: row.warning });
+  if (row.status === 'awaiting_approval') return el('span', { className: 'note-warn', textContent: 'Needs approval' });
   return el('span', { className: 'muted', textContent: '—' });
 }
 
@@ -1321,6 +1552,7 @@ function runDetails(row) {
   if (row.warning) parts.push(callout('warn', 'alert', riskText(row.automation)));
   if (row.outcome === 'ready_to_check_out') parts.push(callout('info', 'info', 'Stopped at the Checkout button: no order was placed (a run with placing an order switched off, e.g. npm run test:e2e).'));
   if (row.status === 'no_change') parts.push(callout('info', 'info', `WTCSG${row.orderNumber} was already ${row.backoffice?.finalStatus ?? 'extracted'}, so Approve Order was not clicked.`));
+  parts.push(...approvalNotes(row));
   if (row.evidenceState === 'deleted') parts.push(callout('info', 'info', 'Its screenshots and files were removed after the retention period; this summary stays.'));
   if (row.error) parts.push(errorBox(row));
   if (row.screenshots.length > 0) parts.push(el('div', {}, el('div', { className: 'field-label', textContent: `Screenshots (${row.screenshots.length})` }), el('div', { className: 'thumbs' }, ...row.screenshots.map((name) => thumb(row, name, `thumb${row.error?.screenshots.includes(name) ? ' failure' : ''}`)))));
@@ -1328,6 +1560,7 @@ function runDetails(row) {
     el(
       'div',
       { className: 'actions' },
+      approveButton(row),
       row.hasReport ? button('Open report', 'file', () => openReport(row)) : null,
       row.evidenceState === 'deleted' ? null : button(evidenceLabel, serverMode ? 'download' : 'folder', () => openEvidence(row)),
     ),
@@ -1459,12 +1692,13 @@ $('run').addEventListener('click', async () => {
         ['Products', `${parsed.products.length} product(s), ${units} item(s)`],
         ['Between adds', `${values.addDelaySeconds} seconds`],
         ['Testing account', serverMode ? accountInfo('testing').masked : null],
-        ['Backoffice account', serverMode ? accountInfo('backoffice').masked : null],
+        ['Backoffice account', approvesNewOrders() ? (serverMode ? accountInfo('backoffice').masked : null) : 'None: the order waits for approval'],
       ]).childNodes,
     );
-    $('confirm-note').textContent = serverMode
-      ? 'It runs on the server: you can follow it here, or close this page and look in Logs / History later. The order is paid with the staging test payment and approved in the staging backoffice.'
-      : 'The order is paid with the staging test payment and then approved in the staging backoffice.';
+    const paid = approvesNewOrders()
+      ? 'The order is paid with the staging test payment and approved in the staging backoffice.'
+      : 'The order is paid with the staging test payment, stops at "Thank you for your order", and waits for someone with a backoffice account to approve it.';
+    $('confirm-note').textContent = serverMode ? `It runs on the server: watch and control it in Live browser, or close this page and look in Logs / History later. ${paid}` : paid;
   }
   $('confirm-run').textContent = approving ? 'Approve in Backoffice' : 'Run test';
   $('confirm').showModal();
@@ -1592,6 +1826,7 @@ function connect() {
   });
   events.addEventListener('started', (event) => {
     current = JSON.parse(event.data);
+    resetLive(current.runId);
     if (info) info.queuePosition = null;
     $('log-box').open = true;
     showLines([], true);
@@ -1608,8 +1843,23 @@ function connect() {
   events.addEventListener('finished', (event) => {
     last = JSON.parse(event.data);
     current = null;
+    resetLive();
     render();
     loadHistory();
+  });
+  // Server mode: my run's browser, live (2026-10-14).
+  events.addEventListener('live', (event) => {
+    const data = JSON.parse(event.data);
+    if (!current || data.runId !== current.runId) return;
+    if (live.runId !== data.runId) resetLive(data.runId);
+    Object.assign(live, { state: data.state, tabs: data.tabs, selected: data.selected });
+    renderLive();
+  });
+  events.addEventListener('frame', (event) => {
+    const data = JSON.parse(event.data);
+    if (!current || data.runId !== current.runId) return;
+    if (live.runId !== data.runId) resetLive(data.runId);
+    showFrame(data);
   });
   // Server mode: who else is running (no accounts, no logs), and my place in line.
   events.addEventListener('runs', (event) => {

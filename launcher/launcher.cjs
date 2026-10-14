@@ -6,7 +6,9 @@
 //   Playwright tests for it with the browser shown, then shows the progress and the result from
 //   reports/<run>/result.json:
 //     "Place new order" (tests/order.e2e.spec.ts) places a STAGING test order, approves it in the
-//       backoffice and ends on the order (user's decisions 2026-10-05 and 2026-10-06);
+//       backoffice and ends on the order (user's decisions 2026-10-05 and 2026-10-06). Without a
+//       backoffice account it ends on "Thank you for your order" and the order waits for approval
+//       (2026-10-14);
 //     "Approve existing order" (tests/approve.e2e.spec.ts) only approves an order that already
 //       exists (user's request 2026-10-07). It never creates an order.
 // - Logs / History: every run in reports/, with its status, error and screenshots (2026-10-07).
@@ -74,6 +76,8 @@ const RISKS = {
 /** The lines the tests log once they have passed (they then wait for the browser window to close). */
 const PASS_LINES = [
   { pattern: /\[PASS\] Order test completed successfully\. Order number: (\d+)/, outcome: 'order_placed' },
+  // Placed without a backoffice account (2026-10-14): the order waits for approval.
+  { pattern: /\[PASS\] Order placed \(not approved yet[^)]*\)\. Order number: (\d+)/, outcome: 'order_placed_unapproved' },
   { pattern: /\[PASS\] Order approved successfully\. Order number: (\d+)/, outcome: 'approved' },
   { pattern: /\[PASS\] No change needed\. Order number: (\d+)/, outcome: 'no_change' },
 ];
@@ -84,8 +88,20 @@ const PASS_LINES = [
  */
 const ADD_DELAY = { default: 10, min: 0, max: 120 };
 
-/** The status of a run in Logs / History (user's request 2026-10-07). */
-const STATUSES = { running: 'Running', completed: 'Completed', failed: 'Failed', stopped: 'Stopped', no_change: 'No change', interrupted: 'Interrupted' };
+/**
+ * The status of a run in Logs / History (user's request 2026-10-07). "Awaiting approval": an order
+ * placed without a backoffice account (2026-10-14); it becomes "Completed" once someone approves it
+ * (the hosted server, server/lib/runs.cjs).
+ */
+const STATUSES = {
+  running: 'Running',
+  completed: 'Completed',
+  awaiting_approval: 'Awaiting approval',
+  failed: 'Failed',
+  stopped: 'Stopped',
+  no_change: 'No change',
+  interrupted: 'Interrupted',
+};
 
 const ORDER_NUMBER_HELP = 'The order number has 8 digits, optionally with WTCSG in front (e.g. 07091012 or WTCSG07091012).';
 
@@ -290,13 +306,29 @@ function checkSetup(root, nodeFound) {
     { label: 'Node.js installed', ok: nodeFound, help: 'Install Node.js (LTS) from nodejs.org, then open the launcher again.' },
     { label: 'Staging environment configured', ok: stagingOk, help: 'Set WATSONS_STAGING_URL in .env to the Watsons STAGING address (README, "Settings").' },
     { label: 'Account configured', ok: filledIn('WATSONS_USERNAME') && filledIn('WATSONS_PASSWORD'), help: 'Fill in WATSONS_USERNAME and WATSONS_PASSWORD in .env.' },
-    {
-      label: 'Backoffice account configured',
-      ok: filledIn('WATSONS_BACKOFFICE_USERNAME') && filledIn('WATSONS_BACKOFFICE_PASSWORD'),
-      help: 'Fill in WATSONS_BACKOFFICE_USERNAME and WATSONS_BACKOFFICE_PASSWORD in .env (each order is approved in the backoffice).',
-    },
+    backofficeCheck(['WATSONS_BACKOFFICE_USERNAME', 'WATSONS_BACKOFFICE_PASSWORD'].filter(filledIn).length),
   ];
-  return { checks, ready: checks.every((check) => check.ok) };
+  // Ready for a new order, the window's first choice.
+  return { checks, ready: checks.every((check) => check.ok || check.optionalFor === 'order') };
+}
+
+/**
+ * The backoffice account in .env, from how many of its two settings are filled in. Approving an
+ * existing order needs it. A new order can do without it (user's decision 2026-10-14): the run then
+ * stops at "Thank you for your order" and the order waits for approval. Half filled in is a mistake.
+ */
+function backofficeCheck(filled) {
+  const check = { key: 'backoffice', label: 'Backoffice account configured', ok: filled === 2 };
+  if (filled === 1) return { ...check, help: 'Fill in both WATSONS_BACKOFFICE_USERNAME and WATSONS_BACKOFFICE_PASSWORD in .env, or neither (new orders then wait for approval).' };
+  if (filled === 0) {
+    return {
+      ...check,
+      help: 'Fill in WATSONS_BACKOFFICE_USERNAME and WATSONS_BACKOFFICE_PASSWORD in .env (needed to approve orders).',
+      optionalFor: 'order',
+      optionalLabel: 'No backoffice account in .env: the order will wait for approval',
+    };
+  }
+  return { ...check, help: '' };
 }
 
 /** Who runs the tests, for Logs / History: WATSONS_OPERATOR (Windows or .env), else the Windows user name. */
@@ -314,7 +346,7 @@ function readOperator(root) {
 function checkRunRequest(body, setup) {
   const automation = body?.automation ?? 'order';
   if (!has(AUTOMATIONS, automation)) return { problems: ['Choose what to run: place a new order, or approve an existing one.'] };
-  const problems = setup.checks.filter((check) => !check.ok).map((check) => `${check.label}: no. ${check.help}`);
+  const problems = setup.checks.filter((check) => !check.ok && check.optionalFor !== automation).map((check) => `${check.label}: no. ${check.help}`);
 
   if (automation === 'approve') {
     const typed = String(body?.orderNumber ?? '').trim();
@@ -432,7 +464,16 @@ class TestRunner {
 
     const env = { ...process.env, WATSONS_RUN_ID: runId };
     // Each run sets exactly the switches it needs: none come along from Windows' own settings.
-    for (const name of ['WATSONS_PLACE_ORDER', 'WATSONS_ORDER_FILE', 'WATSONS_ADD_DELAY_SECONDS', 'WATSONS_APPROVE_ORDER', 'WATSONS_REPORTS_DIR', 'WATSONS_HTML_REPORT_DIR']) {
+    for (const name of [
+      'WATSONS_PLACE_ORDER',
+      'WATSONS_ORDER_FILE',
+      'WATSONS_ADD_DELAY_SECONDS',
+      'WATSONS_APPROVE_ORDER',
+      'WATSONS_REPORTS_DIR',
+      'WATSONS_HTML_REPORT_DIR',
+      'WATSONS_HOLD_LAST_PAGE',
+      'WATSONS_LIVE_VIEW_PORT',
+    ]) {
       delete env[name];
     }
     if (reportsDir) env.WATSONS_REPORTS_DIR = reportsDir; // the test writes its evidence there too
@@ -489,8 +530,8 @@ class TestRunner {
       step: null,
       // From the risky steps on (RISKS), stopping can leave the order or its approval unknown.
       risky: false,
-      // "order_placed", "approved" or "no_change" once the test has passed (PASS_LINES); the run then
-      // ends when the browser window is closed.
+      // "order_placed", "order_placed_unapproved", "approved" or "no_change" once the test has passed
+      // (PASS_LINES); the run then ends when the browser window is closed.
       passed: null,
       // Approve runs know it from the start; order runs once the test logs it.
       orderNumber: request.orderNumber ?? null,
@@ -688,7 +729,9 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
   let status;
   if (runId === currentRunId) status = 'running';
   else if (record?.cancelled || (!record && !result && log.includes('[launcher] Test cancelled by user.'))) status = 'stopped';
-  else if (result?.status === 'passed') status = result.outcome === 'no_change' ? 'no_change' : 'completed';
+  else if (result?.status === 'passed') {
+    status = result.outcome === 'no_change' ? 'no_change' : result.outcome === 'order_placed_unapproved' ? 'awaiting_approval' : 'completed';
+  }
   else if (result?.status === 'failed') status = 'failed';
   else if (record?.state === 'running') status = 'interrupted';
   else status = 'failed';
@@ -751,11 +794,34 @@ function readHistory(root, currentRunId = null) {
   } catch {
     return [];
   }
-  return names
+  const rows = names
     .map((runId) => historyRow(root, runId, currentRunId))
     .filter(Boolean)
-    .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.runId.localeCompare(a.runId))
-    .slice(0, HISTORY_LIMIT);
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.runId.localeCompare(a.runId));
+  markApprovedLater(rows);
+  return rows.slice(0, HISTORY_LIMIT);
+}
+
+/**
+ * An order placed without a backoffice account waits for approval (2026-10-14). It counts as
+ * Completed once a later "Approve existing order" run for it completed or found it already
+ * extracted. (The hosted server records this in its database: server/lib/runs.cjs.) rows: newest first.
+ */
+function markApprovedLater(rows) {
+  for (const row of rows) {
+    if (row.status !== 'awaiting_approval' || !row.orderNumber) continue;
+    const approval = rows.findLast(
+      (other) =>
+        other.automation === 'approve' && other.orderNumber === row.orderNumber && ['completed', 'no_change'].includes(other.status) && other.startedAt >= row.startedAt,
+    );
+    if (approval) {
+      Object.assign(row, {
+        status: 'completed',
+        statusLabel: STATUSES.completed,
+        approvedLater: { runId: approval.runId, by: approval.operator ?? 'unknown', at: approval.finishedAt ?? approval.startedAt },
+      });
+    }
+  }
 }
 
 /** A failed run's error as plain text, to send to the team (telemetry, user's request 2026-10-07). */
