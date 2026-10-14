@@ -1,0 +1,20 @@
+{
+  "name": "watsons-automation-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WatsonsTester hosted on the company VM: sign-in, each person's own testing account, parallel runs, shared reports (docs/server-deployment.md)",
+  "main": "server.cjs",
+  "scripts": {
+    "start": "node server.cjs",
+    "users": "node scripts/users.cjs",
+    "import-reports": "node scripts/import-reports.cjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.1"
+  }
+}

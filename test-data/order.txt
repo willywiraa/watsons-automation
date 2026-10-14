@@ -1,0 +1,40 @@
+# Watsons STAGING test order. Lines starting with # are notes and are ignored.
+#
+# Delivery method: Home Delivery, Click & Collect, or Shell Station
+delivery: Home Delivery
+
+# Mode: Express (products that can't go Express are left out and reported).
+# Standard is planned for a later phase.
+mode: Express
+
+# Products: paste the PLUs below, one per line (blank lines are fine).
+# For more than one unit, put the quantity after the PLU, e.g. "10321 2".
+10117
+
+10321
+
+10031
+
+46700
+
+46465
+
+46358
+
+# 45504   <- not found on staging (2026-10-05); remove the # at the start to include it again
+
+45274
+
+44814
+
+43808
+
+43640
+
+43152
+
+41806
+
+22252
+
+24377

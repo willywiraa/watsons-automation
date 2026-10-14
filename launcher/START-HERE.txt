@@ -1,0 +1,77 @@
+WatsonsTester: Watsons STAGING automation launcher
+==================================================
+
+A window with two tabs:
+- Automation: place a test order on the Watsons STAGING website (never the real shop) and
+  approve it in the staging backoffice, or approve an order that already exists.
+- Logs / History: every run, with its result, error and screenshots.
+
+
+BEFORE THE FIRST RUN (once per PC)
+----------------------------------
+1. You need Windows 10 or 11 with Microsoft Edge (already part of Windows).
+
+2. Install Node.js, the "LTS" version (20 or newer), from https://nodejs.org
+   The default options are fine.
+
+3. Unzip WatsonsTester.zip into a folder of your own, e.g. Documents\WatsonsTester.
+   If you received the zip by email, Teams or a download: first right-click the zip,
+   choose Properties, tick "Unblock", click OK, and only then unzip it.
+
+4. Open the file ".env" in that folder with Notepad and fill in the staging test account and
+   the staging backoffice account (ask the person who sent you this tool):
+
+       WATSONS_USERNAME=the account's email
+       WATSONS_PASSWORD=the account's password
+       WATSONS_BACKOFFICE_USERNAME=the backoffice user name
+       WATSONS_BACKOFFICE_PASSWORD=the backoffice password
+
+   Optional: WATSONS_OPERATOR=your name (shown in Logs / History; else your Windows user name).
+   Save and close. Keep .env private, and leave it out if you ever pass the folder on.
+
+5. Your PC must be able to open the staging website (its address is in .env). Open it in
+   Edge once to check.
+
+
+RUNNING A TEST
+--------------
+1. Double-click WatsonsTester.exe. A black window and the launcher window open: keep both
+   open. If Windows says "Windows protected your PC", click "More info", then "Run anyway".
+   If Windows says it "cannot access the specified device, path, or file" (company PCs can
+   block new programs), double-click "Start without exe.cmd" instead: same launcher.
+2. In 1 Automation, choose what to run:
+   - Place new order: paste the PLUs, one per line ("10321 2" means two of PLU 10321),
+     choose the delivery method and the mode (Express or Standard), and if you like change
+     "Seconds between adds" (default 10). Click Run order test and confirm.
+   - Approve existing order: type the order number (07091012 or WTCSG07091012), click
+     Approve in Backoffice and confirm. No new order is created.
+3. The Run list must show only ticks. Anything marked with a cross says what to fix.
+4. Edge does the work. A new order is placed, approved in the staging backoffice, and Edge stops
+   on the backoffice order showing ORDER_EXTRACTED (the shop's "Thank you" page is in the first
+   tab). Close that Edge window when you have seen it (it closes by itself after 5 minutes).
+   The launcher then shows Completed with the order number, No change, or Failed.
+5. When a run fails, the launcher shows an error report: the step, the time, the message, the
+   page and a screenshot. "Copy error report" puts it on the clipboard for Teams or email; it is
+   also saved as error-report.txt.
+6. The Logs / History tab lists every run. The evidence of each run (screenshots, log, report)
+   is in the "reports" folder.
+
+
+THE HOSTED VERSION (if your team runs WatsonsTester on the server)
+----------------------------------------------------------------
+Then you don't need this folder: open the address your admin gives you in Edge (on the Watsons
+network or VPN), sign in, enter your own staging testing account and backoffice account in step 2
+and run. You enter them once: the server remembers them for your next sign-in, locked with your
+sign-in password (untick Remember if you'd rather not). They are used only for your runs and never
+shown to anyone else. Logs / History shows everyone's runs.
+
+
+GOOD TO KNOW
+------------
+- Every "Place new order" run places a real order on STAGING (a test payment with OTP 1234)
+  and approves it in the staging backoffice. "Approve Order" is clicked at most once; if its
+  result is unclear, the launcher says so and you check the order in the backoffice yourself.
+- Each order run first empties the test account's bag. Two people using the same test account
+  at the same time spoil each other's runs: take turns, or each use your own test account.
+- If Windows refuses to start WatsonsTester.exe, double-click "Start without exe.cmd"
+  instead: it opens the same launcher.

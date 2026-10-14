@@ -1,0 +1,18 @@
+# Never in Git: the private settings (staging and backoffice accounts).
+.env
+
+# Installed packages: "npm install" puts them back.
+node_modules/
+
+# Each computer's own runs and reports.
+reports/
+playwright-report/
+test-results/
+
+# The built program and update zips.
+WatsonsTester.exe
+*.zip
+
+# Windows.
+Thumbs.db
+desktop.ini

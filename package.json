@@ -1,0 +1,26 @@
+{
+  "name": "watsons-automation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Watsons STAGING end-to-end order automation (Playwright + TypeScript)",
+  "scripts": {
+    "test": "playwright test --project=edge",
+    "test:e2e": "playwright test --project=e2e",
+    "order": "set WATSONS_PLACE_ORDER=yes&& playwright test --project=e2e order.e2e",
+    "approve": "playwright test --project=approve",
+    "report": "playwright show-report",
+    "typecheck": "tsc --noEmit",
+    "look": "playwright test --config=playwright.inspect.config.ts look.spec.ts prove.spec.ts",
+    "check:leaks": "node scripts/check-password-leaks.mjs",
+    "launcher": "node launcher/launcher.cjs",
+    "server": "node server/server.cjs",
+    "build:exe": "node scripts/build-exe.mjs",
+    "build:share": "node scripts/build-share.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.20.5",
+    "postject": "^1.0.0-alpha.6",
+    "typescript": "^7.0.2"
+  }
+}
