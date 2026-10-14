@@ -168,10 +168,13 @@ async function startServer(overrides = {}) {
 
   // ---- The page and the session ---------------------------------------------------------------
 
-  // The same ui.html as the desktop launcher, in its server mode.
+  // The same ui.html as the desktop launcher, in its server mode. Read once, at start: the page
+  // always matches the code that runs, also when new files are in place but the service hasn't
+  // restarted yet (seen 2026-10-14: the new page with the old rules).
+  const page = fs.readFileSync(UI_FILE, 'utf8').replace('<html lang="en">', '<html lang="en" data-mode="server">');
   app.get('/', (req, res) => {
     res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': PAGE_CSP });
-    res.send(fs.readFileSync(UI_FILE, 'utf8').replace('<html lang="en">', '<html lang="en" data-mode="server">'));
+    res.send(page);
   });
 
   app.get('/api/health', (req, res) => {

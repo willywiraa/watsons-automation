@@ -222,6 +222,14 @@ it couldn't follow to the end shows as **Interrupted** in the history.
   ```
 
   - It stops the service, runs `git pull`, starts the service again and checks `/api/health`.
+  - It only runs as administrator (right-click Windows PowerShell → **Run as administrator**):
+    without that, Windows doesn't let it stop the service.
+  - It also checks that the server answering was started just now. **"An OLD server is still
+    answering"** means the new files are not in use (seen 2026-10-14: the new page, but
+    "Enter your backoffice account first" from the old rules). Run the `Stop-Process …` line it
+    shows, then the script again.
+  - The page is read when the service starts, so after an update without a restart it stays the
+    old page: the page and the rules always come from the same version.
   - When `package.json` changed, it says so: then run `npm install` in `app` and `app\server`.
   - `.env`, `node_modules`, `reports` and the like are never in Git (`.gitignore`).
   - Sessions end, so people sign in again; their remembered accounts come back.
