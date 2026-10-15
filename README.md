@@ -5,6 +5,7 @@ Automated end-to-end order test for the **Watsons STAGING** website, built with
 
 > ⚠️⚠️⚠️ **Staging only.** Never point this project at the production website.
 > Requirements: [PRD.md](PRD.md). Project rules and progress: [CLAUDE.md](CLAUDE.md).
+> Planned UI/UX redesign: [UI-UX-PRD.md](UI-UX-PRD.md).
 
 **Status:** all PRD phases (1–12) built. Open **WatsonsTester.exe** (or `npm run launcher`),
 paste the PLUs, and click Run, with Express or Standard delivery (Standard since 2026-10-13). The
