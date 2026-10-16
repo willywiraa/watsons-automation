@@ -167,9 +167,12 @@ The checkout summary page offers one option per delivery mode, each a radio with
 "Fastest"; **Standard** is the other one (it shows the estimated delivery or pickup date). For
 either mode the test reads that list, leaves out the products marked "Not available", selects
 the option and waits for **Checkout** (`src/pages/CheckoutPage.ts`, `src/flows/delivery-modes.ts`).
-Standard **home delivery** also asks for a delivery date ("Please Select a delivery date"): the
-test picks the earliest available one in the date list and confirms it (verified 2026-10-13).
-Click & Collect shows an estimated pickup date instead.
+When the chosen option asks for a delivery date ("Please Select a delivery date", usually
+Standard **home delivery**), whatever the mode, the test opens "Select delivery date", picks
+the **latest** available date in the list and confirms it, before Checkout (since 2026-10-16;
+before, the earliest). It only looks at the chosen option: with Express chosen, the Standard
+option still asks for a date, and is left alone. Click & Collect shows an estimated pickup date
+instead.
 
 **No delivery options** (since 2026-10-14): when all the products can only go one way, e.g. the
 Standard-only PLUs 46700, 46465 and 46358, the page shows just that one mode, already chosen,
@@ -374,6 +377,10 @@ The `reports/` folder is never saved in Git. Delete old run folders whenever you
 - **"Missing settings in .env: …"**: open `.env`, fill in the settings named in the message, save, and run again.
 - **"❌ LOGIN_FAILED"**: the message names the step and likely causes. Check the username and
   password in `.env`, and the failure screenshot in the report (`npm run report`).
+- **"❌ BACKOFFICE_LOGIN_FAILED … seems to be open in another browser"**: the backoffice sent
+  the sign-in back to its sign-in page twice. The test already starts a fresh backoffice session
+  once by itself. This happens when the same backoffice account is open elsewhere, e.g. in your
+  own browser: close that backoffice tab or sign out there, then run again.
 - **"❌ SAFETY CHECK FAILED"**: `WATSONS_STAGING_URL` in `.env` isn't the approved staging address, or
   the site tried to send the browser somewhere else. Check the address; don't change the safety lock.
 - **"running scripts is disabled on this system"** when typing `npm` commands in PowerShell: run

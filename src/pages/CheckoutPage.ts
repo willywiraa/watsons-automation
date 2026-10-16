@@ -48,12 +48,10 @@ export class CheckoutPage {
   readonly standardLabel: Locator;
   readonly standardOption: Locator;
   readonly standardItemsButton: Locator;
-  // Standard home delivery (inspected 2026-10-13): until a date is chosen, its title reads "Please
-  // Select a delivery date" and its "Select delivery date" button (in #DELIVERY_TIMESLOT) opens a
-  // dialog with the next days, each "Available" or "Not Available" (".time.unavailable"), and a
-  // Confirm button that is enabled once one is picked. Click & Collect shows an estimated pickup
-  // date instead, and needs no choice.
-  readonly standardDateButton: Locator;
+  // A delivery date (inspected 2026-10-13, and the user's inspect of 2026-10-16): until one is
+  // chosen, the option's title reads "Please Select a delivery date" and its "Select delivery date"
+  // button opens a dialog listing the next days, each "Available" (a button) or "Not Available",
+  // with a Confirm button. Click & Collect shows an estimated pickup date instead.
   readonly deliveryDateDialog: Locator;
   readonly availableItemsDialog: Locator;
   // Verified 2026-10-05: <button class="next-btn"> Checkout </button>, exactly one.
@@ -71,7 +69,6 @@ export class CheckoutPage {
       .filter({ hasNotText: 'Fastest' });
     this.standardOption = this.standardLabel.getByRole('radio');
     this.standardItemsButton = itemsButton(this.standardLabel);
-    this.standardDateButton = this.standardLabel.locator('#DELIVERY_TIMESLOT').getByRole('button', { name: /Select delivery date/i });
     this.deliveryDateDialog = page.getByRole('dialog').filter({ hasText: 'Please select your preferred delivery date' });
     this.availableItemsDialog = page.getByRole('dialog').filter({ hasText: 'Available items' });
     this.checkoutButton = page.getByRole('button', { name: 'Checkout', exact: true });
@@ -192,9 +189,11 @@ export class CheckoutPage {
       if (status === 'not available') unavailable.push(plu);
     }
 
-    // Close the list again (Escape; the dialog's close icon if Escape doesn't work).
+    // Close the list again: Escape, or its close icon if Escape didn't. Escape closes it with a short
+    // animation, so it may still show for a moment (seen 2026-10-16).
     await this.page.keyboard.press('Escape');
-    if (await this.availableItemsDialog.isVisible()) await this.availableItemsDialog.locator('.btn-close').first().click();
+    const closed = await expect(this.availableItemsDialog).toBeHidden({ timeout: 3_000 }).then(() => true, () => false);
+    if (!closed) await this.availableItemsDialog.locator('.btn-close, .icon-close, [aria-label="Close"]').first().click();
     await expect(this.availableItemsDialog).toBeHidden();
     return unavailable;
   }
@@ -253,36 +252,57 @@ export class CheckoutPage {
   }
 
   /**
-   * Standard home delivery: when the page asks for a delivery date, picks the earliest available
-   * one and confirms it. Returns the date chosen (e.g. "Sat 17/10"), or null when none was asked
-   * for (Click & Collect, or a date already chosen).
+   * When the chosen delivery option asks for a delivery date ("Please Select a delivery date", or
+   * its "Select delivery date" button), picks the latest available date and confirms it. Only the
+   * chosen mode's option is looked at: with Express chosen, the Standard option still says "Please
+   * Select a delivery date", and clicking it would switch the order to Standard.
+   * User's request 2026-10-16: for any delivery mode, and the latest date (before: Standard only,
+   * the earliest date). Returns the date chosen (e.g. "Sat 24/10"), or null when none was asked
+   * for (Click & Collect, Express without a date, or a date already chosen).
    */
-  async chooseStandardDeliveryDateIfAsked(): Promise<string | null> {
-    const title = this.standardLabel.locator('.support-title').first();
-    const asksForDate = async () => /please select a delivery date/i.test(await title.innerText().catch(() => ''));
+  async chooseDeliveryDateIfAsked(mode: DeliveryMode): Promise<string | null> {
+    const name = MODE_NAMES[mode];
+    const { label } = this.option(mode);
+    // <button class="btn btn-outline-primary enhance"><img alt="icon"> Select delivery date </button>
+    const openButton = label.getByRole('button', { name: /Select delivery date/i });
+    const title = label.locator('.support-title').first();
+    const asksForDate = async () =>
+      (await openButton.isVisible().catch(() => false)) || /please select a delivery date/i.test(await title.innerText({ timeout: 1_000 }).catch(() => ''));
     if (!(await asksForDate())) return null;
 
     const notChosen = (reason: string, error?: unknown) =>
-      new StepError('DELIVERY_DATE_NOT_AVAILABLE', 'Standard Delivery Selection', reason, [
+      new StepError('DELIVERY_DATE_NOT_AVAILABLE', `${name} Delivery Selection`, reason, [
         'no delivery date is available for these products or this address',
         'staging UI changed',
       ], error);
     await closeCookieNoticeIfShown(this.page);
     await closeChatPanelIfShown(this.page);
-    await this.standardDateButton.click();
     try {
+      await openButton.click();
       await expect(this.deliveryDateDialog).toBeVisible();
     } catch (error) {
       throw notChosen('"Select delivery date" did not open the list of delivery dates.', error);
     }
-    // The days are listed in date order: the first one with a slot that isn't "unavailable".
-    const day = this.deliveryDateDialog.locator('.timeslot').filter({ has: this.page.locator('.time:not(.unavailable) button') }).first();
-    if ((await day.count()) === 0) {
-      await this.deliveryDateDialog.locator('.icon-close').first().click();
+    // <button class="btn btn-primary-outline"> Available </button>, one per free slot, in date
+    // order; "Not Available" days have none. The last one is the latest date.
+    const available = this.deliveryDateDialog.getByRole('button', { name: 'Available', exact: true });
+    if ((await available.count()) === 0) {
+      await this.deliveryDateDialog.locator('.icon-close, .btn-close, [aria-label="Close"]').first().click().catch(() => {});
       throw notChosen('Every date in the list is "Not Available".');
     }
-    const date = normalizeDay(await day.locator('.date').innerText());
-    await day.locator('.time:not(.unavailable) button').first().click();
+    const latest = available.last();
+    // The day it belongs to: the last date written before it in the list ("Sat 24/10"; the day and
+    // the date can be separate pieces of text).
+    const day = await latest.evaluate((button) => {
+      const list = button.closest('[role="dialog"]') ?? document.body;
+      const walker = document.createTreeWalker(list, NodeFilter.SHOW_TEXT);
+      let before = '';
+      for (let node = walker.nextNode(); node && !button.contains(node); node = walker.nextNode()) before += ` ${node.textContent ?? ''}`;
+      return [...before.matchAll(/\b([A-Z][a-z]{2})\s+(\d{1,2}\/\d{1,2})\b/g)].at(-1)?.slice(1, 3).join(' ') ?? null;
+    });
+    const date = day ? normalizeDay(day) : 'the latest date';
+    await latest.click();
+    // <button class="btn btn-primary"> Confirm </button>
     const confirm = this.deliveryDateDialog.getByRole('button', { name: 'Confirm', exact: true });
     try {
       await expect(confirm).toBeEnabled();
@@ -291,10 +311,12 @@ export class CheckoutPage {
       await expect.poll(asksForDate, { timeout: 60_000 }).toBe(false);
       await expect(this.checkoutButton).toBeVisible({ timeout: 90_000 });
     } catch (error) {
-      await throwIfServerErrorShown(this.page, 'Standard Delivery Selection', error);
+      await throwIfServerErrorShown(this.page, `${name} Delivery Selection`, error);
       throw notChosen(`Delivery date ${date} was picked, but the page did not take it.`, error);
     }
-    log(`Delivery date chosen: ${date} (the earliest available)`);
+    // The option now says what was chosen ("Estimated Delivery Date: 24/10 (Sat) 07:00 - 21:00").
+    const shown = (await title.innerText().catch(() => '')).replace(/\s+/g, ' ').match(/Estimated Delivery Date:\s*(.+)$/i)?.[1];
+    log(`Delivery date chosen: ${date} (the latest available)${shown ? `; the page shows ${shown}` : ''}`);
     return date;
   }
 

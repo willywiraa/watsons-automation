@@ -23,14 +23,9 @@ export interface DeliveryModeSteps {
 
 // Express (user's decision 2026-10-05) and Standard (user's request 2026-10-13: "the rest are the
 // same"): continue with the products the mode can deliver, and report the others. Staging itself
-// leaves "Not available" products out once the mode is chosen.
-function modeSteps(
-  mode: DeliveryMode,
-  name: string,
-  notFound: 'EXPRESS_OPTION_NOT_FOUND' | 'STANDARD_OPTION_NOT_FOUND',
-  /** What else the mode needs once it is selected. */
-  afterSelect?: (checkout: CheckoutPage) => Promise<unknown>,
-): DeliveryModeSteps {
+// leaves "Not available" products out once the mode is chosen. Whichever the mode, a delivery date
+// its option asks for is chosen before Checkout: the latest available (user's request 2026-10-16).
+function modeSteps(mode: DeliveryMode, name: string, notFound: 'EXPRESS_OPTION_NOT_FOUND' | 'STANDARD_OPTION_NOT_FOUND'): DeliveryModeSteps {
   return {
     async selectOnCheckout(checkout, lines, namesByPlu) {
       // No options to choose from (user's request 2026-10-14): the products can only go one way,
@@ -44,7 +39,7 @@ function modeSteps(
           ]);
         }
         log(`No delivery options to choose from: these products only go ${name}, already chosen. Going on to Checkout.`);
-        await afterSelect?.(checkout);
+        await checkout.chooseDeliveryDateIfAsked(mode);
         await checkout.expectReadyToCheckOut(`${name} Delivery Selection`);
         // Options drawn late after all: then choose as usual, below.
         if (!(await checkout.showsChoice())) return { kept: lines, excluded: [] };
@@ -63,7 +58,7 @@ function modeSteps(
         log(`All products are available for ${name}`);
       }
       await checkout.select(mode);
-      await afterSelect?.(checkout);
+      await checkout.chooseDeliveryDateIfAsked(mode);
       return { kept, excluded };
     },
   };
@@ -71,8 +66,7 @@ function modeSteps(
 
 const MODE_STEPS: Record<DeliveryMode, DeliveryModeSteps> = {
   express: modeSteps('express', 'Express', 'EXPRESS_OPTION_NOT_FOUND'),
-  // Standard home delivery also needs a delivery date: the earliest available one (2026-10-13).
-  standard: modeSteps('standard', 'Standard', 'STANDARD_OPTION_NOT_FOUND', (checkout) => checkout.chooseStandardDeliveryDateIfAsked()),
+  standard: modeSteps('standard', 'Standard', 'STANDARD_OPTION_NOT_FOUND'),
 };
 
 export function deliveryModeSteps(mode: DeliveryMode): DeliveryModeSteps {

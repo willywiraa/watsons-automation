@@ -51,8 +51,8 @@ function fakeCheckout(offered: ('express' | 'standard')[], calls: string[], { ch
     select: async (mode: string) => {
       calls.push(`select ${mode}`);
     },
-    chooseStandardDeliveryDateIfAsked: async () => {
-      calls.push('delivery date if asked');
+    chooseDeliveryDateIfAsked: async (mode: string) => {
+      calls.push(`${mode} date if asked`);
       return null;
     },
     expectReadyToCheckOut: async () => {
@@ -106,7 +106,7 @@ test.describe('delivery step of the order flow', () => {
     const calls: string[] = [];
     const result = await deliveryModeSteps('standard').selectOnCheckout(fakeCheckout(['standard'], calls), LINES, NAMES);
     expect(result).toEqual({ kept: LINES, excluded: [] });
-    expect(calls).toEqual(['delivery date if asked', 'Checkout ready']);
+    expect(calls).toEqual(['standard date if asked', 'Checkout ready']);
   });
 
   test('Express with products that only go Standard: a clear error before Checkout, no order', async () => {
@@ -124,13 +124,94 @@ test.describe('delivery step of the order flow', () => {
     const calls: string[] = [];
     const result = await deliveryModeSteps('standard').selectOnCheckout(fakeCheckout(['express', 'standard'], calls), LINES, NAMES);
     expect(result).toEqual({ kept: LINES.slice(0, 2), excluded: [LINES[2]] });
-    expect(calls).toEqual(['look up standard', 'select standard', 'delivery date if asked']);
+    expect(calls).toEqual(['look up standard', 'select standard', 'standard date if asked']);
+  });
+
+  test('Express with options: selected, then its own date checked too', async () => {
+    const calls: string[] = [];
+    await deliveryModeSteps('express').selectOnCheckout(fakeCheckout(['express', 'standard'], calls), LINES, NAMES);
+    expect(calls).toEqual(['look up express', 'select express', 'express date if asked']);
   });
 
   test('options that appear after all: the mode is then selected as usual', async () => {
     const calls: string[] = [];
     const result = await deliveryModeSteps('standard').selectOnCheckout(fakeCheckout(['standard'], calls, { choiceLater: true }), LINES, NAMES);
     expect(result).toEqual({ kept: LINES.slice(0, 2), excluded: [LINES[2]] });
-    expect(calls).toEqual(['delivery date if asked', 'Checkout ready', 'look up standard', 'select standard', 'delivery date if asked']);
+    expect(calls).toEqual(['standard date if asked', 'Checkout ready', 'look up standard', 'select standard', 'standard date if asked']);
+  });
+});
+
+// The delivery date (user's request 2026-10-16: for any mode, the latest available date). A stand-in
+// for the checkout page and its date dialog, from the user's inspect of 2026-10-16.
+function datedOption(mode: 'express' | 'standard', asksForDate: boolean): string {
+  const title = asksForDate ? 'Please Select a delivery date' : 'Estimated Delivery Date: 17/10 (Sat)';
+  const button = asksForDate
+    ? '<button type="button" class="btn btn-outline-primary enhance pick-date"><img alt="icon" src="data:,"> Select delivery date </button>'
+    : '';
+  return `
+    <e2-radio name="deliveryMethod" class="option ${mode}"${asksForDate ? ' data-asks' : ''}><div class="form-radio"><label>
+      <input type="radio" name="deliveryMethod" value="">
+      ${mode === 'express' ? '<span>Fastest</span>' : ''}
+      <div class="support-title"><span>${title}</span></div>
+      ${button}
+    </label></div></e2-radio>`;
+}
+function datePage(options: string, days = ['Tue 20/10', 'Fri 23/10', 'Sat 24/10']): string {
+  // The day name and the date are separate pieces of text, as on staging (2026-10-16).
+  const rows = days.map((day) => `<div class="timeslot"><div class="date"><span>${day.split(' ')[0]}</span><br><span>${day.split(' ')[1]}</span></div><button type="button" class="btn btn-primary-outline">Available</button></div>`);
+  return `${options}
+    <div role="dialog" id="dates" hidden>
+      <p>Please select your preferred delivery date. Kindly note that there will be no delivery on Sundays and Public Holidays.</p>
+      ${rows.join('')}
+      <div class="timeslot"><div class="date">Sun 25/10</div><span>Not Available</span></div>
+      <button type="button" class="icon-close">×</button>
+      <button type="button" class="btn btn-primary" id="confirm" disabled>Confirm</button>
+    </div>
+    <button class="next-btn"> Checkout </button>
+    <script>
+      let picked = null;
+      for (const open of document.querySelectorAll('.pick-date')) open.onclick = (event) => { event.preventDefault(); window.opened = true; document.getElementById('dates').hidden = false; };
+      for (const slot of document.querySelectorAll('#dates .btn-primary-outline')) {
+        slot.onclick = () => { picked = [...slot.closest('.timeslot').querySelectorAll('.date span')].map((part) => part.textContent).join(' '); document.getElementById('confirm').disabled = false; };
+      }
+      document.querySelector('#dates .icon-close').onclick = () => { document.getElementById('dates').hidden = true; };
+      document.getElementById('confirm').onclick = () => {
+        document.getElementById('dates').hidden = true;
+        const option = document.querySelector('[data-asks]');
+        option.querySelector('.support-title').textContent = 'Estimated Delivery Date: ' + picked;
+        option.querySelector('.pick-date').outerHTML = '<button type="button">Change Dateslot</button>';
+        window.picked = picked;
+      };
+    </script>`;
+}
+
+test.describe('delivery date on the checkout page', () => {
+  test('the chosen option asks for a date: the latest available one is picked and confirmed', async ({ page }) => {
+    await page.setContent(datePage(datedOption('express', false) + datedOption('standard', true)));
+    expect(await new CheckoutPage(page).chooseDeliveryDateIfAsked('standard')).toBe('Sat 24/10');
+    expect(await page.evaluate(() => (window as unknown as { picked?: string }).picked)).toBe('Sat 24/10');
+  });
+
+  test('also when the page shows no options (one Standard option, its radio hidden)', async ({ page }) => {
+    await page.setContent(datePage(datedOption('standard', true).replace('value="">', 'value="" style="display: none">')));
+    expect(await new CheckoutPage(page).chooseDeliveryDateIfAsked('standard')).toBe('Sat 24/10');
+  });
+
+  test('also for Express, when its own option asks for a date', async ({ page }) => {
+    await page.setContent(datePage(datedOption('express', true) + datedOption('standard', false)));
+    expect(await new CheckoutPage(page).chooseDeliveryDateIfAsked('express')).toBe('Sat 24/10');
+  });
+
+  test('Express chosen: the Standard option still asking for a date is left alone', async ({ page }) => {
+    await page.setContent(datePage(datedOption('express', false) + datedOption('standard', true)));
+    expect(await new CheckoutPage(page).chooseDeliveryDateIfAsked('express')).toBeNull();
+    expect(await page.evaluate(() => (window as unknown as { opened?: boolean }).opened)).toBeUndefined();
+  });
+
+  test('no date available: a clear error, and the list is closed again', async ({ page }) => {
+    await page.setContent(datePage(datedOption('standard', true), []));
+    const error = await new CheckoutPage(page).chooseDeliveryDateIfAsked('standard').catch((thrown: unknown) => thrown);
+    expect(error).toMatchObject({ code: 'DELIVERY_DATE_NOT_AVAILABLE', step: 'Standard Delivery Selection' });
+    await expect(page.locator('#dates')).toBeHidden();
   });
 });
