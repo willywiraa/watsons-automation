@@ -652,22 +652,28 @@ test.describe('hosted server', () => {
 
   test('runs saved as failed after their test had passed are corrected at the next start', async () => {
     // Until 2026-10-14, Close browser closed the whole browser and the test's clean-up then failed.
-    const run = (runId: string, orderNumber: string, passed: string | null) => {
+    const run = (runId: string, orderNumber: string, passed: string | null, automation = 'order') => {
       const dir = runFolder(setup, runId);
       mkdirSync(dir, { recursive: true });
       const startedAt = `${runId.slice(0, 10)}T${runId.slice(11).replace(/-/g, ':')}.000Z`;
-      const record = { runId, automation: 'order', operator: 'Felix', state: 'finished', startedAt, finishedAt: startedAt, orderNumber, passed, cancelled: false };
+      const record = { runId, automation, operator: 'Felix', state: 'finished', startedAt, finishedAt: startedAt, orderNumber, passed, cancelled: false };
       writeFileSync(join(dir, 'launcher-run.json'), JSON.stringify(record));
       const error = { code: null, step: 'Order confirmation', message: 'browserContext.close: Test ended.' };
-      writeFileSync(join(dir, 'result.json'), JSON.stringify({ status: 'failed', outcome: 'failed', automation: 'order', orderNumber, error }));
+      writeFileSync(join(dir, 'result.json'), JSON.stringify({ status: 'failed', outcome: 'failed', automation, orderNumber, error }));
       setup.app.store.startRun(
-        { runId, automation: 'order', status: 'failed', statusLabel: 'Failed', startedAt, orderNumber, folder: `${runId.slice(0, 10)}\\${runId}` },
+        { runId, automation, status: 'failed', statusLabel: 'Failed', startedAt, orderNumber, folder: `${runId.slice(0, 10)}\\${runId}` },
         { username: 'bob', displayName: 'Felix' },
       );
     };
     run('2026-10-14_16-16-54', '07110006', 'order_placed_unapproved'); // passed, then the browser was closed
     run('2026-10-14_16-30-00', '07110007', 'order_placed_unapproved'); // the same, approved meanwhile below
     run('2026-10-14_16-40-00', '07110008', null); // really failed
+    // An approval that passed, then the browser was closed (2026-10-16): its order counts as approved.
+    setup.app.store.startRun(
+      { runId: '2026-10-16_09-50-00', automation: 'order', status: 'awaiting_approval', statusLabel: 'Awaiting approval', startedAt: '2026-10-16T09:50:00.000Z', orderNumber: '07114005' },
+      { username: 'bob', displayName: 'Felix' },
+    );
+    run('2026-10-16_10-03-00', '07114005', 'approved', 'approve');
     setup.app.store.startRun(
       { runId: '2026-10-14_17-00-00', automation: 'approve', status: 'completed', statusLabel: 'Completed', startedAt: '2026-10-14T17:00:00.000Z', finishedAt: '2026-10-14T17:03:00.000Z', orderNumber: '07110007' },
       { username: 'carol', displayName: 'Carol' },
@@ -681,6 +687,8 @@ test.describe('hosted server', () => {
     expect(row('2026-10-14_16-16-54')).toMatchObject({ status: 'awaiting_approval', outcome: 'order_placed_unapproved', orderNumber: '07110006', error: null });
     expect(row('2026-10-14_16-30-00')).toMatchObject({ status: 'completed', approvedLater: { runId: '2026-10-14_17-00-00', by: 'Carol' } });
     expect(row('2026-10-14_16-40-00')).toMatchObject({ status: 'failed' });
+    expect(row('2026-10-16_10-03-00')).toMatchObject({ status: 'completed', outcome: 'approved', error: null });
+    expect(row('2026-10-16_09-50-00')).toMatchObject({ status: 'completed', approvedLater: { runId: '2026-10-16_10-03-00', by: 'Felix' } });
   });
 
   test('the page: sign in, both accounts, run, and the shared history', async ({ page }) => {

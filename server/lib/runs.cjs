@@ -353,20 +353,24 @@ class RunManager {
    * rows changed.
    */
   recheckFailedRuns() {
-    const saved = this.store.listRuns(); // newest first
     let changed = 0;
-    for (const old of saved) {
+    for (const old of this.store.listRuns()) {
       if (!['failed', 'interrupted'].includes(old.status)) continue;
       const dir = runFolder(this.config.evidenceDir, old.runId);
       const row = dir && fs.existsSync(dir) ? rowFromFolder(dir, old.runId, { folder: old.folder }) : null;
       if (!row || ['failed', 'interrupted'].includes(row.status)) continue;
       this.store.finishRun(row, listFiles(dir), { username: old.username, displayName: old.operator });
       changed++;
-      // Approved meanwhile by an "Approve existing order" run: then it is approved too.
-      const approval =
-        row.status === 'awaiting_approval' &&
-        saved.findLast((other) => other.automation === 'approve' && other.orderNumber === row.orderNumber && ['completed', 'no_change'].includes(other.status) && other.startedAt >= row.startedAt);
-      if (approval) this.store.markApprovedLater(row.orderNumber, { runId: approval.runId, by: approval.operator, at: approval.finishedAt ?? approval.startedAt });
+    }
+    if (changed === 0) return 0;
+    // A corrected order may have been approved meanwhile, and a corrected approval may have
+    // approved an order waiting for it: link each order to its first approval.
+    const approvals = this.store
+      .listRuns()
+      .filter((row) => row.automation === 'approve' && row.orderNumber && ['completed', 'no_change'].includes(row.status))
+      .reverse(); // oldest first
+    for (const approval of approvals) {
+      this.store.markApprovedLater(approval.orderNumber, { runId: approval.runId, by: approval.operator, at: approval.finishedAt ?? approval.startedAt });
     }
     return changed;
   }
