@@ -45,18 +45,19 @@ RUNNING A TEST
    block new programs), double-click "Start without exe.cmd" instead: same launcher.
 2. On the left, choose what to run:
    - Place new order: paste the PLUs, one per line ("10321 2" means two of PLU 10321),
-     choose the delivery method and the mode (Express or Standard), and if you like change
-     "Seconds between adds" (default 10). Click Place test order and confirm.
+     choose the delivery method and the mode (Express or Standard). Click Place test order
+     and confirm.
    - Approve existing order: type the order number (07091012 or WTCSG07091012), click
      Approve order and confirm. No new order is created.
 3. The bar at the top must say Ready. If it says Not ready, it names what to fix ("Show
    checks" lists every check).
-4. Edge does the work; you can watch it and use it. A new order is placed, approved in the
-   staging backoffice, and Edge stops on the backoffice order showing ORDER_EXTRACTED (the shop's
-   "Thank you" page is in the first tab). Without a backoffice account, Edge stops on the
-   "Thank you for your order" page. Close that Edge window when you have seen it (it closes by
-   itself after 5 minutes). The launcher then shows Completed with the order number, Awaiting
-   approval (placed, not approved yet), No change, or Failed.
+4. Edge does the work; you can watch it and use it, in its own window or in "Live browser" in
+   the launcher window. A new order is placed, approved in the staging backoffice, and Edge stops
+   on the backoffice order showing ORDER_EXTRACTED (the shop's "Thank you" page is in the first
+   tab). Without a backoffice account, Edge stops on the "Thank you for your order" page. When
+   you have seen it, click "Close browser" (or close that Edge window); it closes by itself after
+   5 minutes. The launcher then shows Completed with the order number, Awaiting approval (placed,
+   not approved yet), No change, or Failed.
 5. When a run fails, the launcher shows the step it failed at, with the message, the time, the
    page and a screenshot. "Copy error report" puts it on the clipboard for Teams or email; it is
    also saved as error-report.txt.

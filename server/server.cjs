@@ -104,7 +104,6 @@ async function startServer(overrides = {}) {
     deliveryMethods: launcher.DELIVERY_METHODS,
     modes: launcher.MODES,
     steps: { approve: launcher.APPROVE_STEPS, order: Object.fromEntries(Object.keys(launcher.MODES).map((mode) => [mode, launcher.stepsFor('order', mode)])) },
-    addDelay: launcher.ADD_DELAY,
     statuses: launcher.STATUSES,
     riskWarnings: Object.fromEntries(Object.entries(launcher.RISKS).map(([automation, risk]) => [automation, risk.warning])),
     operator: session.displayName,

@@ -23,6 +23,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const net = require('node:net');
 const readline = require('node:readline');
 const { spawn, execFile } = require('node:child_process');
 const { parseEnv } = require('node:util');
@@ -83,10 +84,11 @@ const PASS_LINES = [
 ];
 
 /**
- * "Seconds between adds" (user's request 2026-10-07): the time from one "add to bag" click to the
- * next. src/config/settings.ts checks the same limits (tests/launcher.spec.ts keeps them the same).
+ * The time from one "add to bag" click to the next: fixed at 5 seconds (user's decision
+ * 2026-10-21; the window no longer has "Seconds between adds"). The test uses ADD_DELAY_SECONDS
+ * in src/config/settings.ts (tests/launcher.spec.ts keeps the two the same).
  */
-const ADD_DELAY = { default: 10, min: 0, max: 120 };
+const ADD_DELAY_SECONDS = 5;
 
 /**
  * The status of a run in Logs / History (user's request 2026-10-07). "Awaiting approval": an order
@@ -112,8 +114,6 @@ const SCREENSHOT_NAME = /^screenshot-[a-z0-9-]+\.png$/i;
 const RECORD_FILE = 'launcher-run.json';
 /** A failed run's error, ready to send to the team (telemetry, user's request 2026-10-07). */
 const ERROR_REPORT_FILE = 'error-report.txt';
-/** What the window remembers between runs, in reports/ next to launcher-last-order.txt. */
-const SETTINGS_FILE = 'launcher-settings.json';
 const HISTORY_LIMIT = 500;
 
 const isPackaged = (() => {
@@ -121,6 +121,19 @@ const isPackaged = (() => {
     return require('node:sea').isSea();
   } catch {
     return false;
+  }
+})();
+
+/**
+ * The live browser view of a run (server/lib/liveview.cjs, shared with the hosted server; on this
+ * PC since 2026-10-21). An exe without that file has none: the run's Edge window is on the PC anyway.
+ */
+const LiveView = (() => {
+  try {
+    const file = path.join(isPackaged ? path.dirname(process.execPath) : path.join(__dirname, '..'), 'server', 'lib', 'liveview.cjs');
+    return require('node:module').createRequire(file)(file).LiveView ?? null;
+  } catch {
+    return null;
   }
 })();
 
@@ -190,16 +203,6 @@ function normalizeOrderNumber(text) {
   return String(text ?? '').replace(/\s+/g, '').match(/^(?:WTCSG)?(\d{8})$/i)?.[1] ?? null;
 }
 
-/** "Seconds between adds" from the window: { seconds } or { problem }. Not given: the default. */
-function parseAddDelay(value) {
-  if (value === undefined || value === null) return { seconds: ADD_DELAY.default };
-  const text = String(value).trim();
-  if (!/^\d+$/.test(text) || Number(text) < ADD_DELAY.min || Number(text) > ADD_DELAY.max) {
-    return { problem: `Seconds between adds must be a whole number from ${ADD_DELAY.min} to ${ADD_DELAY.max}.` };
-  }
-  return { seconds: Number(text) };
-}
-
 /** The order file the test reads (format: README, "The test order"). */
 function orderFileText(order) {
   return [
@@ -235,24 +238,8 @@ function parseOrderText(text) {
   return { productLines, deliveryMethod, mode };
 }
 
-/** What the window remembers between runs: "Seconds between adds". */
-function readLauncherSettings(root) {
-  const saved = readJson(path.join(root, 'reports', SETTINGS_FILE));
-  const delay = parseAddDelay(saved?.addDelaySeconds);
-  return { addDelaySeconds: delay.problem ? ADD_DELAY.default : delay.seconds };
-}
-
-function saveLauncherSettings(root, settings) {
-  try {
-    fs.writeFileSync(path.join(root, 'reports', SETTINGS_FILE), JSON.stringify(settings, null, 2));
-  } catch {
-    // Only a convenience for the next time the window opens.
-  }
-}
-
 /** What the window starts with: the last order run from the launcher, else test-data/order.txt. */
 function readDefaults(root) {
-  const { addDelaySeconds } = readLauncherSettings(root);
   const files = [path.join(root, 'reports', 'launcher-last-order.txt'), path.join(root, 'test-data', 'order.txt')];
   for (const file of files) {
     const text = readText(file);
@@ -264,10 +251,9 @@ function readDefaults(root) {
       // A mode that isn't available (yet) is not chosen for the person.
       mode: MODES[order.mode]?.available ? order.mode : 'express',
       source: path.relative(root, file),
-      addDelaySeconds,
     };
   }
-  return { products: '', deliveryMethod: 'home_delivery', mode: 'express', source: null, addDelaySeconds };
+  return { products: '', deliveryMethod: 'home_delivery', mode: 'express', source: null };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -365,12 +351,11 @@ function checkRunRequest(body, setup) {
   if (!has(DELIVERY_METHODS, body?.deliveryMethod)) problems.push('Choose a delivery method.');
   if (!has(MODES, body?.mode)) problems.push('Choose the delivery mode.');
   else if (!MODES[body.mode].available) problems.push(`${MODES[body.mode].label} delivery is not available yet (planned for a later phase). Choose Express.`);
-  const delay = parseAddDelay(body?.addDelaySeconds);
-  if (delay.problem) problems.push(delay.problem);
   // Every run places an order, so the window asks first (PRD §38); without that answer, no run.
   if (body?.confirmed !== true) problems.push('Placing an order needs your confirmation first.');
   if (problems.length > 0) return { problems };
-  return { problems, order: { automation, products, deliveryMethod: body.deliveryMethod, mode: body.mode, addDelaySeconds: delay.seconds } };
+  // The time between adds is fixed (2026-10-21): a value sent along is ignored.
+  return { problems, order: { automation, products, deliveryMethod: body.deliveryMethod, mode: body.mode, addDelaySeconds: ADD_DELAY_SECONDS } };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -433,7 +418,7 @@ function writeRecord(run, state) {
  *   headed            show the browser (true); the server runs headless
  *   reportsDir        evidence folder elsewhere, grouped by day (runFolderPath); null: <root>/reports
  *   isolate           own Playwright output and HTML report folders per run, so runs can go on in parallel
- *   rememberDefaults  save the last order and "seconds between adds" for the next window (true)
+ *   rememberDefaults  save the last order for the next window (true)
  *   env               (request) => settings for this run only, e.g. the person's testing account. They
  *                     go into the test's environment only: never onto the run, into files or logs.
  *   onFinished        (run, row) => called when a run has ended, before the window hears of it
@@ -453,8 +438,8 @@ class TestRunner {
     return this.current !== null;
   }
 
-  /** Starts a run checked by checkRunRequest(). */
-  start(request) {
+  /** Starts a run checked by checkRunRequest(). livePort: the browser's DevTools port, for the live view. */
+  start(request, { livePort = null } = {}) {
     if (this.current) throw new Error('A test is already running.');
     const { headed, reportsDir, isolate, rememberDefaults } = this.options;
     const automation = has(AUTOMATIONS, request.automation) ? request.automation : 'order';
@@ -467,7 +452,6 @@ class TestRunner {
     for (const name of [
       'WATSONS_PLACE_ORDER',
       'WATSONS_ORDER_FILE',
-      'WATSONS_ADD_DELAY_SECONDS',
       'WATSONS_APPROVE_ORDER',
       'WATSONS_REPORTS_DIR',
       'WATSONS_HTML_REPORT_DIR',
@@ -477,6 +461,7 @@ class TestRunner {
       delete env[name];
     }
     if (reportsDir) env.WATSONS_REPORTS_DIR = reportsDir; // the test writes its evidence there too
+    if (livePort) env.WATSONS_LIVE_VIEW_PORT = String(livePort); // playwright.config.ts: the browser opens it
     if (this.options.env) {
       for (const name of SECRET_SETTINGS) delete env[name];
       for (const [name, value] of Object.entries(this.options.env(request) ?? {})) if (value !== undefined && value !== null) env[name] = String(value);
@@ -489,15 +474,11 @@ class TestRunner {
     } else {
       const orderFile = path.join(folder, 'order.txt');
       fs.writeFileSync(orderFile, orderFileText(request));
-      if (rememberDefaults) {
-        fs.writeFileSync(path.join(this.root, 'reports', 'launcher-last-order.txt'), orderFileText(request));
-        saveLauncherSettings(this.root, { addDelaySeconds: request.addDelaySeconds });
-      }
+      if (rememberDefaults) fs.writeFileSync(path.join(this.root, 'reports', 'launcher-last-order.txt'), orderFileText(request));
       env.WATSONS_ORDER_FILE = orderFile;
       // The person confirmed placing a STAGING test order for this run.
       env.WATSONS_PLACE_ORDER = 'yes';
-      env.WATSONS_ADD_DELAY_SECONDS = String(request.addDelaySeconds);
-      what = `places a STAGING test order (${request.addDelaySeconds} s between adds)`;
+      what = 'places a STAGING test order';
     }
 
     const { project, spec } = AUTOMATIONS[automation];
@@ -941,7 +922,15 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
     const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of clients) client.write(message);
   };
-  const runner = new TestRunner(root, send, echo, () => readOperator(root));
+  // The run's browser, live in the window (2026-10-21, as on the hosted server): the test's Edge
+  // opens a DevTools port on this PC only; the window shows its pictures and passes clicks and typing on.
+  let live = null;
+  const runner = new TestRunner(root, send, echo, () => readOperator(root), {
+    onFinished: () => {
+      live?.stop();
+      live = null;
+    },
+  });
   // Not packaged, this very program is Node. Packaged, the test needs Node.js installed.
   const nodeFound = !isPackaged || (await new Promise((done) => execFile('node', ['--version'], { windowsHide: true }, (error) => done(!error))));
   const setup = () => checkSetup(root, nodeFound);
@@ -955,8 +944,8 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
     deliveryMethods: DELIVERY_METHODS,
     modes: MODES,
     steps: { approve: APPROVE_STEPS, order: Object.fromEntries(Object.keys(MODES).map((mode) => [mode, stepsFor('order', mode)])) },
-    addDelay: ADD_DELAY,
     statuses: STATUSES,
+    liveView: Boolean(LiveView),
     riskWarnings: Object.fromEntries(Object.entries(RISKS).map(([automation, risk]) => [automation, risk.warning])),
     operator: readOperator(root),
     stagingHost: STAGING_HOST,
@@ -990,6 +979,8 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
       if (req.method === 'GET' && url.pathname === '/api/events') {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
         res.write(`event: state\ndata: ${JSON.stringify(state())}\n\n`);
+        // A run going on: its live browser view so far.
+        live?.replay((event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         clients.add(res);
         clearTimeout(idleTimer);
         req.on('close', () => {
@@ -1019,8 +1010,27 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
         if (runner.running) return json(res, 409, { problems: ['A test is already running.'] });
         const checked = checkRunRequest(body, setup());
         if (!checked.order) return json(res, 400, { problems: checked.problems });
-        const run = runner.start(checked.order);
+        const livePort = LiveView ? await freePort().catch(() => null) : null;
+        if (runner.running) return json(res, 409, { problems: ['A test is already running.'] }); // started meanwhile
+        const run = runner.start(checked.order, { livePort });
+        if (livePort) {
+          live = new LiveView({ runId: run.runId, port: livePort, send });
+          live.start();
+        }
         return json(res, 200, { runId: run.runId });
+      }
+      // The live browser view of the run (2026-10-21): clicks, scrolling and typing; the tab shown;
+      // Close browser once the test has passed and keeps its last page open.
+      if (url.pathname.startsWith('/api/live/')) {
+        if (!live || body.runId !== live.runId) return json(res, 404, { error: 'That run has ended.' });
+        let problem;
+        if (url.pathname === '/api/live/input') problem = await live.input(body);
+        else if (url.pathname === '/api/live/select') problem = await live.select(typeof body.targetId === 'string' ? body.targetId : '');
+        else if (url.pathname === '/api/live/close') {
+          if (!runner.current?.passed) return json(res, 409, { error: 'The test is still running: use Stop to end it.' });
+          problem = await live.closeBrowser();
+        } else return json(res, 404, { error: 'Not found.' });
+        return json(res, problem ? 409 : 200, problem ? { error: problem } : { ok: true });
       }
       if (url.pathname === '/api/stop') return json(res, 200, { stopped: runner.stop() });
       if (url.pathname === '/api/history') return json(res, 200, { rows: readHistory(root, runner.current?.runId) });
@@ -1096,6 +1106,7 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
         runner,
         close: () =>
           new Promise((done) => {
+            live?.stop();
             if (runner.current) killTree(runner.current.child);
             if (edge) killTree(edge);
             for (const client of clients) client.end();
@@ -1104,6 +1115,19 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
             server.closeAllConnections();
           }),
       });
+    });
+  });
+}
+
+/** A free TCP port on this PC, for the test browser's DevTools (the live view). */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.on('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
     });
   });
 }
@@ -1170,7 +1194,7 @@ module.exports = {
   DELIVERY_METHODS,
   MODES,
   AUTOMATIONS,
-  ADD_DELAY,
+  ADD_DELAY_SECONDS,
   // Also used by the hosted server (server/), which runs the same tests for signed-in people.
   STEPS,
   ORDER_STEPS,
@@ -1183,7 +1207,6 @@ module.exports = {
   stepsFor,
   parseProducts,
   normalizeOrderNumber,
-  parseAddDelay,
   orderFileText,
   parseOrderText,
   readDefaults,

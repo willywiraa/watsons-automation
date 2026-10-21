@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { readSettings, SettingsError } from '../src/config/settings';
+import { ADD_DELAY_SECONDS, readSettings, SettingsError } from '../src/config/settings';
 
 // Offline checks of the settings check itself, using made-up values.
 // No browser and no website are involved.
@@ -19,24 +19,15 @@ test.describe('settings check', () => {
       paymentOtp: '0000',
       placeOrder: false,
       orderFile: undefined,
-      addDelaySeconds: 10,
       approveOrder: undefined,
       backoffice: undefined,
       holdLastPage: false,
     });
   });
 
-  test('waits 10 seconds between adds unless another whole number of seconds is set', () => {
-    expect(readSettings({ ...complete, WATSONS_ADD_DELAY_SECONDS: ' ' }).addDelaySeconds).toBe(10);
-    expect(readSettings({ ...complete, WATSONS_ADD_DELAY_SECONDS: '5' }).addDelaySeconds).toBe(5);
-    expect(readSettings({ ...complete, WATSONS_ADD_DELAY_SECONDS: ' 20 ' }).addDelaySeconds).toBe(20);
-    expect(readSettings({ ...complete, WATSONS_ADD_DELAY_SECONDS: '0' }).addDelaySeconds).toBe(0);
-    expect(readSettings({ ...complete, WATSONS_ADD_DELAY_SECONDS: '120' }).addDelaySeconds).toBe(120);
-    for (const wrong of ['121', '-1', '2.5', 'ten', '1e2']) {
-      expect(() => readSettings({ ...complete, WATSONS_ADD_DELAY_SECONDS: wrong }), wrong).toThrow(
-        'WATSONS_ADD_DELAY_SECONDS must be a whole number of seconds from 0 to 120.',
-      );
-    }
+  test('waits a fixed 5 seconds between adds: no setting changes it (user\'s decision 2026-10-21)', () => {
+    expect(ADD_DELAY_SECONDS).toBe(5);
+    expect(readSettings({ ...complete, WATSONS_ADD_DELAY_SECONDS: '20' })).not.toHaveProperty('addDelaySeconds');
   });
 
   test('reads the existing order to approve, and then needs the backoffice account', () => {

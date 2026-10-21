@@ -78,14 +78,13 @@ class RunManager {
   defaults(username) {
     const prefs = this.store.prefs(username);
     const fallback = readDefaults(this.config.projectDir);
-    if (!prefs?.last_order) return { ...fallback, addDelaySeconds: prefs?.add_delay_seconds ?? fallback.addDelaySeconds };
+    if (!prefs?.last_order) return fallback;
     const order = parseOrderText(prefs.last_order);
     return {
       products: order.productLines.join('\n'),
       deliveryMethod: order.deliveryMethod ?? fallback.deliveryMethod,
       mode: launcher.MODES[order.mode]?.available ? order.mode : 'express',
       source: 'your last run',
-      addDelaySeconds: prefs.add_delay_seconds ?? fallback.addDelaySeconds,
     };
   }
 

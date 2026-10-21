@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page, type Request } from '@playwright/test';
 import type { OrderLine } from '../config/order';
-import { DEFAULT_ADD_DELAY_SECONDS } from '../config/settings';
+import { ADD_DELAY_SECONDS } from '../config/settings';
 import { StepError } from '../utils/errors';
 import { log } from '../utils/log';
 import { bagButton, bagCount } from './header';
@@ -14,18 +14,14 @@ export class ProductSearch {
   readonly searchBox: Locator;
   readonly bagButton: Locator;
   readonly resultsHeading: Locator;
-  // The user's requirement (2026-10-04): at least 10 seconds between "add to bag" clicks. Since
-  // 2026-10-07 the launcher's "Seconds between adds" chooses it (Settings.addDelaySeconds).
-  private readonly msBetweenAdds: number;
+  // The time from one "add to bag" click to the next: the user's requirement was at least 10
+  // seconds (2026-10-04); fixed at 5 seconds since 2026-10-21 (ADD_DELAY_SECONDS).
+  private readonly msBetweenAdds = ADD_DELAY_SECONDS * 1000;
 
-  constructor(
-    private readonly page: Page,
-    options: { secondsBetweenAdds?: number } = {},
-  ) {
+  constructor(private readonly page: Page) {
     this.searchBox = page.getByRole('searchbox', { name: 'Search here...' });
     this.bagButton = bagButton(page);
     this.resultsHeading = page.getByRole('heading', { name: /Search Results for/, level: 1 });
-    this.msBetweenAdds = (options.secondsBetweenAdds ?? DEFAULT_ADD_DELAY_SECONDS) * 1000;
   }
 
   async bagCount(): Promise<number> {

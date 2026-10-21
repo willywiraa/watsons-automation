@@ -103,7 +103,7 @@ On the left, the **workflow**; on the right, the **Ready** bar with the run butt
   - Below them, the orders **awaiting approval** (the newest three, each with **Approve**).
 - **Ready** says whether the run can start, or what to fix (click an item to go to it).
   **Show checks** lists the checks of PRD §37 (staging address and accounts set in `.env`,
-  products, delivery method and seconds between adds, or the order number). The button
+  products and delivery method, or the order number). The button
   (**Place test order** or **Approve order**) stays disabled until all pass, and always asks you
   to confirm first. The browser is shown. A missing backoffice account only blocks approving;
   for a new order the checks note "the order will wait for approval".
@@ -113,21 +113,23 @@ On the left, the **workflow**; on the right, the **Ready** bar with the run butt
   **Clear** empties the list.
 - **Delivery**: the method, and the mode: **Express** (the default; "Fastest" on the checkout
   page) or **Standard** (the regular delivery or pickup date). Products that the mode can't
-  deliver are left out of the order and listed in the result. **Seconds between adds**: the time
-  from one "add to bag" click to the next (default 10, from 0 to 120); the window remembers your
-  last choice.
+  deliver are left out of the order and listed in the result. The test waits 5 seconds from one
+  "add to bag" click to the next (fixed since 2026-10-21; not a setting).
 - **Order** (approving): its number (`07091012` or `WTCSG07091012`); beside it, its backoffice
   code, and below it who placed that order, if it is in the history.
 - **Accounts**: where the accounts come from (`.env` on this PC; never shown).
+- **Live browser**: where the run's browser shows once a run starts.
 
-While a test runs, the page shows what runs with the time so far and **Stop**, the **Steps**
-(with the time each took) and the **Log**; on the Logs / History page, the header shows your run.
+While a test runs, the page shows what runs with the time so far and **Stop**, the **Live
+browser** (the run's Edge, live: click, scroll and type into it, and switch its tabs; since
+2026-10-21, as on the hosted version), the **Steps** (with the time each took) and the **Log**; on
+the Logs / History page, the header shows your run.
 A new order ends on the backoffice's Orders list showing the order with **Status
 ORDER_EXTRACTED** (the order's bar at the bottom keeps the status it had when it was opened: the
 backoffice doesn't update it), with the shop's "Thank you for your order!!" page in the first
 tab; without a backoffice account it ends on that page; an approval ends on the backoffice
-order. Edge stays open until you close its window (or 5 minutes pass), and you can use it; the
-launcher already shows the order number. After you close it, the result shows **Completed** with
+order. Edge stays open until you click **Close browser** in Live browser or close its window (or
+5 minutes pass), and you can use it; the launcher already shows the order number. After you close it, the result shows **Completed** with
 the order number (**Copy** copies it) and the backoffice status, **Awaiting approval** (placed,
 not approved yet), **No change**, or **Failed at** a step with its error report (below); then
 the products, the evidence (screenshots, the report, the evidence folder), and the steps and
@@ -333,9 +335,8 @@ The approved staging address is written into the code (`src/safety/staging-guard
 When a test fails, Playwright keeps a screenshot and a step-by-step recording ("trace") of it.
 Both are in the report.
 
-The order flow waits 10 seconds between "add to bag" clicks. For another time in a command-line
-run, set `WATSONS_ADD_DELAY_SECONDS` first (0 to 120), e.g. `$env:WATSONS_ADD_DELAY_SECONDS = '5'`
-(the launcher sets it from **Seconds between adds**).
+The order flow waits 5 seconds between "add to bag" clicks (fixed since 2026-10-21; it is not a
+setting).
 
 ### Evidence of each order run (`reports/`)
 

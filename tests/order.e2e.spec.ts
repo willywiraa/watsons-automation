@@ -1,4 +1,5 @@
 import { DEFAULT_ORDER_FILE, loadOrder, type OrderLine } from '../src/config/order';
+import { ADD_DELAY_SECONDS } from '../src/config/settings';
 import { deliveryModeSteps } from '../src/flows/delivery-modes';
 import { test, expect } from '../src/fixtures/staging';
 import { BagPage } from '../src/pages/BagPage';
@@ -29,17 +30,17 @@ const plus = (lines: OrderLine[]) => lines.map((line) => (line.quantity > 1 ? `$
 test('order flow from the order file', async ({ page, stagingUrl, settings, orderRun, headless }) => {
   const order = loadOrder(settings.orderFile ?? DEFAULT_ORDER_FILE);
   const unitCount = order.products.reduce((sum, line) => sum + line.quantity, 0);
-  // Per unit added: the chosen seconds between adds (default 10, the user's requirement) plus 35 s
-  // for the add itself; orders also wait up to 15 minutes in the backoffice.
-  test.setTimeout((settings.placeOrder ? 35 : 15) * 60_000 + unitCount * (35_000 + settings.addDelaySeconds * 1000));
+  // Per unit added: the seconds between adds (fixed at 5 since 2026-10-21) plus 35 s for the add
+  // itself; orders also wait up to 15 minutes in the backoffice.
+  test.setTimeout((settings.placeOrder ? 35 : 15) * 60_000 + unitCount * (35_000 + ADD_DELAY_SECONDS * 1000));
   const mode = deliveryModeSteps(order.deliveryMode);
   Object.assign(orderRun.data, { placeOrder: settings.placeOrder, deliveryMethod: order.deliveryMethod, deliveryMode: order.deliveryMode });
   log(
-    `Starting Watsons STAGING order test (${order.deliveryMode}, ${order.deliveryMethod}, ${order.products.length} PLU(s), ${settings.addDelaySeconds} s between adds)`,
+    `Starting Watsons STAGING order test (${order.deliveryMode}, ${order.deliveryMethod}, ${order.products.length} PLU(s), ${ADD_DELAY_SECONDS} s between adds)`,
   );
 
   const loginPage = new LoginPage(page, stagingUrl);
-  const search = new ProductSearch(page, { secondsBetweenAdds: settings.addDelaySeconds });
+  const search = new ProductSearch(page);
   const bag = new BagPage(page);
   const checkout = new CheckoutPage(page);
 

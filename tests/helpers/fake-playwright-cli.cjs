@@ -72,7 +72,7 @@ async function openLiveBrowser() {
 
 console.log(
   `fake runner: args=${process.argv.slice(2).join(' ')} place=${process.env.WATSONS_PLACE_ORDER} otp=${process.env.WATSONS_PAYMENT_OTP} ` +
-    `delay=${process.env.WATSONS_ADD_DELAY_SECONDS} approve=${orderNumberToApprove}`,
+    `approve=${orderNumberToApprove}`,
 );
 console.log(
   `fake runner: account=${fingerprint(process.env.WATSONS_USERNAME)}/${fingerprint(process.env.WATSONS_PASSWORD)} ` +
@@ -152,8 +152,9 @@ function next() {
     else if (approving) console.log(`[12:00:00] [PASS] No change needed. Order number: ${orderNumber} (backoffice: already ORDER_EXTRACTED)`);
     else if (approvesNewOrder) console.log('[12:00:00] [PASS] Order test completed successfully. Order number: 12345678 (backoffice: ORDER_EXTRACTED)');
     else console.log('[12:00:00] [PASS] Order placed (not approved yet: no backoffice account for this run). Order number: 12345678');
-    // The hosted server's live view (PLU 555): the page stays open until the browser is closed.
-    if (liveBrowser && process.env.WATSONS_HOLD_LAST_PAGE === 'yes') {
+    // The live view (PLU 555): the page stays open until the browser is closed (the hosted server
+    // asks for that; with the browser shown, the tests always do it).
+    if (liveBrowser && (process.env.WATSONS_HOLD_LAST_PAGE === 'yes' || holdsLastPage)) {
       console.log('[12:00:00] [INFO] The order confirmation page stays open. Close the browser to finish (it closes by itself after 5 minutes).');
       liveBrowser
         .then(({ page }) => page.waitForEvent('close', { timeout: 60_000 }))

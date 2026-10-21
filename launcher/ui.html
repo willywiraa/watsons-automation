@@ -467,9 +467,8 @@ body{background:var(--canvas);min-width:1024px}
 .p-wfitem:has(input:focus-visible),.p-segopt:has(input:focus-visible){outline:2px solid var(--focus-ring);outline-offset:2px;z-index:1}
 .p-wfitem:has(input:disabled){cursor:not-allowed}
 .p-wfitem:has(input:disabled:not(:checked)){color:var(--text-3);background:none}
-.p-segopt:has(input:checked),.wa-seg__opt[aria-pressed="true"]{color:var(--text);background:var(--surface);box-shadow:inset 0 0 0 2px var(--accent)}
-.p-segopt:has(input:checked)::before,.p-segopt:has(input:checked) + .wa-seg__opt::before,
-.wa-seg__opt[aria-pressed="true"]::before,.wa-seg__opt[aria-pressed="true"] + .wa-seg__opt::before{display:none}
+.p-segopt:has(input:checked){color:var(--text);background:var(--surface);box-shadow:inset 0 0 0 2px var(--accent)}
+.p-segopt:has(input:checked)::before,.p-segopt:has(input:checked) + .wa-seg__opt::before{display:none}
 .p-segopt:has(input:disabled){color:var(--text-3);cursor:not-allowed;background:transparent}
 .p-sidehead{display:flex;justify-content:space-between;gap:8px}
 .p-sidequeue__text{display:grid;min-width:0}
@@ -484,9 +483,6 @@ body{background:var(--canvas);min-width:1024px}
 .p-problems li{color:var(--danger);font-size:var(--text-caption);line-height:var(--lh-caption)}
 .p-order-input{width:240px}
 #order-code.is-bad{color:var(--danger);font-family:var(--font-ui)}
-.p-delay{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.p-delay__input{display:inline-flex;align-items:center;gap:8px;color:var(--text-2)}
-.p-delay__input .wa-input{width:76px;text-align:right}
 .p-accounts{gap:var(--space-3)}
 .p-account__act{display:flex;justify-content:flex-end;min-width:0}
 .wa-step__name{min-width:0;overflow-wrap:anywhere}
@@ -643,14 +639,6 @@ dialog::backdrop{background:var(--scrim)}
               <div class="wa-card__body">
                 <div class="p-field p-field--stack"><span class="wa-label" id="method-label">Method</span><div class="wa-seg" id="delivery-methods" role="radiogroup" aria-labelledby="method-label"></div></div>
                 <div class="p-field p-field--stack"><span class="wa-label" id="mode-label">Mode</span><div class="wa-seg" id="modes" role="radiogroup" aria-labelledby="mode-label"></div><span class="wa-field__hint" id="mode-note"></span></div>
-                <div class="p-field p-field--stack" id="section-timing">
-                  <label class="wa-label" for="add-delay">Seconds between adds</label>
-                  <div class="p-delay">
-                    <span class="p-delay__input"><input class="wa-input wa-input--mono" id="add-delay" type="number" min="0" max="120" step="1" inputmode="numeric" aria-describedby="add-delay-hint"><span aria-hidden="true">s</span></span>
-                    <div class="wa-seg" id="delay-presets" role="group" aria-label="Quick choices"></div>
-                  </div>
-                  <span class="wa-field__hint" id="add-delay-hint"></span>
-                </div>
               </div>
             </section>
 
@@ -704,8 +692,8 @@ dialog::backdrop{background:var(--scrim)}
         </form>
 
         <section class="wa-card" id="live-idle" aria-labelledby="live-idle-title" hidden>
-          <div class="wa-card__head"><div class="wa-card__titles"><h2 class="wa-card__title" id="live-idle-title">Live browser</h2></div><div class="wa-card__actions"><span class="p-live__sub">Your run’s browser on the server</span></div></div>
-          <div class="wa-card__body"><div class="p-live__frame is-idle"><span class="p-live__empty"><b>No browser open</b><span>It opens on the server when a run starts.</span></span></div></div>
+          <div class="wa-card__head"><div class="wa-card__titles"><h2 class="wa-card__title" id="live-idle-title">Live browser</h2></div><div class="wa-card__actions"><span class="p-live__sub" id="live-idle-sub">Your run’s browser on the server</span></div></div>
+          <div class="wa-card__body"><div class="p-live__frame is-idle"><span class="p-live__empty"><b>No browser open</b><span id="live-idle-text">It opens on the server when a run starts.</span></span></div></div>
         </section>
       </div>
 
@@ -1043,23 +1031,6 @@ function fillForm(defaults) {
       ),
     ),
   );
-  $('add-delay').value = String(defaults.addDelaySeconds);
-  $('add-delay').min = String(info.addDelay.min);
-  $('add-delay').max = String(info.addDelay.max);
-  $('delay-presets').replaceChildren(
-    ...[5, 10, 20, 30].map((seconds) =>
-      el('button', {
-        type: 'button',
-        className: 'wa-seg__opt',
-        textContent: `${seconds} s`,
-        onclick: () => {
-          $('add-delay').value = String(seconds);
-          render();
-        },
-        attrs: { 'data-seconds': seconds, 'aria-pressed': 'false' },
-      }),
-    ),
-  );
   formFilled = true;
   sizeProducts();
   checkProducts();
@@ -1075,13 +1046,8 @@ function formValues() {
     products: $('products').value,
     deliveryMethod: document.querySelector('input[name=delivery]:checked')?.value,
     mode: document.querySelector('input[name=mode]:checked')?.value,
-    addDelaySeconds: $('add-delay').value.trim(),
     orderNumber: $('order-number').value,
   };
-}
-
-function delayOk(text) {
-  return /^\d+$/.test(text) && Number(text) >= info.addDelay.min && Number(text) <= info.addDelay.max;
 }
 
 // ---- Products: one PLU per line, numbered, with what each line will order beside it ---------
@@ -1184,7 +1150,6 @@ function checklist() {
     { label: 'All PLUs valid format', ok: !pluProblem, fix: toProducts },
     { label: 'All quantities > 0', ok: !quantityProblem, fix: toProducts },
     { label: 'Delivery method selected', ok: Boolean(values.deliveryMethod), fix: () => document.querySelector('input[name=delivery]')?.focus() },
-    { label: `Seconds between adds: ${info?.addDelay.min ?? 0} to ${info?.addDelay.max ?? 120}`, ok: Boolean(info) && delayOk(values.addDelaySeconds), fix: () => $('add-delay').focus() },
   );
   return checks;
 }
@@ -1202,6 +1167,9 @@ function runNote(kind) {
 // ---- Rendering: Automation ------------------------------------------------------------------
 
 const isQueued = () => serverMode && Boolean(info?.queuePosition) && !current;
+/** The run's browser, live in the page: on the hosted server, and on this PC since 2026-10-21. */
+const liveAvailable = () => serverMode || Boolean(info?.liveView);
+const liveSubText = () => (serverMode ? 'Your run’s browser on the server' : 'Your run’s browser on this PC');
 const historyShown = () => !$('page-history').hidden;
 let shownView = null;
 
@@ -1225,7 +1193,7 @@ function render() {
     if (!input.hasAttribute('data-locked')) input.disabled = busy;
   }
   $('conn-banner').hidden = connected;
-  $('live-idle').hidden = !serverMode;
+  $('live-idle').hidden = !liveAvailable();
 
   renderReady(checklist(), kind, busy);
   renderSetup(kind);
@@ -1294,15 +1262,6 @@ function renderSetup(kind) {
 
 function renderDelivery(values) {
   $('mode-note').textContent = info.modes[values.mode]?.note ?? '';
-  // Timing: what the chosen seconds mean for this order.
-  const delay = values.addDelaySeconds;
-  for (const chip of $('delay-presets').children) chip.setAttribute('aria-pressed', String(chip.dataset.seconds === delay));
-  const units = unitsOf(parsed.products);
-  $('add-delay-hint').textContent = delayOk(delay)
-    ? `Time from one "add to bag" click to the next. Default ${info.addDelay.default} seconds.${units > 0 ? ` For ${units} item(s): about ${formatDuration(units * Number(delay) * 1000)} of adding.` : ''}`
-    : `Enter a whole number of seconds from ${info.addDelay.min} to ${info.addDelay.max} (default ${info.addDelay.default}).`;
-  if (delayOk(delay)) $('add-delay').removeAttribute('aria-invalid');
-  else $('add-delay').setAttribute('aria-invalid', 'true');
 }
 
 /** Approving: the backoffice code for the number typed, and who placed that order. */
@@ -1385,8 +1344,12 @@ function runStatus() {
     run.automation === 'approve'
       ? `WTCSG${run.orderNumber}`
       : [plural(run.products?.length ?? 0, 'product'), methodLabel(run.deliveryMethod), modeLabel(run.mode)].join(' · ');
-  // On the server the browser stays open in Live browser until Close browser (2026-10-14).
-  const ending = serverMode ? ' Click Close browser in Live browser when you’re done.' : null;
+  // The browser stays open, in Live browser, until Close browser (2026-10-14); on this PC, also until its window is closed.
+  const ending = serverMode
+    ? ' Click Close browser in Live browser when you’re done.'
+    : liveAvailable()
+      ? ' Click Close browser in Live browser, or close the Edge window, when you’re done.'
+      : null;
   if (run.passed === 'order_placed_unapproved') {
     return {
       tone: 'warning',
@@ -1434,8 +1397,8 @@ function renderRun(view, queued) {
   const excluded = current?.excluded ?? [];
   $('live-excluded').hidden = excluded.length === 0;
   $('live-excluded-text').textContent = `Not available for ${modeLabel(current?.mode)}, left out of this order: PLU ${excluded.join(', ')}`;
-  $('run-grid').classList.toggle('p-run-grid--desktop', !serverMode);
-  $('log-sub').hidden = serverMode;
+  $('run-grid').classList.toggle('p-run-grid--desktop', !liveAvailable());
+  $('log-sub').hidden = liveAvailable();
   $('elapsed').textContent = current ? formatClock(elapsedSeconds()) : '';
 }
 
@@ -1561,7 +1524,7 @@ function placeRunParts(view) {
   const logSlot = $(result ? 'result-log-slot' : 'run-log-slot');
   if ($('steps').parentNode !== stepsSlot) stepsSlot.append($('steps'));
   if ($('log-panel').parentNode !== logSlot) logSlot.append($('log-panel'));
-  $('steps').classList.toggle('wa-steps--lg', view === 'run' && !serverMode);
+  $('steps').classList.toggle('wa-steps--lg', view === 'run' && !liveAvailable());
   if (view !== shownView) {
     shownView = view;
     $('log').scrollTop = $('log').scrollHeight;
@@ -1583,7 +1546,7 @@ function resetLive(runId = null) {
 }
 
 function renderLive(view, queued) {
-  const show = serverMode && view === 'run';
+  const show = liveAvailable() && view === 'run';
   $('live-card').hidden = !show;
   if (!show) return;
   const run = current;
@@ -1606,7 +1569,7 @@ function renderLive(view, queued) {
   $('live-note').textContent = run?.passed
     ? 'The test has passed. Look around if you like, then click Close browser to finish.'
     : 'Clicks, scrolling and typing here go to the real browser. While the test runs, they can disturb it.';
-  $('live-tabs').hidden = !run || live.tabs.length < 2;
+  $('live-tabs').hidden = !run || live.tabs.length === 0;
   $('live-tabs').replaceChildren(
     ...live.tabs.map((tab) =>
       el('button', {
@@ -1706,7 +1669,7 @@ $('live-screen').addEventListener('focus', () => {
   $('live-sub').classList.add('is-on');
 });
 $('live-screen').addEventListener('blur', () => {
-  $('live-sub').textContent = 'Your run’s browser on the server';
+  $('live-sub').textContent = liveSubText();
   $('live-sub').classList.remove('is-on');
 });
 $('live-close').addEventListener('click', async () => {
@@ -2001,7 +1964,7 @@ function productsCard(row) {
   if (row.automation !== 'order') return null;
   const rows = productRows(row);
   if (rows.length === 0) return null;
-  const sub = [`${rows.filter((line) => line.ordered).length} of ${rows.length} ordered`, row.addDelaySeconds != null ? `${row.addDelaySeconds} s between adds` : null].filter(Boolean).join(' · ');
+  const sub = `${rows.filter((line) => line.ordered).length} of ${rows.length} ordered`;
   const gift = row.products.freeGiftRemoved;
   return card(
     { title: 'Products', sub },
@@ -2329,7 +2292,6 @@ function runDetails(row) {
     ['Order', row.orderNumber ? el('span', { className: 'wa-mono', textContent: `WTCSG${row.orderNumber}` }) : 'No order number'],
     ['Products', products && products.childElementCount > 0 ? products : null],
     ['Delivery', row.delivery ? `${methodLabel(row.delivery.method)} · ${modeLabel(row.delivery.mode)}` : null],
-    ['Between adds', row.addDelaySeconds != null ? `${row.addDelaySeconds} s` : null],
     ['Backoffice', backofficeText(row)],
     ['Steps', stepsText],
     ['Started', formatTime(row.startedAt)],
@@ -2532,7 +2494,6 @@ async function openConfirm() {
         ['Products', `${plural(parsed.products.length, 'product')}, ${plural(units, 'item')}`],
         ['Delivery method', methodLabel(values.deliveryMethod)],
         ['Delivery mode', modeLabel(values.mode)],
-        ['Between adds', `${values.addDelaySeconds} seconds`],
         ['Testing account', serverMode ? accountInfo('testing').masked : 'From .env on this PC'],
         ['Backoffice account', approvesNewOrders() ? (serverMode ? accountInfo('backoffice').masked : 'From .env on this PC') : 'None: the order waits for approval'],
         site,
@@ -2597,7 +2558,6 @@ $('products-clear').addEventListener('click', () => {
   refreshProducts();
   $('products').focus();
 });
-$('add-delay').addEventListener('input', render);
 $('order-number').addEventListener('input', render);
 $('order-number').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !$('run').disabled) $('run').click();
@@ -2773,6 +2733,9 @@ for (const holder of document.querySelectorAll('[data-icon]')) holder.innerHTML 
 $('favicon').href = $('logo').src;
 renderTheme();
 sizeProducts();
+$('live-sub').textContent = liveSubText();
+$('live-idle-sub').textContent = liveSubText();
+if (!serverMode) $('live-idle-text').textContent = 'It opens when a run starts.';
 $('conn-text').textContent = serverMode
   ? 'Lost the connection to the server. Check the network or VPN; the page reconnects by itself.'
   : 'Lost the connection to the launcher. Is its console window still open?';

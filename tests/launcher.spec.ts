@@ -4,7 +4,7 @@ import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseOrder, parseOrderNumber, type OrderLine } from '../src/config/order';
-import { DEFAULT_ADD_DELAY_SECONDS, MAX_ADD_DELAY_SECONDS, readSettings } from '../src/config/settings';
+import { ADD_DELAY_SECONDS } from '../src/config/settings';
 import { STAGING_HOST } from '../src/safety/staging-guard';
 
 // Offline checks of the launcher (launcher/launcher.cjs, PRD §32–38). The window tests use a
@@ -30,10 +30,9 @@ interface HistoryRow {
 }
 interface Launcher {
   STAGING_HOST: string;
-  ADD_DELAY: { default: number; min: number; max: number };
+  ADD_DELAY_SECONDS: number;
   parseProducts(text: string): { products: OrderLine[]; problems: string[] };
   normalizeOrderNumber(text: string): string | null;
-  parseAddDelay(value: unknown): { seconds?: number; problem?: string };
   orderFileText(order: { products: OrderLine[]; deliveryMethod: string; mode: string }): string;
   checkSetup(root: string, nodeFound: boolean): SetupResult;
   checkRunRequest(body: unknown, setup: SetupResult): { problems: string[]; order?: unknown };
@@ -123,21 +122,9 @@ test.describe('launcher checks', () => {
     }
   });
 
-  test('uses the same "Seconds between adds" limits as the order test', () => {
-    expect(launcher.ADD_DELAY).toEqual({ default: DEFAULT_ADD_DELAY_SECONDS, min: 0, max: MAX_ADD_DELAY_SECONDS });
-    const complete = { WATSONS_STAGING_URL: 'https://staging.example.test/', WATSONS_USERNAME: 'a', WATSONS_PASSWORD: 'b' };
-    for (const value of [0, 5, '10', 20, 120, 121, -1, 2.5, 'ten']) {
-      const fromLauncher = launcher.parseAddDelay(value);
-      let fromSettings: number | 'error';
-      try {
-        fromSettings = readSettings({ ...complete, WATSONS_ADD_DELAY_SECONDS: String(value) }).addDelaySeconds;
-      } catch {
-        fromSettings = 'error';
-      }
-      expect(fromLauncher.problem ? 'error' : fromLauncher.seconds, String(value)).toBe(fromSettings);
-    }
-    expect(launcher.parseAddDelay(undefined)).toEqual({ seconds: 10 });
-    expect(launcher.parseAddDelay('').problem).toBe('Seconds between adds must be a whole number from 0 to 120.');
+  test('waits the same fixed 5 seconds between adds as the order test (user\'s decision 2026-10-21)', () => {
+    expect(launcher.ADD_DELAY_SECONDS).toBe(ADD_DELAY_SECONDS);
+    expect(ADD_DELAY_SECONDS).toBe(5);
   });
 
   test('writes order files the test can read', () => {
@@ -174,7 +161,7 @@ test.describe('launcher checks', () => {
     const good = { products: '10321 2', deliveryMethod: 'home_delivery', mode: 'express', confirmed: true };
     expect(launcher.checkRunRequest(good, ready)).toEqual({
       problems: [],
-      order: { automation: 'order', products: [{ plu: '10321', quantity: 2 }], deliveryMethod: 'home_delivery', mode: 'express', addDelaySeconds: 10 },
+      order: { automation: 'order', products: [{ plu: '10321', quantity: 2 }], deliveryMethod: 'home_delivery', mode: 'express', addDelaySeconds: 5 },
     });
     expect(launcher.checkRunRequest({ ...good, products: '' }, ready).problems).toEqual(['Add at least one PLU.']);
     expect(launcher.checkRunRequest({ ...good, deliveryMethod: 'toString' }, ready).problems).toEqual(['Choose a delivery method.']);
@@ -185,11 +172,9 @@ test.describe('launcher checks', () => {
     expect(launcher.checkRunRequest(good, { checks: [{ label: 'Account configured', ok: false, help: 'Fill in .env.' }], ready: false }).order).toBeUndefined();
     expect(launcher.checkRunRequest({ ...good, automation: 'toString' }, ready).order).toBeUndefined();
 
-    // Seconds between adds (user's request 2026-10-07).
-    expect(launcher.checkRunRequest({ ...good, addDelaySeconds: '20' }, ready).order).toMatchObject({ addDelaySeconds: 20 });
-    for (const wrong of [121, -1, 2.5, '', 'ten']) {
-      expect(launcher.checkRunRequest({ ...good, addDelaySeconds: wrong }, ready).problems, String(wrong)).toEqual(['Seconds between adds must be a whole number from 0 to 120.']);
-    }
+    // The time between adds is fixed (user's decision 2026-10-21): a value sent along is ignored.
+    expect(launcher.checkRunRequest({ ...good, addDelaySeconds: '20' }, ready).order).toMatchObject({ addDelaySeconds: 5 });
+    expect(launcher.checkRunRequest({ ...good, addDelaySeconds: 'ten' }, ready).problems).toEqual([]);
   });
 
   test('approves an existing order only with a valid number and confirmation', () => {
@@ -399,10 +384,11 @@ test.describe('launcher window', () => {
     await expect(page.getByLabel('Click & Collect')).toBeChecked();
     await expect(page.getByLabel('Place new order')).toBeChecked();
     await expect(page.locator('#preview [data-plu]')).toHaveCount(2);
-    // No OTP or options to fill in (user's decision 2026-10-05); the only number is the time between adds.
+    // No OTP or options to fill in (user's decision 2026-10-05), and no time between adds (fixed at 5 s, 2026-10-21).
     await expect(page.getByRole('textbox')).toHaveCount(1);
     await expect(page.getByRole('checkbox')).toHaveCount(0);
-    await expect(page.getByLabel('Seconds between adds')).toHaveValue('10');
+    await expect(page.getByRole('spinbutton')).toHaveCount(0);
+    await expect(page.getByText('Seconds between adds')).toHaveCount(0);
     // Express is the default; Standard can be chosen too (user's request 2026-10-13).
     await expect(page.locator('input[name=mode][value=express]')).toBeChecked();
     await expect(page.locator('input[name=mode][value=standard]')).toBeEnabled();
@@ -432,7 +418,7 @@ test.describe('launcher window', () => {
     await expect(dialog).toContainText('Delivery methodHome Delivery');
     await expect(dialog).toContainText('Delivery modeExpress');
     await expect(dialog).toContainText('2 products, 3 items');
-    await expect(dialog).toContainText('10 seconds');
+    await expect(dialog).not.toContainText('Between adds');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
     await expect(page.locator('#progress')).toBeHidden(); // nothing ran
@@ -445,7 +431,6 @@ test.describe('launcher window', () => {
     await expect(page.locator('#result .order-number')).toHaveText('12345678');
     await expect(page.locator('#result .verdict')).toHaveText('Completed');
     await expect(page.locator('#log')).toContainText('--headed place=yes');
-    await expect(page.locator('#log')).toContainText('delay=10');
     await expect(page.locator('#steps li.done')).toHaveCount(14);
     await expect(page.locator('#result')).toContainText('Placed and approved in the backoffice. The order is now ORDER_EXTRACTED.');
   });
@@ -519,30 +504,34 @@ test.describe('launcher window', () => {
     // The order file the test read, in the run's evidence.
     const [runId] = readdirSync(join(root, 'reports')).filter((name) => /^\d{4}-\d{2}-\d{2}_/.test(name));
     expect(readFileSync(join(root, 'reports', runId, 'order.txt'), 'utf8')).toContain('mode: Standard');
+    // The time between adds is fixed at 5 seconds (2026-10-21); the run's record says so.
+    expect(JSON.parse(readFileSync(join(root, 'reports', runId, 'launcher-run.json'), 'utf8'))).toMatchObject({ addDelaySeconds: 5 });
+    await expect(page.locator('#log')).toContainText('by Test Operator: places a STAGING test order');
   });
 
-  test('"Seconds between adds" goes to the test and is remembered', async ({ page }) => {
-    await page.goto(app.url);
-    const delay = page.getByLabel('Seconds between adds');
-    await expect(delay).toHaveValue('10');
-    await delay.fill('500');
-    await expect(page.locator('#ready-fixes')).toContainText('Seconds between adds: 0 to 120');
-    await page.getByRole('button', { name: 'Show checks' }).click();
-    await expect(page.locator('.check-bad', { hasText: 'Seconds between adds' })).toBeVisible();
-    await expect(page.locator('#run')).toBeDisabled();
-    await page.getByRole('button', { name: '20 s', exact: true }).click();
-    await expect(delay).toHaveValue('20');
-    await expect(page.locator('#add-delay-hint')).toContainText('For 3 item(s): about 1 min 00 s of adding.');
-    await page.locator('#run').click();
-    await expect(page.locator('#confirm')).toContainText('20 seconds');
-    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
-    await runEnded(page, 0);
-    await expect(page.locator('#log')).toContainText('delay=20');
-    await expect(page.locator('#log')).toContainText('by Test Operator: places a STAGING test order (20 s between adds)');
-    await expect(page.locator('#result')).toContainText('20 s between adds');
-    expect(JSON.parse(readFileSync(join(root, 'reports', 'launcher-settings.json'), 'utf8'))).toEqual({ addDelaySeconds: 20 });
-    await page.reload();
-    await expect(page.getByLabel('Seconds between adds')).toHaveValue('20');
+  test('shows the run’s browser live, passes clicks on, and Close browser ends a passed run (2026-10-21)', async ({ page }) => {
+    // PLU 555: the stand-in opens a real (headless) Edge with the run's DevTools port.
+    process.env.FAKE_PLAYWRIGHT_MODULE = require.resolve('@playwright/test');
+    try {
+      await page.goto(app.url);
+      await expect(page.locator('#live-idle')).toContainText('No browser open');
+      await expect(page.locator('#live-idle')).toContainText('Your run’s browser on this PC');
+      await page.getByLabel('One PLU per line').fill('555');
+      await page.locator('#run').click();
+      await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
+      const screen = page.locator('#live-img');
+      await expect(screen).toBeVisible({ timeout: 20_000 });
+      await expect(page.locator('#live-tabs')).toContainText('Thank you for your order');
+      await expect(page.locator('#live-close')).toBeVisible({ timeout: 15_000 });
+      const box = (await screen.boundingBox())!;
+      await screen.click({ position: { x: box.width * (100 / 800), y: box.height * (50 / 450) } });
+      await expect(page.locator('#log')).toContainText('fake page: clicked');
+      await page.locator('#live-close').click();
+      await expect(page.locator('#result .verdict')).toHaveText('Completed', { timeout: 15_000 });
+      await expect(page.locator('#live-card')).toBeHidden();
+    } finally {
+      delete process.env.FAKE_PLAYWRIGHT_MODULE;
+    }
   });
 
   test('shows the failed step, code and reason, with the error report and screenshot', async ({ page, context }) => {
@@ -709,6 +698,7 @@ test.describe('launcher window', () => {
     expect(csv).toContain('"WTCSG12345678"');
     expect(csv).toContain('"PRODUCT_NOT_FOUND"');
     expect(csv).toContain('"Test Operator"');
-    expect(existsSync(join(root, 'reports', 'launcher-settings.json'))).toBe(true);
+    // Nothing to remember between windows any more but the last order (2026-10-21).
+    expect(existsSync(join(root, 'reports', 'launcher-settings.json'))).toBe(false);
   });
 });
