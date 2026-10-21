@@ -132,9 +132,9 @@ class RunManager {
     const placing = (checked.order?.automation ?? body?.automation ?? 'order') === 'order';
     const account = session.testingAccount;
     const backoffice = session.backofficeAccount;
-    if (placing && !account) problems.push('Enter your testing account first (step "Your accounts").');
+    if (placing && !account) problems.push('Enter your testing account first (under "Accounts").');
     // A new order can do without it: it then waits for approval (2026-10-14). Approving can't.
-    if (!placing && !backoffice) problems.push('Enter your backoffice account first (step "Your accounts").');
+    if (!placing && !backoffice) problems.push('Enter your backoffice account first (under "Accounts").');
     if (problems.length > 0 || !checked.order) return { status: 400, body: { problems } };
     const own = this.activeOf(session.username);
     if (own) {

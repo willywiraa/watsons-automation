@@ -103,11 +103,11 @@ second lock.
    Passwords are typed hidden, need 10+ characters, and are stored only as bcrypt hashes.
 
 The server is set up without any staging account: each person enters their own testing account and
-backoffice account (Customer Support Manager role) in the page, in step 2, once. The server
+backoffice account (Customer Support Manager role) in the page, under **Accounts**, once. The server
 remembers them for that person, sealed with a key made from their portal password. The backoffice
 account is optional for placing orders (decision 2026-10-14): without it, a run ends on "Thank you
 for your order" and the order shows **Awaiting approval** in Logs / History, where someone with a
-backoffice account approves it (**Approve in Backoffice**).
+backoffice account approves it (**Approve**).
 
 ## 4. Run it as a Windows service (NSSM)
 
@@ -179,12 +179,12 @@ it couldn't follow to the end shows as **Interrupted** in the history.
   - Changes apply right away, with no restart; a disabled or removed person is signed out at their next click.
   - Their runs stay in the history.
 - **Orders waiting for approval** (placed without a backoffice account): Logs / History →
-  Status **Awaiting approval** → open the run → **Approve in Backoffice** (with your own backoffice
-  account) → confirm. The order then shows **Completed**, "approved later by" you.
+  Status **Awaiting approval** → **Approve** (with your own backoffice account) → **Approve order**
+  → confirm. The order then shows **Completed**, "approved later by" you.
 - **Testing and backoffice accounts:** people enter their own, once; the server remembers them
   sealed with the person's portal password, unless they untick Remember.
   - Nobody can open them without that portal password, so nothing needs cleaning up when someone leaves.
-  - A changed staging password: the person clicks **Change** in step 2.
+  - A changed staging password: the person clicks **Change** under **Accounts**.
   - A reset portal password (`users.cjs reset`): their remembered accounts can't be opened any
     more, so they enter them once again.
   - Change a staging account's password if it was shared.

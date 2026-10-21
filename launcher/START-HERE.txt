@@ -1,7 +1,7 @@
 WatsonsTester: Watsons STAGING automation launcher
 ==================================================
 
-A window with two tabs:
+A window with two pages:
 - Automation: place a test order on the Watsons STAGING website (never the real shop) and
   approve it in the staging backoffice (with a backoffice account), or approve an order that
   already exists.
@@ -43,34 +43,35 @@ RUNNING A TEST
    open. If Windows says "Windows protected your PC", click "More info", then "Run anyway".
    If Windows says it "cannot access the specified device, path, or file" (company PCs can
    block new programs), double-click "Start without exe.cmd" instead: same launcher.
-2. In 1 Automation, choose what to run:
+2. On the left, choose what to run:
    - Place new order: paste the PLUs, one per line ("10321 2" means two of PLU 10321),
      choose the delivery method and the mode (Express or Standard), and if you like change
-     "Seconds between adds" (default 10). Click Run order test and confirm.
+     "Seconds between adds" (default 10). Click Place test order and confirm.
    - Approve existing order: type the order number (07091012 or WTCSG07091012), click
-     Approve in Backoffice and confirm. No new order is created.
-3. The Run list must show only ticks. Anything marked with a cross says what to fix.
+     Approve order and confirm. No new order is created.
+3. The bar at the top must say Ready. If it says Not ready, it names what to fix ("Show
+   checks" lists every check).
 4. Edge does the work; you can watch it and use it. A new order is placed, approved in the
    staging backoffice, and Edge stops on the backoffice order showing ORDER_EXTRACTED (the shop's
    "Thank you" page is in the first tab). Without a backoffice account, Edge stops on the
    "Thank you for your order" page. Close that Edge window when you have seen it (it closes by
    itself after 5 minutes). The launcher then shows Completed with the order number, Awaiting
    approval (placed, not approved yet), No change, or Failed.
-5. When a run fails, the launcher shows an error report: the step, the time, the message, the
+5. When a run fails, the launcher shows the step it failed at, with the message, the time, the
    page and a screenshot. "Copy error report" puts it on the clipboard for Teams or email; it is
    also saved as error-report.txt.
-6. The Logs / History tab lists every run. The evidence of each run (screenshots, log, report)
-   is in the "reports" folder. An order that is Awaiting approval has an "Approve in Backoffice"
-   button in its details, for whoever has a backoffice account.
+6. Logs / History lists every run. The evidence of each run (screenshots, log, report)
+   is in the "reports" folder. An order that is Awaiting approval has an "Approve" button, for
+   whoever has a backoffice account (the Automation page lists these orders on the left too).
 
 
 THE HOSTED VERSION (if your team runs WatsonsTester on the server)
 ----------------------------------------------------------------
 Then you don't need this folder: open the address your admin gives you in Edge (on the Watsons
 network or VPN), sign in, enter your own staging testing account (and backoffice account, if you
-have one) in step 2 and run. You enter them once: the server remembers them for your next sign-in,
-locked with your sign-in password (untick Remember if you'd rather not). They are used only for
-your runs and never shown to anyone else. Without a backoffice account, your orders stop at
+have one) under Accounts and run. You enter them once: the server remembers them for your next
+sign-in, locked with your sign-in password (untick Remember if you'd rather not). They are used
+only for your runs and never shown to anyone else. Without a backoffice account, your orders stop at
 "Thank you for your order" and wait for someone to approve them. You watch and can use the run's
 browser in "Live browser"; click "Close browser" when you are done with the last page.
 Logs / History shows everyone's runs.

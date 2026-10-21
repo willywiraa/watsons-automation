@@ -50,8 +50,8 @@ const MODES = {
 
 /** What the launcher runs: a Playwright project (playwright.config.ts) and its test file. */
 const AUTOMATIONS = {
-  order: { label: 'Place new order', runLabel: 'Run order test', project: 'e2e', spec: 'order.e2e' },
-  approve: { label: 'Approve existing order', runLabel: 'Approve in Backoffice', project: 'approve', spec: 'approve.e2e' },
+  order: { label: 'Place new order', runLabel: 'Place test order', project: 'e2e', spec: 'order.e2e' },
+  approve: { label: 'Approve existing order', runLabel: 'Approve order', project: 'approve', spec: 'approve.e2e' },
 };
 
 // The steps of the tests, for the progress list. The tests log "Step: <name>".

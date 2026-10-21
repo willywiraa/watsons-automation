@@ -344,24 +344,25 @@ test.describe('launcher window', () => {
 
   /** Waits until the run just started has ended (Logs / History counts it from its start). */
   async function runEnded(page: Page, runsBefore: number) {
-    await expect(page.locator('#history-count')).toHaveText(String(runsBefore + 1));
+    await expect(page.locator('#history-summary')).toHaveText(new RegExp(`^${runsBefore + 1} runs? · `));
     await expect(page.locator('#result')).toBeVisible({ timeout: 15_000 });
   }
 
   async function placeOrder(page: Page, products: string, runsBefore: number) {
-    await page.getByLabel('Place new order').check();
+    // A click on the workflow (even the one chosen) goes back from a result to the form.
+    await page.getByLabel('Place new order').click();
     await page.getByLabel('One PLU per line').fill(products);
     await expect(page.locator('#run')).toBeEnabled();
     await page.locator('#run').click();
-    await page.locator('#confirm').getByRole('button', { name: 'Run test' }).click();
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
     await runEnded(page, runsBefore);
   }
 
   async function approveOrder(page: Page, orderNumber: string, runsBefore: number) {
-    await page.getByLabel('Approve existing order').check();
+    await page.getByLabel('Approve existing order').click();
     await page.getByLabel('Order number').fill(orderNumber);
     await page.locator('#run').click();
-    await page.locator('#confirm').getByRole('button', { name: 'Approve in Backoffice' }).click();
+    await page.locator('#confirm').getByRole('button', { name: 'Approve order' }).click();
     await runEnded(page, runsBefore);
   }
 
@@ -397,7 +398,7 @@ test.describe('launcher window', () => {
     await expect(page.getByLabel('One PLU per line')).toHaveValue('10117\n10321 2');
     await expect(page.getByLabel('Click & Collect')).toBeChecked();
     await expect(page.getByLabel('Place new order')).toBeChecked();
-    await expect(page.locator('#preview tr')).toHaveCount(2);
+    await expect(page.locator('#preview [data-plu]')).toHaveCount(2);
     // No OTP or options to fill in (user's decision 2026-10-05); the only number is the time between adds.
     await expect(page.getByRole('textbox')).toHaveCount(1);
     await expect(page.getByRole('checkbox')).toHaveCount(0);
@@ -408,9 +409,10 @@ test.describe('launcher window', () => {
     await expect(page.locator('#modes')).not.toContainText('Coming later');
     await expect(page.locator('#operator')).toHaveText('Test Operator');
     const run = page.locator('#run');
-    await expect(run).toHaveText('Run order test');
+    await expect(run).toHaveText('Place test order');
     await expect(run).toBeEnabled();
 
+    await page.getByRole('button', { name: 'Show checks' }).click();
     await page.getByLabel('One PLU per line').fill('10117\nabc');
     await expect(page.locator('#problems')).toContainText('"abc" is not a PLU');
     await expect(page.locator('.check-bad', { hasText: 'All PLUs valid format' })).toBeVisible();
@@ -425,33 +427,35 @@ test.describe('launcher window', () => {
 
     await run.click();
     const dialog = page.locator('#confirm');
+    await expect(dialog).toContainText('Place a staging test order?');
     await expect(dialog).toContainText('Watsons STAGING');
-    await expect(dialog).toContainText('Home Delivery (Express)');
-    await expect(dialog).toContainText('2 product(s), 3 item(s)');
+    await expect(dialog).toContainText('Delivery methodHome Delivery');
+    await expect(dialog).toContainText('Delivery modeExpress');
+    await expect(dialog).toContainText('2 products, 3 items');
     await expect(dialog).toContainText('10 seconds');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
     await expect(page.locator('#progress')).toBeHidden(); // nothing ran
 
     await run.click();
-    await dialog.getByRole('button', { name: 'Run Test' }).click();
+    await dialog.getByRole('button', { name: 'Place test order' }).click();
     // While the browser shows the confirmation page, the number is already there, without Stop.
-    await expect(page.locator('#status')).toContainText('order 12345678 placed and extracted');
+    await expect(page.locator('#status')).toContainText('Order 12345678 placed and extracted');
     await expect(page.locator('#stop')).toBeHidden();
-    await expect(page.locator('#result .order-number')).toHaveText('Order Number: 12345678');
+    await expect(page.locator('#result .order-number')).toHaveText('12345678');
     await expect(page.locator('#result .verdict')).toHaveText('Completed');
     await expect(page.locator('#log')).toContainText('--headed place=yes');
     await expect(page.locator('#log')).toContainText('delay=10');
     await expect(page.locator('#steps li.done')).toHaveCount(14);
-    await expect(page.locator('#result')).toContainText('ORDER_EXTRACTED (approved by this run)');
+    await expect(page.locator('#result')).toContainText('Placed and approved in the backoffice. The order is now ORDER_EXTRACTED.');
   });
 
   test('reports the products the delivery mode left out', async ({ page }) => {
     await page.goto(app.url);
     await placeOrder(page, '10117\n46465', 0);
     await expect(page.locator('#result .verdict')).toHaveText('Completed');
-    await expect(page.locator('#result .callout.warn')).toHaveText('Not available for Express, left out of this order: PLU 46465');
-    await expect(page.locator('#result')).toContainText('Left out (not eligible)');
+    await expect(page.locator('#result')).toContainText('46465×1Left out: not available for Express');
+    await expect(page.locator('#result')).toContainText('1 of 2 ordered');
   });
 
   test('places an order without a backoffice account: it ends at the confirmation and waits for approval', async ({ page }) => {
@@ -460,24 +464,25 @@ test.describe('launcher window', () => {
     delete process.env.WATSONS_BACKOFFICE_USERNAME;
     delete process.env.WATSONS_BACKOFFICE_PASSWORD;
     await page.goto(app.url);
+    await page.getByRole('button', { name: 'Show checks' }).click();
     await expect(page.locator('.check-optional', { hasText: 'No backoffice account in .env: the order will wait for approval' })).toBeVisible();
     await expect(page.locator('#run-note')).toContainText('stops at "Thank you for your order"');
     await page.getByLabel('One PLU per line').fill('10117');
     await page.locator('#run').click();
     await expect(page.locator('#confirm')).toContainText('None: the order waits for approval');
-    await page.locator('#confirm').getByRole('button', { name: 'Run test' }).click();
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
     await runEnded(page, 0);
     await expect(page.locator('#result .verdict')).toHaveText('Awaiting approval');
-    await expect(page.locator('#result .order-number')).toHaveText('Order Number: 12345678');
+    await expect(page.locator('#result .order-number')).toHaveText('12345678');
     await expect(page.locator('#steps li.skipped')).toHaveCount(4); // the approval steps
 
     // Approving needs the backoffice account.
-    await page.getByLabel('Approve existing order').check();
+    await page.getByLabel('Approve existing order').click();
     await page.getByLabel('Order number').fill('12345678');
     await expect(page.locator('.check-bad', { hasText: 'Backoffice account configured' })).toBeVisible();
     await expect(page.locator('#run')).toBeDisabled();
 
-    // With one, Logs / History's Approve in Backoffice fills in the approval; the order then counts as approved.
+    // With one, Logs / History's Approve fills in the approval; the order then counts as approved.
     writeFileSync(join(root, '.env'), `WATSONS_STAGING_URL=https://${STAGING_HOST}/\nWATSONS_USERNAME=fake-user\nWATSONS_PASSWORD=fake-value\nWATSONS_BACKOFFICE_USERNAME=fake-support\nWATSONS_BACKOFFICE_PASSWORD=fake-value\n`);
     process.env.WATSONS_BACKOFFICE_USERNAME = 'fake-backoffice';
     process.env.WATSONS_BACKOFFICE_PASSWORD = 'fake-value';
@@ -487,10 +492,10 @@ test.describe('launcher window', () => {
     await expect(rows.first()).toContainText('Awaiting approval');
     await expect(rows.first()).toContainText('Needs approval');
     await rows.first().click();
-    await page.locator('tr.hdetail').getByRole('button', { name: 'Approve in Backoffice' }).click();
+    await rows.first().getByRole('button', { name: 'Approve', exact: true }).click();
     await expect(page.locator('#order-number')).toHaveValue('12345678');
     await page.locator('#run').click();
-    await page.locator('#confirm').getByRole('button', { name: 'Approve in Backoffice' }).click();
+    await page.locator('#confirm').getByRole('button', { name: 'Approve order' }).click();
     await runEnded(page, 1);
     await page.getByRole('tab', { name: /Logs \/ History/ }).click();
     await expect(rows.nth(1)).toContainText('Place new order');
@@ -504,12 +509,13 @@ test.describe('launcher window', () => {
     await page.locator('input[name=mode][value=standard]').check();
     await page.getByLabel('One PLU per line').fill('10117\n46465');
     await page.locator('#run').click();
-    await expect(page.locator('#confirm')).toContainText('Click & Collect (Standard)');
-    await page.locator('#confirm').getByRole('button', { name: 'Run test' }).click();
+    await expect(page.locator('#confirm')).toContainText('Delivery methodClick & Collect');
+    await expect(page.locator('#confirm')).toContainText('Delivery modeStandard');
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
     await runEnded(page, 0);
     await expect(page.locator('#result .verdict')).toHaveText('Completed');
     await expect(page.locator('#steps')).toContainText('Standard Delivery Selection');
-    await expect(page.locator('#result .callout.warn')).toHaveText('Not available for Standard, left out of this order: PLU 46465');
+    await expect(page.locator('#result')).toContainText('46465×1Left out: not available for Standard');
     // The order file the test read, in the run's evidence.
     const [runId] = readdirSync(join(root, 'reports')).filter((name) => /^\d{4}-\d{2}-\d{2}_/.test(name));
     expect(readFileSync(join(root, 'reports', runId, 'order.txt'), 'utf8')).toContain('mode: Standard');
@@ -520,6 +526,8 @@ test.describe('launcher window', () => {
     const delay = page.getByLabel('Seconds between adds');
     await expect(delay).toHaveValue('10');
     await delay.fill('500');
+    await expect(page.locator('#ready-fixes')).toContainText('Seconds between adds: 0 to 120');
+    await page.getByRole('button', { name: 'Show checks' }).click();
     await expect(page.locator('.check-bad', { hasText: 'Seconds between adds' })).toBeVisible();
     await expect(page.locator('#run')).toBeDisabled();
     await page.getByRole('button', { name: '20 s', exact: true }).click();
@@ -527,11 +535,11 @@ test.describe('launcher window', () => {
     await expect(page.locator('#add-delay-hint')).toContainText('For 3 item(s): about 1 min 00 s of adding.');
     await page.locator('#run').click();
     await expect(page.locator('#confirm')).toContainText('20 seconds');
-    await page.locator('#confirm').getByRole('button', { name: 'Run test' }).click();
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
     await runEnded(page, 0);
     await expect(page.locator('#log')).toContainText('delay=20');
     await expect(page.locator('#log')).toContainText('by Test Operator: places a STAGING test order (20 s between adds)');
-    await expect(page.locator('#result')).toContainText('20 s');
+    await expect(page.locator('#result')).toContainText('20 s between adds');
     expect(JSON.parse(readFileSync(join(root, 'reports', 'launcher-settings.json'), 'utf8'))).toEqual({ addDelaySeconds: 20 });
     await page.reload();
     await expect(page.getByLabel('Seconds between adds')).toHaveValue('20');
@@ -542,21 +550,21 @@ test.describe('launcher window', () => {
     await page.goto(app.url);
     await page.getByLabel('One PLU per line').fill('404');
     await page.locator('#run').click();
-    await page.locator('#confirm').getByRole('button', { name: 'Run Test' }).click();
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
     const result = page.locator('#result');
-    await expect(result.locator('.verdict')).toHaveText('Failed');
+    await expect(result.locator('.verdict')).toHaveText('Failed at Product Search');
     await expect(result).toContainText('Product Search');
     await expect(result).toContainText('PRODUCT_NOT_FOUND');
     await expect(result).toContainText('No product found for PLU 404.');
-    await expect(page.locator('#steps li.failed')).toHaveText('Product Search');
+    await expect(page.locator('#steps li.failed .wa-step__name')).toHaveText('Product Search');
 
-    // Telemetry (user's request 2026-10-07): when, where, and the screenshot taken then.
-    const error = result.locator('.errbox');
+    // Telemetry (user's request 2026-10-07): when, where, and the screenshot taken then, under the failed step.
+    const error = page.locator('#steps li.failed .wa-failure');
     await expect(error).toContainText('https://staging.example.test/search');
-    await expect(error).toContainText(/Time\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}/);
-    const image = error.locator('.thumb img');
+    await expect(error).toContainText(/PRODUCT_NOT_FOUND · \d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}/);
+    const image = error.locator('.wa-thumb img');
     await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
-    await error.locator('.thumb').click();
+    await error.locator('.wa-thumb').click();
     await expect(page.locator('#viewer')).toBeVisible();
     await expect(page.locator('#viewer-title')).toHaveText('screenshot-1-failure.png');
     await page.locator('#viewer-close').click();
@@ -572,7 +580,7 @@ test.describe('launcher window', () => {
     expect(report).toContain('Page:        https://staging.example.test/search');
     expect(report).toContain(`Screenshot:  ${join(runFolder, 'screenshot-1-failure.png')}`);
     expect(report).toContain('Operator:    Test Operator');
-    await error.getByRole('button', { name: 'Copy error report' }).click();
+    await result.getByRole('button', { name: 'Copy error report' }).click();
     await expect(page.locator('#toast')).toContainText('Error report copied');
     // (Windows keeps text with \r\n line ends, the file and the clipboard alike.)
     const lines = (text: string) => text.split(/\r?\n/);
@@ -583,18 +591,19 @@ test.describe('launcher window', () => {
     await page.goto(app.url);
     await page.getByLabel('One PLU per line').fill('99');
     await page.locator('#run').click();
-    await page.locator('#confirm').getByRole('button', { name: 'Run Test' }).click();
-    await expect(page.locator('#steps li.now')).toHaveText('Pay');
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
+    await expect(page.locator('#steps li.current .wa-step__name')).toHaveText('Pay');
     // (The fake runner logs its browser's process id just after the step.)
     await expect(page.locator('#log')).toContainText(/fake browser pid=\d+/);
     const pid = Number((await page.locator('#log').textContent())?.match(/fake browser pid=(\d+)/)?.[1]);
     expect(isRunning(pid)).toBe(true);
 
     // Past Checkout, Stop asks first.
-    page.once('dialog', (question) => question.accept());
     await page.locator('#stop').click();
-    await expect(page.locator('#result .verdict')).toHaveText('Stopped');
-    await expect(page.locator('#result')).toContainText('Test cancelled by user.');
+    await expect(page.locator('#stop-confirm')).toContainText('Stop during Pay?');
+    await page.locator('#stop-confirm').getByRole('button', { name: 'Stop run' }).click();
+    await expect(page.locator('#result .verdict')).toHaveText('Stopped at Pay');
+    await expect(page.locator('#result')).toContainText('Stopped during Pay.');
     await expect(page.locator('#result')).toContainText('Check My Account → Order History');
     await expect.poll(() => isRunning(pid)).toBe(false);
   });
@@ -604,28 +613,28 @@ test.describe('launcher window', () => {
     await page.getByLabel('Approve existing order').check();
     for (const section of ['#section-products', '#section-delivery', '#section-timing']) await expect(page.locator(section)).toBeHidden();
     const run = page.locator('#run');
-    await expect(run).toHaveText('Approve in Backoffice');
+    await expect(run).toHaveText('Approve order');
     await expect(run).toBeDisabled();
     const orderNumber = page.getByLabel('Order number');
     await orderNumber.fill('0709101');
+    await page.getByRole('button', { name: 'Show checks' }).click();
     await expect(page.locator('.check-bad', { hasText: 'Order number entered (8 digits)' })).toBeVisible();
-    await expect(page.locator('#order-code')).toHaveText('✗ 8 digits needed (e.g. 07091012)');
+    await expect(page.locator('#order-code')).toHaveText('8 digits needed');
     await expect(run).toBeDisabled();
     await orderNumber.fill('wtcsg 0709 1012');
-    await expect(page.locator('#order-code')).toHaveText('✓ Backoffice code WTCSG07091012');
+    await expect(page.locator('#order-code')).toHaveText('→ WTCSG07091012');
     await expect(run).toBeEnabled();
 
     await run.click();
     const dialog = page.locator('#confirm');
-    await expect(dialog).toContainText('Approve an existing order?');
-    await expect(dialog).toContainText('WTCSG07091012');
+    await expect(dialog).toContainText('Approve order WTCSG07091012?');
     await expect(dialog).toContainText('No new order is created.');
-    await dialog.getByRole('button', { name: 'Approve in Backoffice' }).click();
-    await expect(page.locator('#status')).toContainText('order WTCSG07091012 approved and extracted');
+    await dialog.getByRole('button', { name: 'Approve order' }).click();
+    await expect(page.locator('#status')).toContainText('Order WTCSG07091012 approved and extracted');
     await expect(page.locator('#stop')).toBeHidden();
     await expect(page.locator('#result .verdict')).toHaveText('Completed');
-    await expect(page.locator('#result .order-number')).toHaveText('Order Number: 07091012');
-    await expect(page.locator('#result')).toContainText('ORDER_EXTRACTED (approved by this run)');
+    await expect(page.locator('#result .order-number')).toHaveText('07091012');
+    await expect(page.locator('#result')).toContainText('Approved in the backoffice: Approve Order was clicked once. The order is now ORDER_EXTRACTED.');
     await expect(page.locator('#steps li.done')).toHaveCount(4);
     // Only the approve test runs: no order switch, no order file.
     await expect(page.locator('#log')).toContainText('args=test --project=approve approve.e2e --headed place=undefined');
@@ -638,7 +647,6 @@ test.describe('launcher window', () => {
     await approveOrder(page, '11111111', 0);
     await expect(page.locator('#result .verdict')).toHaveText('No change');
     await expect(page.locator('#result')).toContainText('WTCSG11111111 was already ORDER_EXTRACTED, so Approve Order was not clicked.');
-    await expect(page.locator('#result')).toContainText('ORDER_EXTRACTED (was already extracted)');
   });
 
   test('Logs / History lists every run with its status, error and evidence', async ({ page }) => {
@@ -661,7 +669,7 @@ test.describe('launcher window', () => {
     await expect(rows.nth(2)).toContainText('PRODUCT_NOT_FOUND');
     await expect(rows.nth(2)).toContainText('Product Search');
     await expect(rows.nth(3)).toContainText('12345678');
-    await expect(rows.nth(3).locator('td').nth(3)).toHaveText('ExpressClick & Collect'); // mode, then method below it
+    await expect(rows.nth(3).locator('td').nth(4)).toHaveText('ExpressClick & Collect'); // mode, then method below it
     await expect(rows.nth(3)).toContainText('10117');
     await expect(rows.nth(3)).toContainText('1 left out (not eligible)');
     await expect(rows.nth(3)).toContainText('Completed');
@@ -681,15 +689,16 @@ test.describe('launcher window', () => {
     // A failed run's details: its error, with the screenshot taken then.
     await rows.nth(1).click();
     const details = page.locator('tr.hdetail');
-    await expect(details.locator('.errbox')).toContainText("WTCSG00000404 is not in the backoffice's Orders list.");
-    await expect(details.locator('.errbox')).toContainText('https://backoffice.example.test/backoffice/');
-    await expect(details.locator('.errbox')).toContainText('WTCSG00000404');
-    await details.locator('.errbox .thumb').click();
+    const happened = details.getByRole('region', { name: 'What happened' });
+    await expect(happened).toContainText("WTCSG00000404 is not in the backoffice's Orders list.");
+    await expect(happened).toContainText('https://backoffice.example.test/backoffice/');
+    await expect(details).toContainText('WTCSG00000404');
+    await details.locator('.p-x__shot').first().click();
     await expect(page.locator('#viewer-title')).toHaveText('screenshot-1-failure.png');
     await page.locator('#viewer-open').click();
     await expect.poll(() => opened.at(-1)).toMatch(/screenshot-1-failure\.png$/);
     await page.locator('#viewer-close').click();
-    await details.getByRole('button', { name: 'Open evidence folder' }).click();
+    await details.getByRole('button', { name: 'Evidence folder' }).click();
     await expect.poll(() => opened.at(-1)).toMatch(/reports[\\/]\d{4}-\d{2}-\d{2}_[\d_-]+$/);
 
     // Export: the runs shown, as a CSV file for Excel.

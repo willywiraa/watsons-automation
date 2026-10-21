@@ -65,8 +65,8 @@ const PEOPLE: Record<Person, { password: string; displayName: string; role: stri
 };
 /** What must never be stored or shown anywhere. */
 const SECRETS = Object.values(PEOPLE).flatMap((person) => [person.testing.username, person.testing.password, person.backoffice.username, person.backoffice.password]);
-const NEEDS_TESTING = 'Enter your testing account first (step "Your accounts").';
-const NEEDS_BACKOFFICE = 'Enter your backoffice account first (step "Your accounts").';
+const NEEDS_TESTING = 'Enter your testing account first (under "Accounts").';
+const NEEDS_BACKOFFICE = 'Enter your backoffice account first (under "Accounts").';
 const fingerprint = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 8);
 const ORDER = { deliveryMethod: 'home_delivery', mode: 'express', confirmed: true };
 
@@ -447,7 +447,7 @@ test.describe('hosted server', () => {
     const row = async () => ((await carol.history()).data.rows as { runId: string }[]).find((candidate) => candidate.runId === placed);
     expect(await row()).toMatchObject({ status: 'awaiting_approval', statusLabel: 'Awaiting approval', outcome: 'order_placed_unapproved', orderNumber: '12345678' });
 
-    // Carol approves it (Logs / History's "Approve in Backoffice" starts this run): the order run is then approved too.
+    // Carol approves it (Logs / History's "Approve" starts this run): the order run is then approved too.
     await carol.useBackofficeAccount('carol');
     const approval = (await carol.run({ automation: 'approve', orderNumber: '12345678', confirmed: true })).data.runId as string;
     await ended(setup, approval);
@@ -492,7 +492,7 @@ test.describe('hosted server', () => {
     expect(await bobLive).not.toContain('event: frame');
   });
 
-  test('the page: Live browser, Close browser, and Approve in Backoffice from Logs / History', async ({ page }) => {
+  test('the page: Live browser, Close browser, and Approve from Logs / History', async ({ page }) => {
     await page.goto(setup.app.url);
     await page.locator('#login-username').fill('alice');
     await page.locator('#login-password').fill(PEOPLE.alice.password);
@@ -504,7 +504,7 @@ test.describe('hosted server', () => {
     await page.getByLabel('One PLU per line').fill('555');
     await page.locator('#run').click();
     await expect(page.locator('#confirm')).toContainText('None: the order waits for approval');
-    await page.locator('#confirm').getByRole('button', { name: 'Run test' }).click();
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
 
     // The run's browser shows in the page; a click on its button reaches the real page.
     const screen = page.locator('#live-img');
@@ -521,15 +521,17 @@ test.describe('hosted server', () => {
     await expect(page.locator('#live-card')).toBeHidden();
     await expect(page.locator('#steps li.skipped')).toHaveCount(4); // the approval steps
 
-    // Logs / History: the order waits for approval; Approve in Backoffice fills in that approval.
+    // Logs / History: the order waits for approval; Approve fills in that approval.
     await page.getByRole('tab', { name: /Logs \/ History/ }).click();
     const row = page.locator('tr.hrow').first();
     await expect(row).toContainText('Awaiting approval');
     await expect(row).toContainText('Needs approval');
     await row.click();
-    await page.getByRole('button', { name: 'Approve in Backoffice' }).click();
+    await row.getByRole('button', { name: 'Approve', exact: true }).click();
     await expect(page.locator('input[name="automation"][value="approve"]')).toBeChecked();
     await expect(page.locator('#order-number')).toHaveValue('12345678');
+    await expect(page.locator('#ready-fixes')).toContainText('Backoffice account entered');
+    await page.getByRole('button', { name: 'Show checks' }).click();
     await expect(page.locator('.check-bad', { hasText: 'Backoffice account entered' })).toBeVisible();
   });
 
@@ -708,11 +710,12 @@ test.describe('hosted server', () => {
     await page.locator('#login-password').fill(PEOPLE.alice.password);
     await page.getByRole('button', { name: 'Sign in' }).click();
     await expect(page.locator('#login')).toBeHidden();
-    await expect(page.locator('#operator-item')).toContainText('Signed in as Alice');
+    await expect(page.locator('#user-button')).toContainText('Alice');
 
     // Step 2: her own testing and backoffice accounts.
     const run = page.locator('#run');
     await expect(page.locator('#section-accounts')).toBeVisible();
+    await page.getByRole('button', { name: 'Show checks' }).click();
     await expect(page.locator('.check-bad', { hasText: 'Testing account entered' })).toBeVisible();
     // The backoffice account is optional for a new order: without it, the order waits for approval.
     await expect(page.locator('.check-optional', { hasText: 'No backoffice account: the order will wait for approval' })).toBeVisible();
@@ -724,6 +727,9 @@ test.describe('hosted server', () => {
     await expect(page.locator('#testing-password')).toHaveValue('');
     await expect(page.locator('.check-ok', { hasText: 'Testing account entered' })).toBeVisible();
     await expect(run).toBeEnabled();
+    // Optional for a new order: its form opens with Add.
+    await expect(page.locator('#backoffice-username')).toBeHidden();
+    await page.locator('#backoffice-change').click();
     await page.locator('#backoffice-username').fill(PEOPLE.alice.backoffice.username);
     await page.locator('#backoffice-password').fill(PEOPLE.alice.backoffice.password);
     await page.locator('#backoffice-password').press('Enter');
@@ -743,10 +749,10 @@ test.describe('hosted server', () => {
     await run.click();
     await expect(page.locator('#confirm')).toContainText('al•••@e•••.com');
     await expect(page.locator('#confirm')).toContainText('Backoffice account');
-    await page.locator('#confirm').getByRole('button', { name: 'Run test' }).click();
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
     await expect(page.locator('#result .verdict')).toHaveText('Completed', { timeout: 15_000 });
-    await expect(page.locator('#result .order-number')).toHaveText('Order Number: 12345678');
-    await expect(page.locator('#result')).toContainText('Download evidence (.zip)');
+    await expect(page.locator('#result .order-number')).toHaveText('12345678');
+    await expect(page.locator('#result')).toContainText('Evidence (.zip)');
 
     // The shared history: her run and Bob's, with Bob's screenshot.
     await page.getByRole('tab', { name: /Logs \/ History/ }).click();
@@ -757,11 +763,13 @@ test.describe('hosted server', () => {
     await page.locator('#history-who').selectOption('mine');
     await expect(rows).toHaveCount(1);
     await page.locator('#history-who').selectOption('all');
-    const thumbnail = rows.nth(1).locator('.thumb img');
+    const thumbnail = rows.nth(1).locator('.p-ev__thumb img');
     await expect.poll(() => thumbnail.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
 
-    // Signing out ends the session; signing in again brings her remembered accounts back.
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    // Signing out (in the user menu) ends the session; signing in again brings her remembered accounts back.
+    await page.locator('#user-button').click();
+    await expect(page.locator('#user-menu')).toContainText('Signed in as Alice');
+    await page.getByRole('menuitem', { name: 'Sign out' }).click();
     await expect(page.locator('#login')).toBeVisible();
     await expect(page.locator('#login-password')).toHaveValue('');
     await page.locator('#login-username').fill('alice');

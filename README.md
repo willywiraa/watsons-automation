@@ -5,10 +5,10 @@ Automated end-to-end order test for the **Watsons STAGING** website, built with
 
 > ⚠️⚠️⚠️ **Staging only.** Never point this project at the production website.
 > Requirements: [PRD.md](PRD.md). Project rules and progress: [CLAUDE.md](CLAUDE.md).
-> Planned UI/UX redesign: [UI-UX-PRD.md](UI-UX-PRD.md).
+> UI/UX design: [UI-UX-PRD.md](UI-UX-PRD.md); the launcher page follows its refined prototype (2026-10-21).
 
 **Status:** all PRD phases (1–12) built. Open **WatsonsTester.exe** (or `npm run launcher`),
-paste the PLUs, and click Run, with Express or Standard delivery (Standard since 2026-10-13). The
+paste the PLUs, and click **Place test order**, with Express or Standard delivery (Standard since 2026-10-13). The
 launcher can also approve an order that already exists, and keeps a history of every run.
 
 ## What you need
@@ -81,56 +81,64 @@ mode: Express
 
 ## The launcher window (WatsonsTester)
 
-The easiest way to run the tests: a Watsons window with two tabs, **Automation** and
-**Logs / History**. Start it with `npm run launcher` (or, once built, by double-clicking
+The easiest way to run the tests: a Watsons window with two pages, **Automation** and
+**Logs / History** (in its header, next to the **Light / Dark** switch; without a choice it follows
+Windows). Start it with `npm run launcher` (or, once built, by double-clicking
 `WatsonsTester.exe`, see below; if Windows blocks the exe, `Start without exe.cmd`). It opens in
 its own Edge window; keep the black console window open while you use it.
 
-### Automation tab
+### Automation page
 
-On the left, what to run, in numbered steps; on the right, **Run** and the **Current status**.
+On the left, the **workflow**; on the right, the **Ready** bar with the run button, and the form.
 
-1. **Automation**: what should run.
-   - **Place new order** (the usual run) **places a real STAGING test order** (Checkout, Pay,
-     OTP `1234`) and then **approves it in the staging backoffice** (Customer Support role →
-     Orders → the order → Fraud Report → Approve Order), until its status is **ORDER_EXTRACTED**.
-     Without a backoffice account it stops at **"Thank you for your order"**, and the order
-     shows **Awaiting approval** until someone with a backoffice account approves it (below).
-   - **Approve existing order** does only the backoffice part, for an order that already
-     exists: type its number (`07091012` or `WTCSG07091012`). It never opens the shop, so it
-     can't create an order. An order that is already extracted is left alone (**No change**).
-2. **Products** (new order): paste the PLUs, one per line. For more than one of a product, add
-   the quantity after it (`10321 2`). The table next to it shows what will be ordered, and any
-   line it can't read. The window starts with the products of your last run (or
-   `test-data/order.txt`).
-3. **Delivery**: the delivery method, and the mode: **Express** (the default; "Fastest" on the
-   checkout page) or **Standard** (the regular delivery or pickup date). Products that the mode
-   can't deliver are left out of the order and listed in the result.
-4. **Timing**: **Seconds between adds**, the time from one "add to bag" click to the next
-   (default 10, from 0 to 120). The window remembers your last choice.
-5. **Run** lists the checks of PRD §37 (staging address and accounts set in `.env`, products,
-   delivery method and seconds between adds, or the order number). The Run button
-   (**Run order test** or **Approve in Backoffice**) stays disabled until all show ✓, and always
-   asks you to confirm first. The browser is shown. A missing backoffice account only blocks
-   approving; for a new order it shows ○ "the order will wait for approval".
+- **Workflow** (left), what should run:
+  - **Place new order** (the usual run) **places a real STAGING test order** (Checkout, Pay,
+    OTP `1234`) and then **approves it in the staging backoffice** (Customer Support role →
+    Orders → the order → Fraud Report → Approve Order), until its status is **ORDER_EXTRACTED**.
+    Without a backoffice account it stops at **"Thank you for your order"**, and the order
+    shows **Awaiting approval** until someone with a backoffice account approves it (below).
+  - **Approve existing order** does only the backoffice part, for an order that already
+    exists. It never opens the shop, so it can't create an order. An order that is already
+    extracted is left alone (**No change**).
+  - Below them, the orders **awaiting approval** (the newest three, each with **Approve**).
+- **Ready** says whether the run can start, or what to fix (click an item to go to it).
+  **Show checks** lists the checks of PRD §37 (staging address and accounts set in `.env`,
+  products, delivery method and seconds between adds, or the order number). The button
+  (**Place test order** or **Approve order**) stays disabled until all pass, and always asks you
+  to confirm first. The browser is shown. A missing backoffice account only blocks approving;
+  for a new order the checks note "the order will wait for approval".
+- **Products** (new order): paste the PLUs, one per line. For more than one of a product, add
+  the quantity after it (`10321 2`). Beside each line: what it will order, or why it can't be
+  read. The window starts with the products of your last run (or `test-data/order.txt`);
+  **Clear** empties the list.
+- **Delivery**: the method, and the mode: **Express** (the default; "Fastest" on the checkout
+  page) or **Standard** (the regular delivery or pickup date). Products that the mode can't
+  deliver are left out of the order and listed in the result. **Seconds between adds**: the time
+  from one "add to bag" click to the next (default 10, from 0 to 120); the window remembers your
+  last choice.
+- **Order** (approving): its number (`07091012` or `WTCSG07091012`); beside it, its backoffice
+  code, and below it who placed that order, if it is in the history.
+- **Accounts**: where the accounts come from (`.env` on this PC; never shown).
 
-While a test runs, **Current status** shows the step it is on and the time so far, with the
-steps done and the log below; the header shows the status too. A new order ends on the
-backoffice's Orders list showing the order with **Status ORDER_EXTRACTED** (the order's bar at
-the bottom keeps the status it had when it was opened: the backoffice doesn't update it), with
-the shop's "Thank you for your order!!" page in the first tab; without a backoffice account it
-ends on that page; an approval ends on the backoffice order. Edge stays open until you close its
-window (or 5 minutes pass), and you can use it; the launcher already shows the order number.
-After you close it, the result shows **Completed** with the order number and the backoffice
-status, **Awaiting approval** (placed, not approved yet), **No change**, or **Failed** with its
-error report (below), and buttons to open the report and the evidence folder. **Approve Order
-is clicked at most once**: if the result is unclear, the run stops with
+While a test runs, the page shows what runs with the time so far and **Stop**, the **Steps**
+(with the time each took) and the **Log**; on the Logs / History page, the header shows your run.
+A new order ends on the backoffice's Orders list showing the order with **Status
+ORDER_EXTRACTED** (the order's bar at the bottom keeps the status it had when it was opened: the
+backoffice doesn't update it), with the shop's "Thank you for your order!!" page in the first
+tab; without a backoffice account it ends on that page; an approval ends on the backoffice
+order. Edge stays open until you close its window (or 5 minutes pass), and you can use it; the
+launcher already shows the order number. After you close it, the result shows **Completed** with
+the order number (**Copy** copies it) and the backoffice status, **Awaiting approval** (placed,
+not approved yet), **No change**, or **Failed at** a step with its error report (below); then
+the products, the evidence (screenshots, the report, the evidence folder), and the steps and
+log. **New order** (or **Edit order**) goes back to the form; **Run again** asks to run the same
+again. **Approve Order is clicked at most once**: if the result is unclear, the run stops with
 `ORDER_APPROVAL_UNKNOWN` and asks you to check the order in the backoffice by hand.
 
 **Stop** stops the test and its browser (once it is checking out, paying or approving, it asks
-first, because the order or its approval may then already exist); the result is then
-**Stopped**. The launcher adds `order.txt` (what you asked for), `launcher-log.txt` (the full log)
-and `launcher-run.json` (what it knows about the run) to the run's evidence folder.
+first, because the order or its approval may then already exist); the result is then **Stopped
+at** that step. The launcher adds `order.txt` (what you asked for), `launcher-log.txt` (the full
+log) and `launcher-run.json` (what it knows about the run) to the run's evidence folder.
 
 Closing the window stops the launcher about 20 seconds later. A test that is running then
 carries on to the end (its result is still saved in `reports/`); closing the black console
@@ -138,27 +146,28 @@ window stops everything at once.
 
 ### When a run fails: the error report
 
-A failed run shows an **error report**: the step, the time it failed, the message, the address
-of each page that was open (without its query string, which can hold login details), the order
-number if there was one, and the screenshot Playwright took of each open page at that moment
-(click it to enlarge). **Copy error report** puts it on the clipboard, ready to paste into Teams
-or an email together with the screenshot; the same text is saved as `error-report.txt` in the
-run's evidence folder.
+A failed run shows its **error** under the step it failed at: the message, the error code and
+the time, the address of each page that was open (without its query string, which can hold login
+details), and the screenshot Playwright took of each open page at that moment (click it to
+enlarge; the result shows the order number if there was one). **Copy error report** puts it on
+the clipboard, ready to paste into Teams or an email together with the screenshot; the same text
+is saved as `error-report.txt` in the run's evidence folder.
 
-### Logs / History tab
+### Logs / History page
 
-Every run in `reports/`, newest first: time, automation, order number, delivery, products (and
-how many were left out), status (**Running**, **Completed**, **Awaiting approval**, **Failed**,
-**Stopped**, **No change**), error code and step, operator, and screenshots. An order with
-status **Awaiting approval** ("Needs approval") has an **Approve in Backoffice** button in its
-details: it fills in an "Approve existing order" run for that order number. Once that approval completes
-(or finds the order already extracted), the order shows **Completed**, "approved later by …".
-Search by order number, PLU,
-error code or operator, filter by status or automation, and click a run for its details, error
-report and screenshots. **Export CSV** saves the runs shown as `reports/history-<date_time>.csv`
-and opens it (order numbers as backoffice codes, so Excel keeps their zeros). Runs from before the
-history show what their evidence folder holds, without an operator. The operator is
-`WATSONS_OPERATOR` from `.env`, or your Windows user name.
+Every run in `reports/`, newest first: time, automation, order number (with **Copy**), delivery,
+products (and how many were left out), status (**Running**, **Completed**, **Awaiting approval**,
+**Failed**, **Stopped**, **No change**) and the step it ended at, error code, operator, and
+screenshots. An order with status **Awaiting approval** ("Needs approval") has an **Approve**
+button: it fills in an "Approve existing order" run for that order number; the header counts
+these orders. Once that approval completes (or finds the order already extracted), the order
+shows **Completed**, "approved later by …". Search by order number, PLU, error code or operator,
+filter by status or automation, and click a run for its details (what happened, the run's
+facts, its screenshots and evidence). The first 40 runs show; **Load 100 more** shows more.
+**Export CSV** saves every run that matches the search and filters as
+`reports/history-<date_time>.csv` and opens it (order numbers as backoffice codes, so Excel
+keeps their zeros). Runs from before the history show what their evidence folder holds, without
+an operator. The operator is `WATSONS_OPERATOR` from `.env`, or your Windows user name.
 
 ### Delivery modes on the checkout page
 
@@ -208,7 +217,7 @@ on the server, headless, and everyone sees **one shared Logs / History**.
 | Topic | Hosted version |
 |---|---|
 | Sign-in | With an account the admin creates (`server/scripts/users.cjs`; bcrypt hashes in `users.json` on the server). |
-| Testing and backoffice accounts | Each person enters their own in step 2, once: the staging shop account (to place orders) and the staging backoffice account (to approve them; approving an existing order needs only this one). The backoffice account is **optional for new orders**: without it, the order stops at "Thank you for your order" and shows **Awaiting approval** in Logs / History until someone with a backoffice account approves it there (**Approve in Backoffice**). The server **remembers them** for the person's next sign-in (unless they untick Remember), **sealed with a key made from their own portal password**, so only their sign-in opens them. They are used only for their runs, and never logged or shown to anyone else. |
+| Testing and backoffice accounts | Each person enters their own under **Accounts**, once: the staging shop account (to place orders) and the staging backoffice account (to approve them; approving an existing order needs only this one). The backoffice account is **optional for new orders**: without it, the order stops at "Thank you for your order" and shows **Awaiting approval** in Logs / History until someone with a backoffice account approves it there (**Approve**). The server **remembers them** for the person's next sign-in (unless they untick Remember), **sealed with a key made from their own portal password**, so only their sign-in opens them. They are used only for their runs, and never logged or shown to anyone else. |
 | Live browser | While a run goes on, its owner sees the server's browser in the page (**Live browser**, about 3 pictures a second) and can use it: click, scroll, type, and switch between its tabs. Nobody else sees it. When the order is placed, the last page (e.g. "Thank you for your order") stays open until **Close browser**, at most 5 minutes. |
 | Parallel runs | One run per person, and per testing account, at a time; up to `WATSONS_MAX_PARALLEL_RUNS` runs at once, then a waiting line. |
 | Logs / History | Everyone's runs, from a database on the server (SQLite), with a **Mine / All** filter. Evidence is downloaded (zip, error report) or shown in the browser (screenshots, Playwright report). |
