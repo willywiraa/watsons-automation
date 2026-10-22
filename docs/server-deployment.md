@@ -215,7 +215,7 @@ it couldn't follow to the end shows as **Interrupted** in the history.
   - sign-ins (also failed ones, with the person's address)
   - sign-outs
   - testing account set or cleared
-  - run start, stop and end
+  - run start, stop and end, and each answer to a run's question (who chose what, 2026-10-22)
   - exports, downloads and deletions
 - **Updating the app:** `app` is a Git copy of the project's private repository (since
   2026-10-14). Push the changes from a development PC, then, in an administrator PowerShell on

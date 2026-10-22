@@ -11,6 +11,9 @@
 //   PLU 777: (a bug that never happens in the real tests) writes the shop and backoffice passwords
 //            into its log, so tests/server.spec.ts can check that the server finds and removes them.
 //   Placing an order without a backoffice account: stops at "Order confirmation", not approved.
+//   Questions (WATSONS_INTERACTIVE=yes, as the launcher sets it; src/utils/ask.ts): PLU 3333 is out
+//            of stock at "Product Search"; PLU 4444 can't go Express ("<Mode> Delivery Selection");
+//            the add of PLU 5555 fails once ("Add to bag"). The run waits for answer-<id>.json.
 //   PLU 555: a real browser for the hosted server's live view (with WATSONS_LIVE_VIEW_PORT and
 //            FAKE_PLAYWRIGHT_MODULE, the path of Playwright): headless Edge with that DevTools port,
 //            showing a page that logs clicks and typing ("fake page: …"). At the end it keeps the
@@ -38,11 +41,13 @@ const products = orderText
     return { plu, quantity: Number(quantity ?? 1) };
   });
 const methods = { 'Home Delivery': 'home_delivery', 'Click & Collect': 'click_collect', 'Shell Station': 'shell_station' };
-const method = methods[orderText.match(/^delivery: (.+)$/m)?.[1]];
-const mode = /^mode: standard\s*$/im.test(orderText) ? 'standard' : 'express';
-const modeName = mode === 'standard' ? 'Standard' : 'Express';
-const excluded = products.filter((line) => line.plu === '46465');
-const ordered = products.filter((line) => line.plu !== '46465');
+// The person's answers can change the delivery and the products.
+let method = methods[orderText.match(/^delivery: (.+)$/m)?.[1]];
+let mode = /^mode: standard\s*$/im.test(orderText) ? 'standard' : 'express';
+let modeName = mode === 'standard' ? 'Standard' : 'Express';
+let excluded = products.filter((line) => line.plu === '46465');
+let ordered = products.filter((line) => line.plu !== '46465');
+const soldOut = [];
 const steps = approving
   ? ['Backoffice login', 'Find order in backoffice', 'Approve order', 'Order extracted']
   : ['Login', 'Empty bag', 'Product Search', 'Add to bag', 'Cart validation', `${modeName} Delivery Selection`];
@@ -110,7 +115,8 @@ function writeResult(result) {
     finishedAt: new Date().toISOString(),
     placeOrder,
     delivery: approving ? {} : { method, mode },
-    products: { ordered: approving ? [] : ordered, soldOut: [], excludedNotEligible: excluded.map((line) => line.plu), freeGiftRemoved: null },
+    products: { ordered: approving ? [] : ordered, soldOut, excludedNotEligible: excluded.map((line) => line.plu), freeGiftRemoved: null },
+    decisions,
     consoleErrors: [],
     artifacts: { folder: path.join('reports', process.env.WATSONS_RUN_ID), screenshots: [] },
   };
@@ -128,6 +134,109 @@ function fail(step, code, reason, page, orderNumber) {
     artifacts: { folder: path.join('reports', process.env.WATSONS_RUN_ID), screenshots: [shot] },
   });
   process.exitCode = 1;
+}
+
+// ---- Questions, as src/utils/ask.ts asks them: ask.json, the "[ASK]" line, then answer-<id>.json.
+const interactive = process.env.WATSONS_INTERACTIVE === 'yes';
+const decisions = [];
+let questions = 0;
+function ask(question, then) {
+  const id = ++questions;
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, 'ask.json'), JSON.stringify({ id, ...question, askedAt: new Date().toISOString() }));
+  console.log(`[12:00:00] [ASK] ${question.message}`);
+  const file = path.join(folder, `answer-${id}.json`);
+  const poll = setInterval(() => {
+    if (!fs.existsSync(file)) return;
+    clearInterval(poll);
+    const answer = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const option = question.options.find((candidate) => candidate.action === answer.action && candidate.mode === answer.mode && candidate.method === answer.method);
+    decisions.push({ at: new Date().toISOString(), step: question.step, kind: question.kind, plus: question.plus, message: question.message, action: answer.action, label: option.label, ...(answer.plu ? { plu: answer.plu } : {}) });
+    console.log(`[12:00:00] [INFO] Decision: ${option.label}${answer.plu ? ` (PLU ${answer.plu})` : ''}`);
+    then(answer);
+  }, 50);
+}
+function decided(outcome) {
+  decisions.at(-1).outcome = outcome;
+  console.log(`[12:00:00] [INFO] Outcome: ${outcome}`);
+}
+const others = (plu) => ordered.filter((line) => line.plu !== plu).length;
+const without = (plu) => ordered.filter((line) => line.plu !== plu);
+const replaced = (plu, replacement) => ordered.map((line) => (line.plu === plu ? { plu: replacement, quantity: line.quantity } : line));
+const METHOD_LABELS = { home_delivery: 'Home Delivery', click_collect: 'Click & Collect', shell_station: 'Shell Station' };
+const asked = new Set();
+
+/** The step's question, if it has one: asks it and goes on with the answer (true), or not (false). */
+function question(step) {
+  if (!interactive) return false;
+  if (step === 'Product Search' && ordered.some((line) => line.plu === '3333') && !asked.has(step)) {
+    asked.add(step);
+    const options = [
+      ...(others('3333') > 0 ? [{ action: 'skip', label: 'Skip product and continue' }] : []),
+      { action: 'replace', label: 'Replace with another PLU' },
+      { action: 'stop', label: 'Stop automation' },
+    ];
+    ask({ kind: 'out_of_stock', step, plus: ['3333'], message: 'Product 3333 is out of stock. What would you like to do?', options }, (answer) => {
+      soldOut.push('3333');
+      if (answer.action === 'skip') {
+        ordered = without('3333');
+        decided('PLU 3333 left out of the order');
+      } else {
+        ordered = replaced('3333', answer.plu);
+        decided(`PLU ${answer.plu} is available: it replaces PLU 3333`);
+      }
+      next();
+    });
+    return true;
+  }
+  if (step === 'Add to bag' && ordered.some((line) => line.plu === '5555') && !asked.has(step)) {
+    asked.add(step);
+    const options = [{ action: 'retry', label: 'Retry' }, ...(others('5555') > 0 ? [{ action: 'skip', label: 'Skip product 5555' }] : []), { action: 'stop', label: 'Stop automation' }];
+    const message = 'Something went wrong at Add to bag (PLU 5555). How would you like to proceed?';
+    const detail = 'Adding unit 1 of 1 for PLU 5555 did not increase the bag count (still 1).';
+    ask({ kind: 'error', step, plus: ['5555'], message, detail, options }, (answer) => {
+      if (answer.action === 'retry') {
+        console.log('[12:00:00] [WARN] Retrying: Add to bag');
+        decided('PLU 5555 is in the bag');
+      } else {
+        ordered = without('5555');
+        decided('PLU 5555 left out of the order');
+      }
+      next();
+    });
+    return true;
+  }
+  if (step === 'Express Delivery Selection' && ordered.some((line) => line.plu === '4444') && method !== 'shell_station') {
+    const options = [
+      { action: 'switch_mode', mode: 'standard', label: 'Use Standard instead' },
+      ...['home_delivery', 'click_collect', 'shell_station'].filter((other) => other !== method).map((other) => ({ action: 'switch_method', method: other, label: `Try ${METHOD_LABELS[other]}` })),
+      ...(others('4444') > 0 ? [{ action: 'skip', label: 'Leave it out and continue' }] : []),
+      { action: 'replace', label: 'Replace with another PLU' },
+      { action: 'stop', label: 'Stop automation' },
+    ];
+    const message = `Product 4444 is not eligible for Express delivery with ${METHOD_LABELS[method]}.`;
+    ask({ kind: 'not_eligible', step, plus: ['4444'], message, options }, (answer) => {
+      if (answer.action === 'switch_mode') {
+        [mode, modeName] = ['standard', 'Standard'];
+        steps.splice(index, 0, 'Standard Delivery Selection');
+        decided('Delivery mode: Standard');
+      } else if (answer.action === 'switch_method') {
+        method = answer.method;
+        steps.splice(index, 0, 'Cart validation', step); // back to the bag, then the checkout page again (Shell Station takes it)
+        decided(`Delivery method: ${METHOD_LABELS[method]}`);
+      } else if (answer.action === 'skip') {
+        excluded = ordered.filter((line) => line.plu === '4444');
+        ordered = without('4444');
+        console.log('[12:00:00] [WARN] Not available for Express, left out of this order: PLU 4444');
+      } else {
+        ordered = replaced('4444', answer.plu);
+        steps.splice(index, 0, 'Add to bag', 'Cart validation', step);
+      }
+      next();
+    });
+    return true;
+  }
+  return false;
 }
 
 let index = 0;
@@ -172,6 +281,7 @@ function next() {
   }
   const step = steps[index++];
   console.log(`[12:00:00] [INFO] Step: ${step}`);
+  if (question(step)) return;
   if (step === 'Product Search' && products.some((line) => line.plu === '404')) {
     return fail(step, 'PRODUCT_NOT_FOUND', 'No product found for PLU 404.', 'https://staging.example.test/search');
   }

@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { StepError } from '../utils/errors';
 import { log } from '../utils/log';
 
@@ -48,17 +48,39 @@ export async function throwIfServerErrorShown(page: Page, step: string, cause?: 
 }
 
 /**
+ * Staging's "Sorry the item(s) is not available for checkout. Sorry for the inconvenience."
+ * pop-up: its answer when a product can't go into the bag, though the search showed it with "add
+ * to bag" (seen 2026-10-22 adding PLU 57893). Its Confirm button is named "positiveButton". While
+ * it shows, the rest of the page is hidden from accessibility tools: the header's "MY Bag" can't
+ * be found.
+ */
+export function notAvailablePopup(page: Page): Locator {
+  return page.getByRole('dialog').filter({ hasText: 'not available for checkout' }).filter({ visible: true });
+}
+
+/** Closes the "not available for checkout" pop-up (Confirm). Returns whether it was showing. */
+export async function closeNotAvailablePopupIfShown(page: Page): Promise<boolean> {
+  const popup = notAvailablePopup(page);
+  if ((await popup.count()) === 0) return false;
+  await popup.first().getByRole('button', { name: 'positiveButton' }).click();
+  await expect(popup).toHaveCount(0);
+  log('"Not available for checkout" pop-up closed');
+  return true;
+}
+
+/**
  * Closes the "Wello" chat panel if it is open. It opens by itself on the right side and
  * covers buttons there (e.g. "add to bag" in the right-hand column). Its close control is an
  * image named "icon-close-chat". Verified on staging 2026-10-05.
  */
 export async function closeChatPanelIfShown(page: Page): Promise<void> {
   const close = page.getByRole('img', { name: 'icon-close-chat' }).filter({ visible: true });
-  if ((await close.count()) === 1) {
-    await close.click();
-    await expect(close).toHaveCount(0);
-    log('Chat panel closed');
-  }
+  if ((await close.count()) !== 1) return;
+  // The panel slides in, and can hide again by itself (seen 2026-10-22: the icon was moving, then
+  // hidden, and one long click failed an add): short clicks, done once it has gone.
+  for (let attempt = 1; attempt <= 3 && (await close.count()) > 0; attempt++) await close.click({ timeout: 5_000 }).catch(() => {});
+  await expect(close).toHaveCount(0);
+  log('Chat panel closed');
 }
 
 /**

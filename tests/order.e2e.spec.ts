@@ -1,15 +1,18 @@
-import { DEFAULT_ORDER_FILE, loadOrder, type OrderLine } from '../src/config/order';
+import { DEFAULT_ORDER_FILE, loadOrder, type DeliveryMethod, type OrderLine } from '../src/config/order';
 import { ADD_DELAY_SECONDS } from '../src/config/settings';
-import { deliveryModeSteps } from '../src/flows/delivery-modes';
+import { chooseDelivery } from '../src/flows/delivery-modes';
+import { errorQuestion, METHOD_NAMES, methodEligibilityQuestion, otherMethods, retryOrAsk, stopped } from '../src/flows/order-issues';
+import { OrderProducts } from '../src/flows/order-products';
 import { test, expect } from '../src/fixtures/staging';
 import { BagPage } from '../src/pages/BagPage';
 import { BackofficeLoginPage } from '../src/pages/BackofficeLoginPage';
 import { BackofficeOrderPage } from '../src/pages/BackofficeOrderPage';
-import { CheckoutPage } from '../src/pages/CheckoutPage';
+import { CheckoutPage, MODE_NAMES } from '../src/pages/CheckoutPage';
 import { LoginPage } from '../src/pages/LoginPage';
 import { OrderConfirmationPage } from '../src/pages/OrderConfirmationPage';
 import { PaymentPage } from '../src/pages/PaymentPage';
 import { ProductSearch } from '../src/pages/ProductSearch';
+import { ask, decided } from '../src/utils/ask';
 import { StepError } from '../src/utils/errors';
 import { log } from '../src/utils/log';
 
@@ -24,6 +27,10 @@ import { log } from '../src/utils/log';
 // With the browser shown (--headed, as the launcher does), the run ends by leaving the order
 // confirmation page open until the person closes the browser window (at most 5 minutes).
 // Each run's evidence goes to reports/<run id>/ (src/reporting/result-reporter.ts).
+// Before Checkout, a run started from the launcher asks the person when something needs a decision
+// (src/utils/ask.ts, user's request 2026-10-22): a product out of stock, not found or refused, a
+// delivery that can't take some products, an unexpected error. It then goes on from there. After
+// Checkout nothing is asked or retried (PRD §41–42).
 
 const plus = (lines: OrderLine[]) => lines.map((line) => (line.quantity > 1 ? `${line.plu} x${line.quantity}` : line.plu)).join(', ') || 'none';
 
@@ -33,8 +40,11 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
   // Per unit added: the seconds between adds (fixed at 5 since 2026-10-21) plus 35 s for the add
   // itself; orders also wait up to 15 minutes in the backoffice.
   test.setTimeout((settings.placeOrder ? 35 : 15) * 60_000 + unitCount * (35_000 + ADD_DELAY_SECONDS * 1000));
-  const mode = deliveryModeSteps(order.deliveryMode);
-  Object.assign(orderRun.data, { placeOrder: settings.placeOrder, deliveryMethod: order.deliveryMethod, deliveryMode: order.deliveryMode });
+  // The person's decisions can change the delivery, and the products (OrderProducts).
+  let method = order.deliveryMethod;
+  let mode = order.deliveryMode;
+  const decisions = orderRun.data.decisions;
+  Object.assign(orderRun.data, { placeOrder: settings.placeOrder, deliveryMethod: method, deliveryMode: mode });
   log(
     `Starting Watsons STAGING order test (${order.deliveryMode}, ${order.deliveryMethod}, ${order.products.length} PLU(s), ${ADD_DELAY_SECONDS} s between adds)`,
   );
@@ -43,6 +53,8 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
   const search = new ProductSearch(page);
   const bag = new BagPage(page);
   const checkout = new CheckoutPage(page);
+  const products = new OrderProducts(page, search, bag, decisions, order.products);
+  orderRun.data.soldOut = products.soldOut;
 
   await orderRun.step('Login', async () => {
     await loginPage.open();
@@ -50,59 +62,118 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
   });
 
   // Start from an empty bag, so leftovers from earlier runs can't end up in the order.
-  await orderRun.step('Empty bag', async () => {
-    await bag.open();
-    await bag.empty();
-  });
+  await orderRun.step('Empty bag', () =>
+    retryOrAsk('Empty bag', decisions, async () => {
+      await bag.open();
+      await bag.empty();
+    }),
+  );
 
-  // Check every PLU before adding anything (PRD §12).
-  const available = await orderRun.step('Product Search', async () => {
-    await search.searchAll(order.products.map((line) => line.plu));
-    const found: OrderLine[] = [];
-    const notFound: OrderLine[] = [];
-    for (const line of order.products) {
-      const availability = await search.availabilityOf(line.plu);
-      if (availability === 'available') found.push(line);
-      else if (availability === 'sold_out') orderRun.data.soldOut.push(line.plu);
-      else notFound.push(line);
+  // Check every PLU before adding anything (PRD §12); then add them.
+  await orderRun.step('Product Search', () => products.check());
+  await orderRun.step('Add to bag', () => products.addAll());
+
+  // The checkout page has no "MY Bag" button (seen 2026-10-22): back to the bag through the shop.
+  const backToShop = () => page.goto(stagingUrl.href);
+  // Methods the person moved away from: not offered again.
+  const triedMethods: DeliveryMethod[] = [];
+  const useMethod = (next: DeliveryMethod) => {
+    triedMethods.push(method);
+    method = next;
+    orderRun.data.deliveryMethod = method;
+    decided(decisions, `Delivery method: ${METHOD_NAMES[method]}`);
+  };
+
+  // Bag: delivery method, free gift, contents. Products the method can't take (the bag page says
+  // so): the person chooses another method, to leave them out, a replacement, or to stop. Any other
+  // problem: retry, another method, or stop. Ends on the checkout page, or with a replacement to add.
+  type Cart = { kind: 'ready'; names: Record<string, string> } | { kind: 'replace'; plu: string; replacement: string };
+  const validateCart = async (): Promise<Cart> => {
+    for (;;) {
+      let problem: { message: string; plus: string[] } | null = null;
+      try {
+        await bag.open();
+        await bag.selectDeliveryMethod(method);
+        problem = await bag.methodProblem();
+        if (!problem) {
+          orderRun.data.freeGiftRemoved = (await bag.removeFreeGiftIfPresent()) ?? orderRun.data.freeGiftRemoved;
+          await products.tidyBag();
+          await bag.expectContents(products.lines);
+          const free = await bag.freeItems();
+          if (free.length > 0) log(`Free item(s) staging added by itself (e.g. Buy 1 Get 1 Free): PLU ${plus(free)}. They come with the order.`);
+          const names = await bag.productNames();
+          await bag.next();
+          return { kind: 'ready', names };
+        }
+      } catch (error) {
+        const answer = await ask(errorQuestion('Cart validation', error, { extra: otherMethods(method, triedMethods) }), { action: 'stop' }, decisions);
+        if (answer.action === 'switch_method' && answer.method) useMethod(answer.method);
+        else if (answer.action !== 'retry') stopped('Cart validation', answer, error);
+        await backToShop();
+        continue;
+      }
+      if (!problem) continue;
+      const notTaken = new StepError(
+        'DELIVERY_METHOD_NOT_AVAILABLE',
+        'Cart validation',
+        `${METHOD_NAMES[method]} can't take PLU ${problem.plus.join(', ') || '(not shown)'}. The bag page says: "${problem.message}"`,
+        ['these products need another delivery method (e.g. Home Delivery)'],
+      );
+      log(`Not available for ${METHOD_NAMES[method]} (the bag page): PLU ${problem.plus.join(', ') || '(not shown)'}`, 'WARN');
+      const others = products.lines.filter((line) => !problem.plus.includes(line.plu)).length;
+      const answer = await ask(methodEligibilityQuestion({ plus: problem.plus, method, message: problem.message, othersLeft: others, triedMethods }), { action: 'stop' }, decisions);
+      if (answer.action === 'switch_method' && answer.method) useMethod(answer.method);
+      else if (answer.action === 'replace' && answer.plu) return { kind: 'replace', plu: problem.plus[0], replacement: answer.plu };
+      else if (answer.action === 'skip') {
+        const leftOut = problem.plus;
+        await retryOrAsk('Cart validation', decisions, () => products.leaveOut(leftOut));
+        decided(decisions, `PLU ${leftOut.join(', ')} left out of the order`);
+        // The bag page can go on showing them for a while (seen 2026-10-22): load it afresh.
+        await backToShop();
+      } else stopped('Cart validation', answer, notTaken);
     }
-    if (notFound.length > 0) {
-      throw new StepError('PRODUCT_NOT_FOUND', 'Product Search', `No product found for PLU ${plus(notFound)}. Nothing was added.`, [
-        'a typo in the order',
-        'the product does not exist on staging',
-      ]);
+  };
+  // Cart validation until the bag goes on to the checkout page; a product replaced there is added first.
+  const cartToCheckout = async (): Promise<Record<string, string>> => {
+    for (;;) {
+      const cart = await orderRun.step('Cart validation', validateCart);
+      if (cart.kind === 'ready') return cart.names;
+      await backToShop();
+      await orderRun.step('Add to bag', () => products.replace(cart.plu, cart.replacement));
     }
-    if (orderRun.data.soldOut.length > 0) log(`Skipping sold-out PLU(s): ${orderRun.data.soldOut.join(', ')}`, 'WARN');
-    if (found.length === 0) throw new StepError('PRODUCT_NOT_FOUND', 'Product Search', 'Every product in the order is sold out.');
-    return found;
-  });
+  };
 
-  await orderRun.step('Add to bag', async () => {
-    for (const line of available) await search.add(line);
-  });
-
-  // Bag: delivery method, free gift, contents.
-  const namesByPlu = await orderRun.step('Cart validation', async () => {
-    await bag.open();
-    await bag.selectDeliveryMethod(order.deliveryMethod);
-    orderRun.data.freeGiftRemoved = await bag.removeFreeGiftIfPresent();
-    await bag.expectContents(available);
-    const names = await bag.productNames();
-    await bag.next();
-    return names;
-  });
-
-  // Checkout summary: the delivery mode reports products it can't deliver.
-  await orderRun.step(`${order.deliveryMode === 'express' ? 'Express' : 'Standard'} Delivery Selection`, async () => {
-    await checkout.waitUntilLoaded();
-    const { kept, excluded } = await mode.selectOnCheckout(checkout, available, namesByPlu);
-    orderRun.data.ordered = kept;
-    orderRun.data.excluded = excluded.map((line) => line.plu);
-    await expect(checkout.checkoutButton).toHaveCount(1);
-    await expect(checkout.checkoutButton).toBeVisible();
-  });
+  // Cart validation, then the checkout page's delivery mode; again when the person changes the
+  // delivery method or a product there (the mode alone changes on the checkout page itself).
+  let namesByPlu = await cartToCheckout();
+  for (;;) {
+    const next = await orderRun.step(`${MODE_NAMES[mode]} Delivery Selection`, async () => {
+      await checkout.waitUntilLoaded();
+      const chosen = await chooseDelivery({ checkout, mode, method, lines: products.lines, namesByPlu, decisions, triedMethods });
+      if (chosen.kind === 'ready') {
+        await expect(checkout.checkoutButton).toHaveCount(1);
+        await expect(checkout.checkoutButton).toBeVisible();
+      }
+      return chosen;
+    });
+    if (next.kind === 'ready') {
+      orderRun.data.ordered = next.kept;
+      orderRun.data.excluded = next.excluded.map((line) => line.plu);
+      break;
+    }
+    if (next.kind === 'mode') {
+      mode = next.mode;
+      orderRun.data.deliveryMode = mode;
+      decided(decisions, `Delivery mode: ${MODE_NAMES[mode]}`);
+      continue;
+    }
+    await backToShop();
+    if (next.kind === 'method') useMethod(next.method);
+    else await orderRun.step('Add to bag', () => products.replace(next.plu, next.replacement));
+    namesByPlu = await cartToCheckout();
+  }
   log(`In the order: ${plus(orderRun.data.ordered)}`);
-  if (orderRun.data.excluded.length > 0) log(`Left out, not ${order.deliveryMode}-eligible: ${orderRun.data.excluded.join(', ')}`, 'WARN');
+  if (orderRun.data.excluded.length > 0) log(`Left out, not ${mode}-eligible: ${orderRun.data.excluded.join(', ')}`, 'WARN');
   await test.info().attach('checkout summary', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
 
   if (!settings.placeOrder) {
@@ -112,7 +183,7 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
 
   // Place the order (switched on for this run). Pay and SUBMIT are clicked once each; nothing is
   // ever retried (PRD §41–42).
-  log(`Placing a test order on Watsons STAGING: ${plus(orderRun.data.ordered)} (${order.deliveryMode}, ${order.deliveryMethod})`, 'WARN');
+  log(`Placing a test order on Watsons STAGING: ${plus(orderRun.data.ordered)} (${mode}, ${method})`, 'WARN');
   const payment = new PaymentPage(page);
   const confirmation = new OrderConfirmationPage(page, stagingUrl);
   await orderRun.step('Checkout', () => checkout.checkout(settings.placeOrder));

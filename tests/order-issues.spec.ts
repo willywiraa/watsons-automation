@@ -1,0 +1,345 @@
+import { expect, test } from '@playwright/test';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { OrderLine } from '../src/config/order';
+import { chooseDelivery } from '../src/flows/delivery-modes';
+import { eligibilityQuestion, errorQuestion, methodEligibilityQuestion, productQuestion, replaceLine } from '../src/flows/order-issues';
+import { BagPage } from '../src/pages/BagPage';
+import type { CheckoutPage } from '../src/pages/CheckoutPage';
+import { ProductSearch } from '../src/pages/ProductSearch';
+import { ask, type Answer, type Decision, type Question } from '../src/utils/ask';
+import { StepError } from '../src/utils/errors';
+
+// Offline checks of what an order run does when something needs the person's decision before
+// Checkout (user's request 2026-10-22): the questions and their choices, the question and answer
+// files the launcher reads and writes, the delivery choice on the checkout page, and adding to the
+// bag on a small stand-in for the shop (what staging did with the PLUs of the stress test).
+
+const labels = (question: Question) => question.options.map((option) => option.label);
+
+test.describe('the questions and their choices', () => {
+  test('a product out of stock: skip only when something else is left to order', () => {
+    const question = productQuestion('out_of_stock', '39656', 2);
+    expect(question).toMatchObject({ kind: 'out_of_stock', step: 'Product Search', plus: ['39656'], message: 'Product 39656 is out of stock. What would you like to do?' });
+    expect(labels(question)).toEqual(['Skip product and continue', 'Replace with another PLU', 'Stop automation']);
+    expect(labels(productQuestion('out_of_stock', '39656', 0))).toEqual(['Replace with another PLU', 'Stop automation']);
+    expect(productQuestion('not_found', '12345', 1).message).toBe('Product 12345 was not found on staging. What would you like to do?');
+  });
+
+  test('a product staging won’t add: asked at Add to bag, with the reason', () => {
+    const question = productQuestion('not_available', '57893', 1, 'Staging did not add PLU 57893: "Sorry the item(s) is not available for checkout."');
+    expect(question).toMatchObject({ step: 'Add to bag', message: "Product 57893 can't be added to the bag. What would you like to do?", detail: expect.stringContaining('not available for checkout') });
+  });
+
+  test('products the delivery can’t take: the other mode when it takes them, other methods, leave out, stop', () => {
+    const question = eligibilityQuestion({ plus: ['17971', '21684'], mode: 'express', method: 'home_delivery', otherMode: 'standard', othersLeft: 11, triedMethods: [] });
+    expect(question.message).toBe('Products 17971 and 21684 are not eligible for Express delivery with Home Delivery.');
+    expect(question.step).toBe('Express Delivery Selection');
+    expect(labels(question)).toEqual(['Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Leave them out and continue', 'Stop automation']);
+    // One product, nothing else to order, a method already tried, no other mode: only what is possible.
+    const only = eligibilityQuestion({ plus: ['82074'], mode: 'standard', method: 'home_delivery', otherMode: null, othersLeft: 0, triedMethods: ['click_collect'] });
+    expect(only.message).toBe('Product 82074 is not eligible for Standard delivery with Home Delivery.');
+    expect(labels(only)).toEqual(['Try Shell Station', 'Replace with another PLU', 'Stop automation']);
+  });
+
+  test('products the delivery method can’t take (the bag page): another method, leave out, replace, stop; staging’s words as details', () => {
+    const said = 'Sorry, your order includes item(s) not available for Click & Collect service. Please review your shopping bag or try another delivery option.';
+    const question = methodEligibilityQuestion({ plus: ['24264', '21684'], method: 'click_collect', message: said, othersLeft: 3, triedMethods: [] });
+    expect(question).toMatchObject({ kind: 'not_eligible', step: 'Cart validation', plus: ['24264', '21684'], message: 'Products 24264 and 21684 are not eligible for Click & Collect.', detail: said });
+    expect(labels(question)).toEqual(['Try Home Delivery', 'Try Shell Station', 'Leave them out and continue', 'Stop automation']);
+    const one = methodEligibilityQuestion({ plus: ['34626'], method: 'shell_station', message: '', othersLeft: 0, triedMethods: ['click_collect'] });
+    expect(one.message).toBe('Product 34626 is not eligible for Shell Station.');
+    expect(labels(one)).toEqual(['Try Home Delivery', 'Replace with another PLU', 'Stop automation']);
+  });
+
+  test('an unexpected error: retry, skip the product concerned, stop; with the reason', () => {
+    const error = new StepError('PRODUCT_QUANTITY_MISMATCH', 'Add to bag', 'Adding unit 1 of 1 for PLU 5555 did not increase the bag count (still 1).');
+    const question = errorQuestion('Add to bag', error, { skipPlu: '5555' });
+    expect(question.message).toBe('Something went wrong at Add to bag (PLU 5555). How would you like to proceed?');
+    expect(question.detail).toBe('Adding unit 1 of 1 for PLU 5555 did not increase the bag count (still 1).');
+    expect(labels(question)).toEqual(['Retry', 'Skip product 5555', 'Stop automation']);
+    expect(labels(errorQuestion('Empty bag', new Error('boom')))).toEqual(['Retry', 'Stop automation']);
+  });
+
+  test('a replacement takes the old product’s place and quantity, or joins the same PLU', () => {
+    const lines: OrderLine[] = [{ plu: '1', quantity: 1 }, { plu: '2', quantity: 3 }, { plu: '3', quantity: 1 }];
+    expect(replaceLine(lines, '2', '9')).toEqual([{ plu: '1', quantity: 1 }, { plu: '9', quantity: 3 }, { plu: '3', quantity: 1 }]);
+    expect(replaceLine(lines, '2', '3')).toEqual([{ plu: '1', quantity: 1 }, { plu: '3', quantity: 4 }]);
+  });
+});
+
+// ---- The question and answer files (src/utils/ask.ts; the launcher reads and writes them) ----
+
+const RUN_ID = '2026-10-22_12-00-00';
+let reports: string;
+let saved: Record<string, string | undefined>;
+const folder = () => join(reports, RUN_ID.slice(0, 10), RUN_ID);
+function useInteractive() {
+  test.beforeEach(() => {
+    reports = mkdtempSync(join(tmpdir(), 'ask-test-'));
+    saved = { WATSONS_INTERACTIVE: process.env.WATSONS_INTERACTIVE, WATSONS_RUN_ID: process.env.WATSONS_RUN_ID, WATSONS_REPORTS_DIR: process.env.WATSONS_REPORTS_DIR };
+    Object.assign(process.env, { WATSONS_INTERACTIVE: 'yes', WATSONS_RUN_ID: RUN_ID, WATSONS_REPORTS_DIR: reports });
+  });
+  test.afterEach(() => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    rmSync(reports, { recursive: true, force: true });
+  });
+}
+
+/** Waits for a question not answered yet (ask.json, no answer-<id>.json) and answers it as the launcher does. */
+async function answerNext(answer: Answer): Promise<Question & { id: number }> {
+  let asked: (Question & { id: number }) | null = null;
+  await expect
+    .poll(
+      () => {
+        try {
+          asked = JSON.parse(readFileSync(join(folder(), 'ask.json'), 'utf8'));
+          return asked !== null && !existsSync(join(folder(), `answer-${asked.id}.json`));
+        } catch {
+          return false;
+        }
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+  const question = asked as unknown as Question & { id: number };
+  writeFileSync(join(folder(), `answer-${question.id}.json`), JSON.stringify(answer));
+  return question;
+}
+
+test.describe('asking the person', () => {
+  test('a command-line run is not asked: it gets what it always did', async () => {
+    const saved = process.env.WATSONS_INTERACTIVE;
+    delete process.env.WATSONS_INTERACTIVE;
+    try {
+      const decisions: Decision[] = [];
+      expect(await ask(productQuestion('out_of_stock', '39656', 1), { action: 'skip' }, decisions)).toEqual({ action: 'skip' });
+      expect(decisions).toEqual([]);
+    } finally {
+      if (saved !== undefined) process.env.WATSONS_INTERACTIVE = saved;
+    }
+  });
+
+  test.describe('from the launcher', () => {
+    useInteractive();
+
+    test('writes the question, waits for the answer, and keeps the decision', async () => {
+      const decisions: Decision[] = [];
+      const [answer, asked] = await Promise.all([ask(productQuestion('out_of_stock', '39656', 1), { action: 'stop' }, decisions), answerNext({ action: 'replace', plu: '45606' })]);
+      expect(asked).toMatchObject({ kind: 'out_of_stock', step: 'Product Search', plus: ['39656'], options: [{ action: 'skip' }, { action: 'replace' }, { action: 'stop' }] });
+      expect(answer).toEqual({ action: 'replace', plu: '45606' });
+      expect(decisions).toEqual([expect.objectContaining({ step: 'Product Search', plus: ['39656'], action: 'replace', label: 'Replace with another PLU', plu: '45606' })]);
+    });
+
+    test('an answer that was not offered ends the run instead of guessing', async () => {
+      const [result] = await Promise.all([ask(productQuestion('out_of_stock', '39656', 0), { action: 'stop' }, []).catch((error) => error), answerNext({ action: 'skip' })]);
+      expect(result).toBeInstanceOf(StepError);
+      expect(result.message).toContain('was not one of the choices offered');
+    });
+  });
+});
+
+// ---- The delivery choice on the checkout page (src/flows/delivery-modes.ts chooseDelivery) ----
+
+const LINES: OrderLine[] = [{ plu: '45274', quantity: 1 }, { plu: '17971', quantity: 1 }, { plu: '21684', quantity: 1 }];
+const NAMES = { 45274: 'Oral Pick', 17971: 'Coenzyme Q10', 21684: 'Vitamin E' };
+
+/** A checkout page that offers `offered` and can't deliver `notFor[mode]`; it notes what is done with it. */
+function fakeCheckout(offered: ('express' | 'standard')[], notFor: Record<'express' | 'standard', string[]>, calls: string[]): CheckoutPage {
+  return {
+    offeredModes: async () => offered,
+    showsChoice: async () => offered.length === 2,
+    unavailableFor: async (mode: 'express' | 'standard') => {
+      calls.push(`look up ${mode}`);
+      return notFor[mode];
+    },
+    select: async (mode: string) => {
+      calls.push(`select ${mode}`);
+    },
+    chooseDeliveryDateIfAsked: async () => null,
+    expectReadyToCheckOut: async () => {
+      calls.push('Checkout ready');
+    },
+  } as unknown as CheckoutPage;
+}
+const choose = (checkout: CheckoutPage, decisions: Decision[] = []) =>
+  chooseDelivery({ checkout, mode: 'express', method: 'home_delivery', lines: LINES, namesByPlu: NAMES, decisions, triedMethods: [] });
+
+test.describe('delivery choice when products can’t go that way', () => {
+  test('a command-line run leaves them out, as before', async () => {
+    const calls: string[] = [];
+    const next = await choose(fakeCheckout(['express', 'standard'], { express: ['17971'], standard: [] }, calls));
+    expect(next).toMatchObject({ kind: 'ready', excluded: [{ plu: '17971' }] });
+    expect(calls).toEqual(['look up express', 'select express']);
+  });
+
+  test.describe('from the launcher', () => {
+    useInteractive();
+
+    test('asks first; "Use Standard instead" selects nothing yet', async () => {
+      const calls: string[] = [];
+      const decisions: Decision[] = [];
+      const [next, asked] = await Promise.all([
+        choose(fakeCheckout(['express', 'standard'], { express: ['17971', '21684'], standard: [] }, calls), decisions),
+        answerNext({ action: 'switch_mode', mode: 'standard' }),
+      ]);
+      expect(asked.message).toBe('Products 17971 and 21684 are not eligible for Express delivery with Home Delivery.');
+      expect(labels(asked)).toEqual(['Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Leave them out and continue', 'Stop automation']);
+      expect(next).toEqual({ kind: 'mode', mode: 'standard' });
+      expect(calls).toEqual(['look up express', 'look up standard']);
+      expect(decisions).toMatchObject([{ action: 'switch_mode', plus: ['17971', '21684'] }]);
+    });
+
+    test('"Leave them out and continue": the mode is selected and staging leaves them out', async () => {
+      const calls: string[] = [];
+      const [next] = await Promise.all([choose(fakeCheckout(['express', 'standard'], { express: ['17971'], standard: ['17971'] }, calls)), answerNext({ action: 'skip' })]);
+      expect(next).toMatchObject({ kind: 'ready', kept: [{ plu: '45274' }, { plu: '21684' }], excluded: [{ plu: '17971' }] });
+      expect(calls.at(-1)).toBe('select express');
+    });
+
+    test('another method, or another PLU: back to the bag', async () => {
+      const notFor = { express: ['17971'], standard: ['17971'] };
+      const [method, asked] = await Promise.all([choose(fakeCheckout(['express', 'standard'], notFor, [])), answerNext({ action: 'switch_method', method: 'click_collect' })]);
+      // Standard can't take it either: not offered.
+      expect(labels(asked)).toEqual(['Try Click & Collect', 'Try Shell Station', 'Leave it out and continue', 'Replace with another PLU', 'Stop automation']);
+      expect(method).toEqual({ kind: 'method', method: 'click_collect' });
+      const [replace] = await Promise.all([choose(fakeCheckout(['express', 'standard'], notFor, [])), answerNext({ action: 'replace', plu: '45606' })]);
+      expect(replace).toEqual({ kind: 'replace', plu: '17971', replacement: '45606' });
+    });
+
+    test('the page offers only Standard: none can go Express, so nothing to leave out', async () => {
+      const [next, asked] = await Promise.all([choose(fakeCheckout(['standard'], { express: [], standard: [] }, [])), answerNext({ action: 'switch_mode', mode: 'standard' })]);
+      expect(asked.plus).toEqual(['45274', '17971', '21684']);
+      expect(labels(asked)).toEqual(['Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Stop automation']);
+      expect(next).toEqual({ kind: 'mode', mode: 'standard' });
+    });
+
+    test('everything can go Express: nothing is asked', async () => {
+      const calls: string[] = [];
+      const next = await choose(fakeCheckout(['express', 'standard'], { express: [], standard: [] }, calls));
+      expect(next).toMatchObject({ kind: 'ready', excluded: [] });
+      expect(calls).toEqual(['look up express', 'look up express', 'select express']);
+    });
+  });
+});
+
+// ---- Adding to the bag on a stand-in for the shop: what staging did on 2026-10-22 ----
+
+// Search results with one tile per PLU. PLU 57893: staging's "not available for checkout"
+// pop-up (the page behind it hidden from accessibility tools, as on staging). PLU 21707: "add to
+// bag" opens the product's page. Others: added (the header's count goes up).
+const SHOP = `<!doctype html><title>Shop</title>
+<header id="header"><input type="search" aria-label="Search here..." id="q"><button id="bag" type="button"></button></header>
+<main id="main"></main>
+<script>
+  const count = () => Number(sessionStorage.getItem('count') || 0);
+  const bag = document.getElementById('bag');
+  bag.textContent = count() + ' MY Bag';
+  document.getElementById('q').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') location.href = '/search?text=' + encodeURIComponent(event.target.value);
+  });
+  const post = () => fetch('/occ/v2/carts/1/entries', { method: 'POST' });
+  const text = new URLSearchParams(location.search).get('text');
+  if (location.pathname === '/search') {
+    document.getElementById('main').innerHTML = '<h1>Search Results for "' + text + '"</h1>' +
+      text.split(' ').map((plu) => '<e2-product-tile><a href="/p/BP_' + plu + '">Product ' + plu + '</a><button type="button" data-plu="' + plu + '">add to bag</button></e2-product-tile>').join('');
+    for (const button of document.querySelectorAll('[data-plu]')) {
+      button.addEventListener('click', async () => {
+        const plu = button.dataset.plu;
+        if (plu === '21707') return void (location.href = '/p/BP_21707');
+        await post();
+        if (plu === '57893') {
+          document.getElementById('main').setAttribute('aria-hidden', 'true');
+          document.getElementById('header').setAttribute('aria-hidden', 'true');
+          document.body.insertAdjacentHTML('beforeend', '<div role="dialog" id="na"><span>Sorry the item(s) is not available for checkout. Sorry for the inconvenience.</span><button type="button" aria-label="positiveButton">Confirm</button></div>');
+          document.querySelector('#na button').addEventListener('click', () => {
+            document.getElementById('na').remove();
+            document.getElementById('main').removeAttribute('aria-hidden');
+            document.getElementById('header').removeAttribute('aria-hidden');
+          });
+          return;
+        }
+        setTimeout(() => {
+          sessionStorage.setItem('count', String(count() + 1));
+          bag.textContent = count() + ' MY Bag';
+        }, 200);
+      });
+    }
+  } else if (location.pathname.startsWith('/p/')) {
+    document.getElementById('main').innerHTML = '<h2>Product page</h2>';
+  }
+</script>`;
+
+test.describe('adding to the bag', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('https://shop.example.test/**', (route) =>
+      route.request().method() === 'POST'
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+        : route.fulfill({ status: 200, contentType: 'text/html', body: SHOP }),
+    );
+    await page.goto('https://shop.example.test/');
+  });
+
+  test('a product staging refuses: PRODUCT_NOT_AVAILABLE, its pop-up closed, and the next add works', async ({ page }) => {
+    const search = new ProductSearch(page);
+    await search.searchAll(['57893', '45606']);
+    const error = await search.add({ plu: '57893', quantity: 1 }).catch((caught) => caught);
+    expect(error).toBeInstanceOf(StepError);
+    expect(error.code).toBe('PRODUCT_NOT_AVAILABLE');
+    expect(error.message).toContain('Sorry the item(s) is not available for checkout.');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    let added = 0;
+    await search.add({ plu: '45606', quantity: 1 }, () => added++);
+    expect(added).toBe(1);
+    await expect(page.getByRole('button', { name: /MY Bag$/ })).toHaveText('1 MY Bag');
+  });
+
+  test('an "add to bag" that opens the product’s page: searched again and clicked again; every time → PRODUCT_NOT_AVAILABLE', async ({ page }) => {
+    test.setTimeout(120_000);
+    const search = new ProductSearch(page);
+    await search.searchAll(['21707']);
+    const error = await search.add({ plu: '21707', quantity: 1 }).catch((caught) => caught);
+    expect(error).toBeInstanceOf(StepError);
+    expect(error.code).toBe('PRODUCT_NOT_AVAILABLE');
+    expect(error.message).toContain('opens the product\'s page instead (3 tries)');
+    await expect(page.getByRole('button', { name: /MY Bag$/ })).toHaveText('0 MY Bag');
+  });
+});
+
+test('the bag: a free "Buy 1 Get 1 Free" line is not part of what was ordered (seen 2026-10-22, PLU 17971)', async ({ page }) => {
+  await page.setContent(`
+    <wtc-cart-item><div class="item"><a class="name" href="/q10/p/BP_17971">Coenzyme Q10</a><input aria-label="input-val" value="1"><button class="delete-btn">x</button></div></wtc-cart-item>
+    <wtc-cart-item><div class="item"><a class="name" href="/vit-e/p/BP_21684">Vitamin E</a><input aria-label="input-val" value="2"><button class="delete-btn">x</button></div></wtc-cart-item>
+    <wtc-cart-item><div class="item"><a class="name" href="/q10/p/BP_17971">Coenzyme Q10</a><div class="free"><span>FREE</span></div><div class="counter disabled"><span>1</span></div><button class="delete-btn">x</button></div></wtc-cart-item>`);
+  const bag = new BagPage(page);
+  expect(await bag.contents()).toEqual([{ plu: '17971', quantity: 1 }, { plu: '21684', quantity: 2 }]);
+  expect(await bag.freeItems()).toEqual([{ plu: '17971', quantity: 1 }]);
+  await expect(bag.itemFor('17971')).toHaveCount(1);
+  await bag.expectContents([{ plu: '21684', quantity: 2 }, { plu: '17971', quantity: 1 }]);
+});
+
+test('the bag: the products the delivery method can’t take, as staging marks them (seen 2026-10-22 with Click & Collect)', async ({ page }) => {
+  const item = (plu: string) =>
+    `<wtc-cart-item><div class="item"><a class="name" href="/x/p/BP_${plu}">Product ${plu}</a><input aria-label="input-val" value="1"><button class="delete-btn">x</button></div></wtc-cart-item>`;
+  // From the page on 2026-10-22: the box above the other products, and "Next" greyed out.
+  await page.setContent(`
+    <wtc-cart-error-entries><div class="error-cart-container active"><div class="err-box">
+      <div class="title-group"><div class="title"><i class="icon-information"></i><span>Sorry, your order includes item(s) not available for Click &amp; Collect service. Please review your shopping bag or try another delivery option.</span></div></div>
+      <div class="error-cart-item-container"><div class="error-cart-item-wrapper">${item('24264')}${item('21684')}</div>
+      <div class="control-button-group"><button class="save-btn">Buy Next Time</button></div></div>
+    </div></div></wtc-cart-error-entries>
+    ${item('45274')}
+    <button class="next-btn disabled" style="pointer-events: none"><i></i> Next</button>`);
+  const bag = new BagPage(page);
+  expect(await bag.methodProblem()).toEqual({
+    message: 'Sorry, your order includes item(s) not available for Click & Collect service. Please review your shopping bag or try another delivery option.',
+    plus: ['24264', '21684'],
+  });
+  // Home Delivery: no such box, and "Next" can be clicked.
+  await page.setContent(`${item('45274')}${item('24264')}<button class="next-btn"><i></i> Next</button>`);
+  expect(await bag.methodProblem()).toBeNull();
+});

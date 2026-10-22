@@ -343,6 +343,22 @@ body{background:var(--canvas);min-width:1024px}
 .p-term__line.is-live{color:var(--term-live)}
 .p-term__line.is-err{color:var(--term-err)}
 .p-term__line.is-warn{color:var(--term-warn)}
+.p-term__line.is-ask{color:var(--term-warn);font-weight:var(--weight-semibold)}
+/* The run's question (2026-10-22): the run waits until the person chooses. */
+.p-ask{border-color:var(--warning);box-shadow:var(--shadow-card),inset 4px 0 0 var(--warning)}
+.p-ask .wa-card__body{display:grid;gap:var(--space-3);padding:16px var(--card-pad) 16px calc(var(--card-pad) + 4px)}
+.p-ask__head{display:grid;grid-template-columns:20px minmax(0,1fr);gap:var(--space-3);align-items:start}
+.p-ask__glyph{color:var(--warning);margin-top:2px}
+.p-ask__title{margin:0;font-size:var(--text-small);line-height:var(--lh-small);font-weight:var(--weight-semibold);color:var(--warning)}
+.p-ask__message{margin:2px 0 0;font-size:var(--text-heading);line-height:var(--lh-heading);font-weight:var(--weight-semibold);color:var(--text);text-wrap:pretty}
+.p-ask__detail{margin:4px 0 0;color:var(--text-2);font-size:var(--text-small);line-height:var(--lh-small);overflow-wrap:anywhere}
+.p-ask__actions{display:flex;flex-wrap:wrap;gap:var(--space-2);padding-left:32px}
+.p-ask__replace{display:grid;gap:var(--space-2);padding-left:32px}
+.p-ask__row{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+.p-ask__row .wa-input{width:160px}
+.p-decisions{margin:0;padding:0;list-style:none;display:grid;gap:var(--space-3)}
+.p-decision{display:grid;gap:2px}
+.p-decision__answer{font-weight:var(--weight-semibold)}
 /* Ready to run: the checks and the run button, above the form. Part of the page flow, not sticky. */
 .p-ready .wa-card__body{padding:20px var(--card-pad);gap:var(--space-4)}
 .p-ready__row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:var(--space-6)}
@@ -712,6 +728,29 @@ dialog::backdrop{background:var(--scrim)}
           </div>
         </section>
         <div class="wa-banner tone-warning" id="live-excluded" role="status" hidden><span class="wa-banner__glyph" data-icon="triangle-alert"></span><div class="wa-banner__msg" id="live-excluded-text"></div></div>
+        <!-- The run's question (2026-10-22): it waits here until the person chooses. -->
+        <section class="wa-card p-ask" id="ask" aria-labelledby="ask-title" hidden>
+          <div class="wa-card__body">
+            <div class="p-ask__head">
+              <span class="p-ask__glyph" data-icon="circle-alert"></span>
+              <div>
+                <h2 class="p-ask__title" id="ask-title"></h2>
+                <p class="p-ask__message" id="ask-message" role="alert"></p>
+                <p class="p-ask__detail" id="ask-detail" hidden></p>
+              </div>
+            </div>
+            <div class="p-ask__actions" id="ask-actions"></div>
+            <form class="p-ask__replace" id="ask-replace" autocomplete="off" hidden>
+              <label class="wa-label" for="ask-plu">PLU to use instead</label>
+              <div class="p-ask__row">
+                <input class="wa-input wa-num" id="ask-plu" inputmode="numeric" maxlength="12" spellcheck="false">
+                <button type="submit" class="wa-btn wa-btn--primary">Use this PLU</button>
+                <button type="button" class="wa-btn wa-btn--ghost" id="ask-replace-back">Back</button>
+              </div>
+            </form>
+            <p class="wa-field__error" id="ask-error" role="alert" hidden></p>
+          </div>
+        </section>
         <div class="p-run-grid" id="run-grid">
           <!-- Server mode: the run's browser on the server, live; click, scroll and type into it (2026-10-14). -->
           <section class="wa-card" id="live-card" aria-labelledby="live-title" hidden>
@@ -1211,7 +1250,7 @@ function render() {
   renderSideFoot();
   renderHeaderRun();
   $('header-new').hidden = !historyShown() || busy;
-  document.title = current ? `${runStatus().title} · Watsons Automation` : 'Watsons Automation Launcher';
+  document.title = current ? `${current.question ? 'Decision needed' : runStatus().title} · Watsons Automation` : 'Watsons Automation Launcher';
 }
 
 /** Ready (or what to fix), the checks behind it, and the run button. */
@@ -1365,6 +1404,15 @@ function runStatus() {
   }
   if (run.cancelled) return { tone: 'warning', icon: 'minus', title: 'Stopping…', details, text: 'Stopping the test and its browser…' };
   const steps = stepsOf(run);
+  if (run.question) {
+    return {
+      tone: 'warning',
+      icon: 'circle-alert',
+      title: run.automation === 'approve' ? 'Approving order' : 'Placing test order',
+      details,
+      text: `Paused at ${run.question.step}: waiting for your decision below.`,
+    };
+  }
   return {
     tone: 'running',
     title: run.automation === 'approve' ? 'Approving order' : 'Placing test order',
@@ -1395,6 +1443,70 @@ function renderRun(view, queued) {
   $('run-grid').classList.toggle('p-run-grid--desktop', !liveAvailable());
   $('log-sub').hidden = liveAvailable();
   $('elapsed').textContent = current ? formatClock(elapsedSeconds()) : '';
+  renderAsk();
+}
+
+// ---- The run's question (2026-10-22): only the choices that are valid then ---------------------
+
+const ask = { id: null, replacing: false, sending: false, error: '' };
+const ASK_TITLES = {
+  out_of_stock: 'Out of stock',
+  not_found: 'Product not found',
+  not_available: 'Can’t be added to the bag',
+  not_eligible: 'Delivery not possible',
+  error: 'Something went wrong',
+};
+
+function renderAsk() {
+  const question = current && !current.cancelled ? current.question : null;
+  $('ask').hidden = !question;
+  if (!question) {
+    ask.id = null;
+    return;
+  }
+  if (ask.id !== question.id) {
+    Object.assign(ask, { id: question.id, replacing: false, sending: false, error: '' });
+    $('ask-plu').value = '';
+    $('ask-title').textContent = `Paused at ${question.step} · ${ASK_TITLES[question.kind] ?? 'Your decision is needed'}`;
+    $('ask-message').textContent = question.message;
+    $('ask-detail').textContent = question.detail ? `Details: ${question.detail}` : '';
+    $('ask-detail').hidden = !question.detail;
+    $('ask-actions').replaceChildren(
+      ...question.options.map((option, index) =>
+        el('button', {
+          type: 'button',
+          className: `wa-btn ${option.action === 'stop' ? 'wa-btn--danger' : index === 0 ? 'wa-btn--primary' : 'wa-btn--secondary'}`,
+          textContent: option.label,
+          onclick: () => chooseAnswer(option),
+        }),
+      ),
+    );
+  }
+  $('ask-actions').hidden = ask.replacing;
+  $('ask-replace').hidden = !ask.replacing;
+  for (const control of $('ask').querySelectorAll('button, input')) control.disabled = ask.sending;
+  $('ask-error').textContent = ask.error;
+  $('ask-error').hidden = !ask.error;
+}
+
+function chooseAnswer(option) {
+  if (option.action !== 'replace') return sendAnswer({ action: option.action, mode: option.mode, method: option.method });
+  Object.assign(ask, { replacing: true, error: '' });
+  render();
+  $('ask-plu').focus();
+}
+
+async function sendAnswer(answer) {
+  const question = current?.question;
+  if (!question || ask.sending) return;
+  Object.assign(ask, { sending: true, error: '' });
+  render();
+  const { ok, data } = await api('api/answer', { id: question.id, ...answer });
+  ask.sending = false;
+  if (!ok) ask.error = data.error ?? 'Your choice could not be sent. Try again.';
+  // Answered: the card goes (the run's next log line says so too).
+  else if (current?.question?.id === question.id) current.question = null;
+  render();
 }
 
 const modeLabel = (mode) => info?.modes[mode]?.label ?? 'Express';
@@ -1444,7 +1556,8 @@ function renderSteps(view, queued) {
   if (view === 'compose') return;
   const run = view === 'run' ? current : last;
   const row = view === 'result' ? last.row : null;
-  const key = JSON.stringify([view, queued, run?.runId, run?.step, run?.passed, run?.cancelled, row, view === 'result' ? resultOpen.message : null, automation(), formValues().mode]);
+  // A question (2026-10-22) changes the room the list has: the current step is scrolled into view again.
+  const key = JSON.stringify([view, queued, run?.runId, run?.step, run?.mode, run?.question?.id, run?.passed, run?.cancelled, row, view === 'result' ? resultOpen.message : null, automation(), formValues().mode]);
   if (key === stepsKey) return;
   stepsKey = key;
   const steps = stepsOf(run ?? { automation: automation(), mode: formValues().mode });
@@ -1733,8 +1846,8 @@ function renderHeaderRun() {
   const busy = Boolean(current) || isQueued();
   $('header-run').hidden = !(busy && historyShown());
   if ($('header-run').hidden) return;
-  const what = current ? (current.passed ? runStatus().title : (current.step ?? 'Starting')) : 'Waiting for a free slot';
-  $('header-run-spin').hidden = Boolean(current?.passed);
+  const what = current ? (current.passed ? runStatus().title : current.question ? 'Decision needed' : (current.step ?? 'Starting')) : 'Waiting for a free slot';
+  $('header-run-spin').hidden = Boolean(current?.passed || current?.question);
   $('header-run-step').textContent = what;
   $('header-run-time').textContent = current ? formatClock(elapsedSeconds()) : '';
   $('header-run').setAttribute('aria-label', `Your run: ${what}${current ? `, ${formatClock(elapsedSeconds())}` : ''}`);
@@ -1827,7 +1940,7 @@ function renderResult(view) {
   if (key !== resultKey) {
     resultKey = key;
     $('result-head').replaceChildren(resultHead(run, row, steps));
-    const cards = row.status === 'failed' ? [] : [productsCard(row), evidenceCard(row)].filter(Boolean);
+    const cards = (row.status === 'failed' ? [decisionsCard(row)] : [productsCard(row), decisionsCard(row), evidenceCard(row)]).filter(Boolean);
     $('result-cards').hidden = cards.length === 0;
     $('result-cards').replaceChildren(...cards);
   }
@@ -1939,15 +2052,31 @@ function failureDetail(row) {
   );
 }
 
+const SKIPPED = { out_of_stock: 'Skipped: sold out', not_found: 'Skipped: not found', not_available: 'Skipped: can’t be added', not_eligible: 'Left out: delivery not possible', error: 'Skipped after an error' };
+
 /** Each product of an order run, and what became of it. */
 function productRows(row) {
   const requested = row.products.requested.length > 0 ? row.products.requested : row.products.ordered;
   // A run that ended without an order number placed no order, whatever reached the bag.
   const halted = ['failed', 'stopped', 'interrupted'].includes(row.status) && !row.orderNumber;
-  return requested.map(({ plu, quantity }) => {
+  // What the person chose when the run asked (2026-10-22): products skipped, or replaced by others.
+  const chosen = new Map();
+  const lines = [...requested];
+  for (const decision of row.decisions ?? []) {
+    for (const plu of decision.plus) {
+      if (decision.action === 'skip') chosen.set(plu, SKIPPED[decision.kind] ?? 'Skipped');
+      if (decision.action !== 'replace' || !decision.plu) continue;
+      chosen.set(plu, `Replaced by PLU ${decision.plu}`);
+      const old = lines.find((line) => line.plu === plu);
+      if (!lines.some((line) => line.plu === decision.plu)) lines.push({ plu: decision.plu, quantity: old?.quantity ?? 1, instead: plu });
+    }
+  }
+  return lines.map(({ plu, quantity, instead }) => {
     const ordered = row.products.ordered.find((line) => line.plu === plu);
     if (row.products.excluded.includes(plu)) return { plu, quantity, status: `Left out: not available for ${modeLabel(row.delivery?.mode)}`, warn: true };
+    if (chosen.has(plu) && !ordered) return { plu, quantity, status: chosen.get(plu), warn: true };
     if (row.products.soldOut.includes(plu)) return { plu, quantity, status: 'Skipped: sold out', warn: true };
+    if (instead && !ordered && !halted) return { plu, quantity, status: `Instead of PLU ${instead}` };
     if (halted) return { plu, quantity, status: 'Not ordered' };
     if (ordered && row.outcome === 'ready_to_check_out') return { plu, quantity: ordered.quantity, status: 'In the bag' };
     if (ordered) return { plu, quantity: ordered.quantity, status: 'Ordered', ordered: true };
@@ -1978,6 +2107,25 @@ function productsCard(row) {
     ),
     gift ? el('span', { className: 'wa-muted p-small', textContent: gift === true ? 'A free gift was removed from the bag.' : `Free gift removed: ${gift}` }) : null,
   );
+}
+
+/** The questions the run asked, and what was chosen (2026-10-22). */
+function decisionItems(row) {
+  return (row.decisions ?? []).map((decision) =>
+    el(
+      'li',
+      { className: 'p-decision' },
+      el('span', { textContent: decision.message }),
+      el('span', { className: 'p-decision__answer', textContent: `→ ${decision.label}${decision.plu ? ` (PLU ${decision.plu})` : ''}${decision.outcome ? `: ${decision.outcome}` : ''}` }),
+      el('span', { className: 'wa-meta', textContent: [decision.step, decision.by, formatTime(decision.at)].filter(Boolean).join(' · ') }),
+    ),
+  );
+}
+
+function decisionsCard(row) {
+  const items = decisionItems(row);
+  if (items.length === 0) return null;
+  return card({ title: 'Decisions', sub: `The run asked ${items.length === 1 ? 'once' : `${items.length} times`}` }, el('ol', { className: 'p-decisions' }, ...items));
 }
 
 function evidenceCard(row) {
@@ -2019,7 +2167,7 @@ function logLine(text) {
   const match = text.match(LOG_LINE);
   if (!match) return el('div', { className: `p-term__line${/^\[launcher\] (WARNING|Could not)/.test(text) ? ' is-warn' : ''}` }, el('span', { textContent: `${text}\n` }));
   const [, hours, minutes, seconds, level, message] = match;
-  const tone = level === 'ERROR' ? ' is-err' : level === 'WARN' ? ' is-warn' : /^Step: /.test(message) ? ' is-live' : '';
+  const tone = level === 'ERROR' ? ' is-err' : level === 'WARN' ? ' is-warn' : level === 'ASK' ? ' is-ask' : /^Step: /.test(message) ? ' is-live' : '';
   return el('div', { className: `p-term__line${tone}` }, el('time', { textContent: `${hours}:${minutes}:${seconds}` }), el('span', { textContent: `${message}\n` }));
 }
 
@@ -2287,6 +2435,7 @@ function runDetails(row) {
     ['Order', row.orderNumber ? el('span', { className: 'wa-mono', textContent: `WTCSG${row.orderNumber}` }) : 'No order number'],
     ['Products', products && products.childElementCount > 0 ? products : null],
     ['Delivery', row.delivery ? `${methodLabel(row.delivery.method)} · ${modeLabel(row.delivery.mode)}` : null],
+    ['Decisions', row.decisions?.length ? el('ol', { className: 'p-decisions' }, ...decisionItems(row)) : null],
     ['Backoffice', backofficeText(row)],
     ['Steps', stepsText],
     ['Started', formatTime(row.startedAt)],
@@ -2538,6 +2687,17 @@ $('stop').addEventListener('click', async () => {
   await api('api/stop');
 });
 $('stop-keep').addEventListener('click', () => $('stop-confirm').close());
+$('ask-replace').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const plu = $('ask-plu').value.trim();
+  if (/^\d{1,12}$/.test(plu)) return sendAnswer({ action: 'replace', plu });
+  ask.error = 'Enter the PLU to use instead (digits only).';
+  render();
+});
+$('ask-replace-back').addEventListener('click', () => {
+  Object.assign(ask, { replacing: false, error: '' });
+  render();
+});
 $('stop-yes').addEventListener('click', async () => {
   $('stop-confirm').close();
   await api('api/stop');
@@ -2787,7 +2947,18 @@ function connect() {
   events.addEventListener('line', (event) => {
     const data = JSON.parse(event.data);
     if (!current) return;
-    Object.assign(current, { step: data.step, risky: data.risky, passed: data.passed, orderNumber: data.orderNumber, excluded: data.excluded });
+    Object.assign(current, {
+      step: data.step,
+      risky: data.risky,
+      passed: data.passed,
+      orderNumber: data.orderNumber,
+      excluded: data.excluded,
+      // The run's question to the person, and what they decided (2026-10-22).
+      question: data.question ?? null,
+      decisions: data.decisions ?? [],
+      mode: data.mode ?? current.mode,
+      deliveryMethod: data.deliveryMethod ?? current.deliveryMethod,
+    });
     current.lines?.push(data.line);
     lineSeenAt = Date.now();
     showLines([data.line], false);

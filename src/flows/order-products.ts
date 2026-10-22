@@ -1,0 +1,223 @@
+import type { Page } from '@playwright/test';
+import type { OrderLine } from '../config/order';
+import type { BagPage } from '../pages/BagPage';
+import type { Availability, ProductSearch } from '../pages/ProductSearch';
+import { ask, decided, interactive, type Decision } from '../utils/ask';
+import { StepError } from '../utils/errors';
+import { log } from '../utils/log';
+import { errorQuestion, hasCode, productQuestion, reasonOf, replaceLine, retryOrAsk, stopped } from './order-issues';
+
+// The products of an order run, as the person's decisions change them (user's request
+// 2026-10-22). A product out of stock, not found, or refused by staging is skipped or replaced;
+// a failed add is retried without adding anything twice (the bag is read first). A command-line
+// run decides as before: sold-out products are skipped, PLUs not found end the run, and any
+// other problem ends it.
+
+export const showLines = (lines: OrderLine[]) => lines.map((line) => (line.quantity > 1 ? `${line.plu} x${line.quantity}` : line.plu)).join(', ') || 'none';
+
+export class OrderProducts {
+  /** The products in the order now. */
+  lines: OrderLine[];
+  /** Sold-out PLUs met on the way (reported). */
+  readonly soldOut: string[] = [];
+  /** Every PLU that was in the order at some point: the ones the bag may hold. */
+  private readonly everWanted = new Set<string>();
+  /** Units of each PLU in the bag: counted while adding, read from the bag before a retry. */
+  private readonly inBag = new Map<string, number>();
+  /** The PLUs on the search results page now. */
+  private shown: string[] = [];
+
+  constructor(
+    private readonly page: Page,
+    private readonly search: ProductSearch,
+    private readonly bag: BagPage,
+    private readonly decisions: Decision[],
+    products: OrderLine[],
+  ) {
+    this.lines = products.map((line) => ({ ...line }));
+    for (const line of this.lines) this.everWanted.add(line.plu);
+  }
+
+  /** Searches these PLUs at once (staging takes them separated by spaces): their tiles are then on the page. */
+  private async showResults(plus: string[]): Promise<void> {
+    await retryOrAsk('Product Search', this.decisions, () => this.search.searchAll(plus));
+    this.shown = plus;
+  }
+
+  /** Product Search (PRD §12): every product is checked before anything is added. */
+  async check(): Promise<void> {
+    await this.showResults(this.lines.map((line) => line.plu));
+    const notFound: OrderLine[] = [];
+    const checked: OrderLine[] = [];
+    const queue = [...this.lines];
+    while (queue.length > 0) {
+      const line = queue.shift()!;
+      const ready = await this.resolve(line, checked.length + queue.length, queue, notFound);
+      if (!ready) continue;
+      // A replacement already in the order: one line, quantities added up.
+      const same = checked.find((other) => other.plu === ready.plu) ?? queue.find((other) => other.plu === ready.plu);
+      if (same) same.quantity += ready.quantity;
+      else checked.push(ready);
+    }
+    // A command-line run, as before: every PLU not found is named at once, and nothing is added.
+    if (notFound.length > 0) {
+      throw new StepError('PRODUCT_NOT_FOUND', 'Product Search', `No product found for PLU ${showLines(notFound)}. Nothing was added.`, [
+        'a typo in the order',
+        'the product does not exist on staging',
+      ]);
+    }
+    if (this.soldOut.length > 0 && !interactive()) log(`Skipping sold-out PLU(s): ${this.soldOut.join(', ')}`, 'WARN');
+    if (checked.length === 0) throw new StepError('PRODUCT_NOT_FOUND', 'Product Search', 'Every product in the order is sold out.');
+    this.lines = checked;
+    if (interactive()) log(`Products to add: ${showLines(this.lines)}`);
+  }
+
+  /**
+   * One product on the search results page. Available: the line to order. Sold out or not found:
+   * the person chooses: skip (null), or replace (then the replacement, once it is available too).
+   * `othersLeft`: the other products still in the order (skip only when there are some); `then`:
+   * the ones still to check, searched along with a replacement. A command-line run: sold out →
+   * skipped; not found → noted in `notFound`. `first`: a replacement to check instead of `line`.
+   */
+  private async resolve(line: OrderLine, othersLeft: number, then: OrderLine[], notFound: OrderLine[], first: OrderLine = line): Promise<OrderLine | null> {
+    let current = first;
+    for (;;) {
+      if (!this.shown.includes(current.plu)) await this.showResults([current.plu, ...then.map((other) => other.plu)]);
+      let availability: Availability;
+      try {
+        availability = await this.search.availabilityOf(current.plu);
+      } catch (error) {
+        // E.g. the PLU matches more than one product.
+        const answer = await ask(errorQuestion('Product Search', error, { skipPlu: othersLeft > 0 ? current.plu : undefined }), { action: 'stop' }, this.decisions);
+        if (answer.action === 'skip') return this.leftOut(current);
+        if (answer.action !== 'retry') stopped('Product Search', answer, error);
+        this.shown = [];
+        continue;
+      }
+      if (availability === 'available') {
+        if (current !== line) decided(this.decisions, `PLU ${current.plu} is available: it replaces PLU ${line.plu}`);
+        return current;
+      }
+      if (availability === 'sold_out' && !this.soldOut.includes(current.plu)) this.soldOut.push(current.plu);
+      if (!interactive()) {
+        if (availability === 'not_found') notFound.push(current);
+        return null;
+      }
+      if (current !== line) decided(this.decisions, `PLU ${current.plu} is ${availability === 'sold_out' ? 'out of stock' : 'not found'} too`);
+      const answer = await ask(productQuestion(availability === 'sold_out' ? 'out_of_stock' : 'not_found', current.plu, othersLeft), { action: 'stop' }, this.decisions);
+      if (answer.action === 'skip') return this.leftOut(current);
+      if (answer.action !== 'replace' || !answer.plu) stopped('Product Search', answer);
+      current = this.replacement(current, answer.plu);
+    }
+  }
+
+  private replacement(line: OrderLine, plu: string): OrderLine {
+    log(`Checking PLU ${plu} to replace PLU ${line.plu}`);
+    this.everWanted.add(plu);
+    return { plu, quantity: line.quantity };
+  }
+
+  private leftOut(line: OrderLine): null {
+    decided(this.decisions, `PLU ${line.plu} left out of the order`);
+    return null;
+  }
+
+  /** Add to bag (PRD §13): the units of each product not in the bag yet. */
+  async addAll(): Promise<void> {
+    for (let index = 0; index < this.lines.length; index++) {
+      const line = this.lines[index];
+      const result = await this.addLine(line);
+      if (result === 'added') continue;
+      this.lines = result === 'left out' ? this.lines.filter((other) => other !== line) : replaceLine(this.lines, line.plu, result.plu);
+      // From the start again: a replacement may have joined a product already added. Those are
+      // in the bag already, so nothing is added twice.
+      index = -1;
+    }
+  }
+
+  /** One product's missing units. Returns 'added', 'left out', or the (available) replacement. */
+  private async addLine(line: OrderLine): Promise<'added' | 'left out' | OrderLine> {
+    let retried = false;
+    for (;;) {
+      const missing = line.quantity - (this.inBag.get(line.plu) ?? 0);
+      if (missing <= 0) {
+        if (retried) decided(this.decisions, `PLU ${line.plu} is in the bag`);
+        return 'added';
+      }
+      const othersLeft = this.lines.length - 1;
+      try {
+        if (!this.shown.includes(line.plu)) await this.showResults(this.lines.filter((other) => (this.inBag.get(other.plu) ?? 0) < other.quantity).map((other) => other.plu));
+        await this.search.add({ plu: line.plu, quantity: missing }, () => this.inBag.set(line.plu, (this.inBag.get(line.plu) ?? 0) + 1));
+      } catch (error) {
+        if (!interactive()) throw error;
+        if (hasCode(error, 'PRODUCT_NOT_AVAILABLE')) {
+          const answer = await ask(productQuestion('not_available', line.plu, othersLeft, reasonOf(error)), { action: 'stop' }, this.decisions);
+          if (answer.action === 'skip') {
+            this.leftOut(line);
+            return 'left out';
+          }
+          if (answer.action !== 'replace' || !answer.plu) stopped('Add to bag', answer, error);
+          const others = this.lines.filter((other) => other !== line);
+          return (await this.resolve(line, othersLeft, others, [], this.replacement(line, answer.plu))) ?? 'left out';
+        }
+        const answer = await ask(errorQuestion('Add to bag', error, { skipPlu: othersLeft > 0 ? line.plu : undefined }), { action: 'stop' }, this.decisions);
+        if (answer.action === 'skip') {
+          this.leftOut(line);
+          return 'left out';
+        }
+        if (answer.action !== 'retry') stopped('Add to bag', answer, error);
+        retried = true;
+        await this.readBag();
+      }
+    }
+  }
+
+  /** Before an add is tried again: what the bag really holds, so nothing is added twice. */
+  private async readBag(): Promise<void> {
+    log('Reading the bag before trying again, so nothing is added twice');
+    await retryOrAsk('Add to bag', this.decisions, async () => {
+      // A reload clears whatever covers the page (e.g. an error pop-up).
+      await this.page.reload();
+      await this.bag.open();
+      this.inBag.clear();
+      for (const { plu, quantity } of await this.bag.contents()) this.inBag.set(plu, (this.inBag.get(plu) ?? 0) + quantity);
+    });
+    this.shown = [];
+    log(`The bag holds: ${showLines([...this.inBag].map(([plu, quantity]) => ({ plu, quantity })))}`);
+  }
+
+  /**
+   * After the checkout page: `plu` replaced by `replacement` (the person's choice). The
+   * replacement is checked and added; `plu` comes out of the bag at Cart validation (tidyBag).
+   */
+  async replace(plu: string, replacement: string): Promise<void> {
+    const line = this.lines.find((other) => other.plu === plu);
+    if (!line) return;
+    const others = this.lines.filter((other) => other !== line);
+    const ready = await this.resolve(line, others.length, others, [], this.replacement(line, replacement));
+    this.lines = ready ? replaceLine(this.lines, plu, ready.plu) : others;
+    await this.addAll();
+  }
+
+  /** Leaves these products out of the order and takes them out of the bag (the person's choice). */
+  async leaveOut(plus: string[]): Promise<void> {
+    this.lines = this.lines.filter((line) => !plus.includes(line.plu));
+    for (const plu of plus) {
+      await this.bag.removeLines(plu);
+      this.inBag.delete(plu);
+    }
+  }
+
+  /**
+   * Cart validation: takes out of the bag the products no longer in the order (skipped or
+   * replaced after some of their units went in). Other products are left alone.
+   */
+  async tidyBag(): Promise<void> {
+    const wanted = new Set(this.lines.map((line) => line.plu));
+    for (const plu of new Set((await this.bag.contents()).map((line) => line.plu))) {
+      if (wanted.has(plu) || !this.everWanted.has(plu)) continue;
+      await this.bag.removeLines(plu);
+      this.inBag.delete(plu);
+    }
+  }
+}

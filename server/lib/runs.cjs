@@ -272,6 +272,20 @@ class RunManager {
     return null;
   }
 
+  /**
+   * A person's answer to the question their own run is waiting on (2026-10-22): only the owner
+   * answers, since it decides what goes into their order. Returns a reason it can't, or null.
+   */
+  answer(session, body, ip) {
+    const own = this.activeOf(session.username);
+    if (own?.state !== 'running') return 'You have no run going on.';
+    const problem = own.runner.answer(body, own.displayName);
+    if (problem) return problem;
+    const plu = typeof body?.plu === 'string' && /^\d{1,12}$/.test(body.plu.trim()) ? body.plu.trim() : undefined;
+    this.store.audit({ username: session.username, ip, action: 'run-answer', runId: own.runId, detail: { action: String(body?.action), plu } });
+    return null;
+  }
+
   /** Who is running what now, for everyone's window (no accounts, no logs). */
   overview() {
     const running = [...this.active].map(([runId, entry]) => ({

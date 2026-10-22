@@ -1,5 +1,6 @@
 import { test } from '@playwright/test';
 import type { DeliveryMethod, DeliveryMode, OrderLine } from '../config/order';
+import type { Decision } from '../utils/ask';
 import { log } from '../utils/log';
 
 // What an order test run did, step by step (PRD §24–27). Collected by the `orderRun` fixture
@@ -31,6 +32,8 @@ export interface OrderRunSnapshot {
   orderNumber?: string;
   /** The backoffice approval: whether this run clicked Approve Order, and the statuses seen after. */
   backoffice?: { approved: boolean; statuses: string[] };
+  /** What the person decided when the run asked them (src/utils/ask.ts, 2026-10-22). Older runs: none. */
+  decisions?: Decision[];
   consoleErrors: string[];
   failure?: RunFailure;
 }
@@ -54,13 +57,14 @@ export class OrderRun {
   private currentStep = 'none';
   private failure?: RunFailure;
   readonly consoleErrors: string[] = [];
-  readonly data: Omit<OrderRunSnapshot, 'startedAt' | 'completedStep' | 'currentStep' | 'consoleErrors' | 'failure'> & { automation: Automation } = {
+  readonly data: Omit<OrderRunSnapshot, 'startedAt' | 'completedStep' | 'currentStep' | 'consoleErrors' | 'failure'> & { automation: Automation; decisions: Decision[] } = {
     automation: 'order',
     placeOrder: false,
     ordered: [],
     soldOut: [],
     excluded: [],
     freeGiftRemoved: null,
+    decisions: [],
   };
 
   /**

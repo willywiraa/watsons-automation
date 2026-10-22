@@ -5,11 +5,12 @@ import { log } from '../utils/log';
 import { bagButton, bagCount } from './header';
 import { closeChatPanelIfShown, throwIfServerErrorShown } from './popups';
 
-// The delivery method buttons' visible names on staging (verified 2026-10-05).
+// The delivery method buttons' visible names on staging (verified 2026-10-05). After the bag page
+// is reloaded, some carry the place first: "Singapore - Home Delivery" (seen 2026-10-22).
 const DELIVERY_BUTTON_NAMES: Record<DeliveryMethod, RegExp> = {
-  home_delivery: /^\W*Home Delivery/,
-  click_collect: /^\W*Click & Collect at Watsons/,
-  shell_station: /^\W*Pickup at Shell Station/,
+  home_delivery: /^\W*(?:[\w ]+ - )?Home Delivery/,
+  click_collect: /^\W*(?:[\w ]+ - )?Click & Collect at Watsons/,
+  shell_station: /^\W*(?:[\w ]+ - )?Pickup at Shell Station/,
 };
 
 // The bag ("MY Bag", /checkoutstepone): contents, emptying, delivery method, free gift, Next
@@ -32,15 +33,27 @@ export class BagPage {
       .getByRole('button', { name: 'positiveButton' });
   }
 
+  /** A product's line (with its quantity box: not a free line staging added, see contents()). */
   itemFor(plu: string): Locator {
-    return this.items.filter({ has: this.page.locator(`a[href$="/p/BP_${plu}"]`) });
+    return this.items.filter({ has: this.page.locator(`a[href$="/p/BP_${plu}"]`) }).filter({ has: this.page.locator('input[aria-label="input-val"]') });
   }
 
   /** Opens the bag from the header's "MY Bag" button and waits for its contents. */
   async open(): Promise<void> {
     await closeChatPanelIfShown(this.page);
-    await bagButton(this.page).click();
-    await this.page.waitForURL(/\/checkoutstepone/, { timeout: 60_000 });
+    // A click before the shop's app has started does nothing (seen 2026-10-22 just after the home
+    // page opened): clicked again, up to 3 times in the minute it always had. Opening the bag
+    // twice does no harm.
+    let opened = false;
+    for (let attempt = 1; attempt <= 3 && !opened; attempt++) {
+      if (attempt > 1) log('"MY Bag" did not open the bag (the page was probably still starting); clicking it again', 'WARN');
+      await bagButton(this.page).click();
+      opened = await this.page.waitForURL(/\/checkoutstepone/, { timeout: 20_000 }).then(() => true, () => false);
+    }
+    if (!opened) {
+      await throwIfServerErrorShown(this.page, 'Open bag');
+      throw new StepError('CART_VALIDATION_FAILED', 'Open bag', 'Clicking "MY Bag" did not open the bag page (3 tries).', ['staging is slow', 'a pop-up covers the page']);
+    }
     await expect(this.page.getByRole('heading', { name: 'MY Bag', level: 1 })).toBeVisible({ timeout: 60_000 });
     // Loaded when it shows items, or the header says the bag is empty.
     const loaded = await expect
@@ -62,13 +75,25 @@ export class BagPage {
     await closeChatPanelIfShown(this.page);
   }
 
-  /** Trash button, then "Remove" in the confirmation; waits until the bag has one item fewer. */
+  /**
+   * Trash button, then "Remove" in the confirmation; waits until the bag has one line of that
+   * product fewer. Not one item fewer in all: a long list is still drawing more items for a while
+   * (seen 2026-10-22 with 21 products: 10 items, then 16).
+   */
   private async deleteItem(item: Locator): Promise<void> {
-    const before = await this.items.count();
+    const plu = (await item.locator('a[href*="/p/BP_"]').first().getAttribute('href'))?.match(/\/p\/BP_(\d+)$/)?.[1];
+    const lines = plu ? this.items.filter({ has: this.page.locator(`a[href$="/p/BP_${plu}"]`) }) : this.items;
+    const before = await lines.count();
+    const countBefore = await bagCount(this.page, 5_000).catch(() => NaN);
     await closeChatPanelIfShown(this.page);
     await item.locator('button.delete-btn').click();
     await this.confirmRemoveButton.click();
-    await expect.poll(() => this.items.count(), { timeout: 30_000 }).toBeLessThan(before);
+    await expect.poll(() => lines.count(), { timeout: 30_000 }).toBeLessThan(before);
+    // The line can go before staging has taken the removal (the "can't take" box redraws itself,
+    // seen 2026-10-22): leaving the page then undid it. The header's count drops once it is done.
+    if (Number.isFinite(countBefore)) {
+      await expect.poll(() => bagCount(this.page, 2_000).catch(() => countBefore), { timeout: 30_000 }).toBeLessThan(countBefore);
+    }
   }
 
   /** Reloads the bag page, e.g. when it seems stuck (seen once 2026-10-05: an item "came back"). */
@@ -84,7 +109,16 @@ export class BagPage {
   async empty(): Promise<void> {
     const startCount = await this.items.count();
     let reloads = 0;
-    while ((await this.items.count()) > 0) {
+    for (;;) {
+      // Done when the list shows no item and the header agrees: a list being redrawn after a
+      // removal shows none for a moment (seen 2026-10-22, with one product still in the bag).
+      if ((await this.items.count()) === 0) {
+        await expect
+          .poll(async () => (await this.items.count()) > 0 || (await bagCount(this.page)) === 0, { timeout: 30_000 })
+          .toBe(true)
+          .catch(() => {});
+        if ((await this.items.count()) === 0) break;
+      }
       try {
         await this.deleteItem(this.items.first());
       } catch (error) {
@@ -103,6 +137,68 @@ export class BagPage {
     }
     await expect.poll(() => bagCount(this.page), { timeout: 30_000 }).toBe(0);
     log(startCount > 0 ? `Bag emptied (${startCount} product(s) removed)` : 'Bag was already empty');
+  }
+
+  /**
+   * The products the chosen delivery method can't take, with staging's message; null when there
+   * are none. Seen 2026-10-22 with Click & Collect and Shell Station: a box above the other
+   * products (<wtc-cart-error-entries>) says e.g. "Sorry, your order includes item(s) not
+   * available for Click & Collect service. Please review your shopping bag or try another delivery
+   * option." and holds those products, with "Buy Next Time". "Next" then takes no clicks (class
+   * "disabled").
+   *
+   * The box is drawn a moment after the method is chosen, and can still show what was true before
+   * (seen 2026-10-22: a product just removed). So the answer counts once it has settled: the same
+   * twice, 1.5 seconds apart, with "Next" agreeing (greyed out with the box, ready without). At
+   * most 20 seconds; "Next" greyed out without the box (e.g. no pickup store) is no box.
+   */
+  async methodProblem(): Promise<{ message: string; plus: string[] } | null> {
+    const box = this.page.locator('wtc-cart-error-entries').filter({ has: this.page.locator('wtc-cart-item') });
+    const nextReady = async () => !/\bdisabled\b/.test((await this.nextButton.getAttribute('class', { timeout: 1_000 }).catch(() => '')) ?? '');
+    const read = async (): Promise<string | null> =>
+      (await box.count()) === 0
+        ? null
+        : JSON.stringify(
+            await box.first().evaluate((element) => ({
+              message: (element.querySelector('.title')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+              plus: [
+                ...new Set(
+                  [...element.querySelectorAll('wtc-cart-item a[href*="/p/BP_"]')]
+                    .map((link) => link.getAttribute('href')?.match(/\/p\/BP_(\d+)$/)?.[1])
+                    .filter((plu): plu is string => Boolean(plu)),
+                ),
+              ],
+            })),
+          );
+    const deadline = Date.now() + 20_000;
+    let settled: string | null | undefined;
+    for (;;) {
+      const now = await read();
+      const agrees = (now !== null) !== (await nextReady());
+      if ((agrees && now === settled) || Date.now() > deadline) return now === null ? null : JSON.parse(now);
+      settled = agrees ? now : undefined;
+      await this.page.waitForTimeout(1_500);
+    }
+  }
+
+  /**
+   * Removes every line of a product (its free line too), e.g. one the delivery method can't take.
+   * After each removal the bag page is loaded afresh: the "can't take" box can draw a removed
+   * product again for a moment (seen 2026-10-22), and that line can't be removed twice.
+   */
+  async removeLines(plu: string): Promise<void> {
+    const lines = this.items.filter({ has: this.page.locator(`a[href$="/p/BP_${plu}"]`) });
+    try {
+      for (let removals = 0; (await lines.count()) > 0; removals++) {
+        if (removals === 3) throw new Error(`PLU ${plu} is still in the bag after 3 removals`);
+        await this.deleteItem(lines.first());
+        await this.reload();
+      }
+    } catch (error) {
+      await throwIfServerErrorShown(this.page, `Remove PLU ${plu}`, error);
+      throw new StepError('CART_VALIDATION_FAILED', 'Remove product', `Could not remove PLU ${plu} from the bag.`, ['staging is slow'], error);
+    }
+    log(`Removed PLU ${plu} from the bag`);
   }
 
   /** Removes one product from the bag. */
@@ -139,14 +235,33 @@ export class BagPage {
     );
   }
 
-  /** What the bag holds: PLU (from each item's product link) and quantity. */
+  /**
+   * What the bag holds: PLU (from each item's product link) and quantity. Without the free units
+   * staging adds by itself, e.g. with "Buy 1 Get 1 Free" (seen 2026-10-22 with PLU 17971): their
+   * own line, marked FREE, with no quantity box (freeItems()).
+   */
   async contents(): Promise<OrderLine[]> {
     return this.items.evaluateAll((items) =>
-      items.map((item) => {
-        const href = item.querySelector('a[href*="/p/BP_"]')?.getAttribute('href') ?? '';
-        const quantity = (item.querySelector('input[aria-label="input-val"]') as HTMLInputElement | null)?.value;
-        return { plu: href.match(/\/p\/BP_(\d+)$/)?.[1] ?? `unknown (${href})`, quantity: Number(quantity) };
-      }),
+      items
+        .filter((item) => item.querySelector('input[aria-label="input-val"]') || !item.querySelector('.free'))
+        .map((item) => {
+          const href = item.querySelector('a[href*="/p/BP_"]')?.getAttribute('href') ?? '';
+          const quantity = (item.querySelector('input[aria-label="input-val"]') as HTMLInputElement | null)?.value;
+          return { plu: href.match(/\/p\/BP_(\d+)$/)?.[1] ?? `unknown (${href})`, quantity: Number(quantity) };
+        }),
+    );
+  }
+
+  /** The free lines staging added by itself (see contents()): PLU and quantity. */
+  async freeItems(): Promise<OrderLine[]> {
+    return this.items.evaluateAll((items) =>
+      items
+        .filter((item) => !item.querySelector('input[aria-label="input-val"]') && item.querySelector('.free'))
+        .map((item) => {
+          const href = item.querySelector('a[href*="/p/BP_"]')?.getAttribute('href') ?? '';
+          const quantity = Number(item.querySelector('.counter')?.textContent?.trim()) || 1;
+          return { plu: href.match(/\/p\/BP_(\d+)$/)?.[1] ?? `unknown (${href})`, quantity };
+        }),
     );
   }
 

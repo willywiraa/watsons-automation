@@ -4,9 +4,13 @@ export type StepErrorCode =
   | 'LOGIN_FAILED'
   | 'PRODUCT_NOT_FOUND'
   | 'PRODUCT_QUANTITY_MISMATCH'
+  // Staging refused the product: "not available for checkout" (2026-10-22).
+  | 'PRODUCT_NOT_AVAILABLE'
   | 'CART_VALIDATION_FAILED'
   | 'FREE_GIFT_REMOVAL_FAILED'
   | 'DELIVERY_METHOD_NOT_FOUND'
+  // The bag page says the method can't take some of the products (2026-10-22).
+  | 'DELIVERY_METHOD_NOT_AVAILABLE'
   | 'EXPRESS_OPTION_NOT_FOUND'
   | 'STANDARD_OPTION_NOT_FOUND'
   | 'DELIVERY_DATE_NOT_AVAILABLE'
@@ -19,6 +23,8 @@ export type StepErrorCode =
   | 'ORDER_NUMBER_NOT_FOUND'
   | 'STAGING_SERVER_ERROR'
   | 'UNEXPECTED_PAGE'
+  // A question to the person went unanswered for 30 minutes (src/utils/ask.ts, 2026-10-22).
+  | 'NO_ANSWER'
   // The backoffice approval after the order (Phase 13, user's request 2026-10-06).
   | 'BACKOFFICE_LOGIN_FAILED'
   | 'ORDER_NOT_FOUND_IN_BACKOFFICE'

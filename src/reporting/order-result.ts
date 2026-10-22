@@ -1,4 +1,5 @@
 import type { OrderLine } from '../config/order';
+import type { Decision } from '../utils/ask';
 import type { Automation, OrderRunSnapshot } from './order-run';
 
 // The structured result of one order test run (PRD §24, §35), written to
@@ -31,6 +32,8 @@ export interface OrderTestResult {
   products: { ordered: OrderLine[]; soldOut: string[]; excludedNotEligible: string[]; freeGiftRemoved: string | null };
   /** The backoffice approval (runs that place or approve an order): approved here or not, and the statuses seen. */
   backoffice?: { approved: boolean; statuses: string[]; finalStatus?: string };
+  /** The questions the run asked the person, their answers and what came of them (2026-10-22). */
+  decisions: Decision[];
   consoleErrors: string[];
   artifacts: { folder: string; screenshots: string[]; trace?: string; log?: string; htmlReport?: string };
 }
@@ -90,6 +93,8 @@ export function buildOrderResult(input: ResultInput): OrderTestResult {
       freeGiftRemoved: run.freeGiftRemoved,
     },
     backoffice: run.backoffice ? { ...run.backoffice, finalStatus: run.backoffice.statuses.at(-1) } : undefined,
+    // Runs from before 2026-10-22 have none.
+    decisions: run.decisions ?? [],
     consoleErrors: run.consoleErrors,
     artifacts: input.artifacts,
   };

@@ -457,6 +457,28 @@ test.describe('hosted server', () => {
     expect(setup.app.store.auditEvents().map((event) => event.action)).toContain('order-approved-later');
   });
 
+  test('a run’s question: only its owner answers, and the decision is kept and audited (2026-10-22)', async () => {
+    const alice = client(setup.app);
+    const bob = client(setup.app);
+    await alice.login('alice');
+    await alice.useAccounts('alice');
+    await bob.login('bob');
+    // PLU 3333: the stand-in run asks at "Product Search" what to do with it (out of stock).
+    const runId = (await alice.run({ ...ORDER, products: '10117\n3333' })).data.runId as string;
+    await expect.poll(() => runLog(setup, runId)).toContain('[ASK] Product 3333 is out of stock. What would you like to do?');
+    const { id } = JSON.parse(readFileSync(join(runFolder(setup, runId), 'ask.json'), 'utf8'));
+    expect((await alice.call('POST', '/api/state', {})).data.current.question).toMatchObject({ id, kind: 'out_of_stock', step: 'Product Search', plus: ['3333'] });
+    // Not Bob: it's not his run.
+    expect(await bob.call('POST', '/api/answer', { id, action: 'skip' })).toMatchObject({ status: 409, data: { error: 'You have no run going on.' } });
+    expect(await alice.call('POST', '/api/answer', { id, action: 'retry' })).toMatchObject({ status: 409, data: { error: 'That is not one of the choices.' } });
+    expect(await alice.call('POST', '/api/answer', { id, action: 'skip' })).toMatchObject({ status: 200, data: { ok: true } });
+    await ended(setup, runId);
+    const row = ((await bob.history()).data.rows as { runId: string }[]).find((candidate) => candidate.runId === runId);
+    expect(row).toMatchObject({ status: 'completed', decisions: [{ action: 'skip', plus: ['3333'], by: 'Alice', outcome: 'PLU 3333 left out of the order' }] });
+    expect(setup.app.store.auditEvents().some((event) => event.action === 'run-answer' && event.username === 'alice')).toBe(true);
+    expect(runLog(setup, runId)).toContain('[launcher] Alice chose: Skip product and continue');
+  });
+
   test('shows a run’s browser live to its owner only, passes clicks and typing on, and keeps the last page until Close browser', async () => {
     const alice = client(setup.app);
     const bob = client(setup.app);

@@ -58,10 +58,16 @@ RUNNING A TEST
    page. When you have seen it, click "Close browser"; it closes by itself after 5 minutes. The
    launcher then shows Completed with the order number, Awaiting approval (placed, not approved
    yet), No change, or Failed.
-5. When a run fails, the launcher shows the step it failed at, with the message, the time, the
+5. If something needs your decision before Checkout (a product out of stock, not found or not
+   addable, a product the delivery can't take, an error), the run pauses and asks you in a card
+   above Live browser. Click one of its buttons (for example Skip product and continue, Replace
+   with another PLU, Use Standard instead, Try Home Delivery, Retry or Stop automation): the run
+   goes on from there. It waits for you up to 30 minutes. Your choice is kept in the run's log
+   and in Logs / History.
+6. When a run fails, the launcher shows the step it failed at, with the message, the time, the
    page and a screenshot. "Copy error report" puts it on the clipboard for Teams or email; it is
    also saved as error-report.txt.
-6. Logs / History lists every run. The evidence of each run (screenshots, log, report)
+7. Logs / History lists every run. The evidence of each run (screenshots, log, report)
    is in the "reports" folder. An order that is Awaiting approval has an "Approve" button, for
    whoever has a backoffice account (the Automation page lists these orders on the left too).
 

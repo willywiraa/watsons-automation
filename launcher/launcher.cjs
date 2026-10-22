@@ -385,6 +385,38 @@ function newRunId(root, reportsDir = null) {
 /** The settings that hold passwords: on the hosted server, each run gets its own (TestRunner option "env"). */
 const SECRET_SETTINGS = ['WATSONS_USERNAME', 'WATSONS_PASSWORD', 'WATSONS_BACKOFFICE_USERNAME', 'WATSONS_BACKOFFICE_PASSWORD'];
 
+const ASK_ACTIONS = new Set(['skip', 'replace', 'retry', 'switch_mode', 'switch_method', 'stop']);
+
+/**
+ * The question a run asks (ask.json, written by src/utils/ask.ts), checked: only its known fields,
+ * as plain text, and only known actions. Null when it can't be read.
+ */
+function readQuestion(dir) {
+  const raw = readJson(path.join(dir, 'ask.json'));
+  if (!raw || !Number.isInteger(raw.id) || !Array.isArray(raw.options)) return null;
+  const text = (value, max = 300) => (typeof value === 'string' ? value.slice(0, max) : '');
+  const options = raw.options
+    .filter((option) => ASK_ACTIONS.has(option?.action))
+    .slice(0, 8)
+    .map((option) => ({
+      action: option.action,
+      label: text(option.label, 80) || option.action,
+      ...(has(MODES, option.mode) ? { mode: option.mode } : {}),
+      ...(has(DELIVERY_METHODS, option.method) ? { method: option.method } : {}),
+    }));
+  if (options.length === 0) return null;
+  return {
+    id: raw.id,
+    kind: text(raw.kind, 40),
+    step: text(raw.step, 80),
+    plus: Array.isArray(raw.plus) ? raw.plus.filter((plu) => /^\d{1,12}$/.test(plu)).slice(0, 50) : [],
+    message: text(raw.message),
+    detail: text(raw.detail),
+    options,
+    askedAt: text(raw.askedAt, 40),
+  };
+}
+
 /** Saves what the launcher knows about a run in its evidence folder (Logs / History reads it). */
 function writeRecord(run, state) {
   const record = {
@@ -403,6 +435,7 @@ function writeRecord(run, state) {
     risky: run.risky,
     passed: run.passed,
     cancelled: run.cancelled,
+    decisions: run.decisions,
     exitCode: run.exitCode ?? null,
   };
   try {
@@ -462,10 +495,13 @@ class TestRunner {
       'WATSONS_HTML_REPORT_DIR',
       'WATSONS_HOLD_LAST_PAGE',
       'WATSONS_LIVE_VIEW_PORT',
+      'WATSONS_INTERACTIVE',
     ]) {
       delete env[name];
     }
     if (reportsDir) env.WATSONS_REPORTS_DIR = reportsDir; // the test writes its evidence there too
+    // Someone is watching the window: the test asks them when something needs a decision (src/utils/ask.ts).
+    env.WATSONS_INTERACTIVE = 'yes';
     if (livePort) {
       env.WATSONS_LIVE_VIEW_PORT = String(livePort); // playwright.config.ts: the browser opens it
       env.WATSONS_HOLD_LAST_PAGE = 'yes'; // hidden, so the last page stays open in Live browser instead
@@ -526,6 +562,9 @@ class TestRunner {
       orderNumber: request.orderNumber ?? null,
       // Products the delivery mode left out, as the test logs them.
       excluded: [],
+      // The question the test is waiting on (ask.json), and what was decided (2026-10-22).
+      question: null,
+      decisions: [],
       cancelled: false,
       child,
     };
@@ -568,8 +607,68 @@ class TestRunner {
     // src/flows/delivery-modes.ts logs the products the mode can't deliver.
     const excluded = line.match(/Not available for \w+, left out of this order: PLU (.+)$/)?.[1];
     if (excluded) run.excluded = excluded.split(/,\s*/);
+    // The test waits for the person's answer: its question is in ask.json (src/utils/ask.ts).
+    if (/\[ASK\] /.test(line)) run.question = readQuestion(run.dir);
     this.echo(line);
-    this.send('line', { line, step: run.step, risky: run.risky, passed: run.passed, orderNumber: run.orderNumber, excluded: run.excluded });
+    this.send('line', {
+      line,
+      step: run.step,
+      risky: run.risky,
+      passed: run.passed,
+      orderNumber: run.orderNumber,
+      excluded: run.excluded,
+      // A question's answer can change the delivery mode or method (answer()).
+      mode: run.mode,
+      deliveryMethod: run.deliveryMethod,
+      question: run.question,
+      decisions: run.decisions,
+    });
+  }
+
+  /**
+   * The person's answer to the question the run is waiting on: { id, action, plu, mode, method }.
+   * `by`: who answered. Writes answer-<id>.json for the test; "Stop automation" stops the run, as
+   * Stop does. Returns what's wrong, or null.
+   */
+  answer(answer, by) {
+    const run = this.current;
+    const question = run?.question;
+    if (!question) return 'The run is not waiting for an answer.';
+    if (answer?.id !== question.id) return 'That question has already been answered.';
+    const option = question.options.find(
+      (candidate) => candidate.action === answer.action && (candidate.mode ?? null) === (answer.mode ?? null) && (candidate.method ?? null) === (answer.method ?? null),
+    );
+    if (!option) return 'That is not one of the choices.';
+    const plu = option.action === 'replace' ? String(answer.plu ?? '').trim() : null;
+    if (option.action === 'replace') {
+      if (!/^\d{1,12}$/.test(plu)) return 'Enter the PLU to use instead (digits only).';
+      if (question.plus.includes(plu)) return 'Enter a different PLU.';
+    }
+    run.question = null;
+    run.decisions.push({
+      at: new Date().toISOString(),
+      step: question.step,
+      kind: question.kind,
+      plus: question.plus,
+      message: question.message,
+      action: option.action,
+      label: option.label,
+      ...(plu ? { plu } : {}),
+      ...(by ? { by } : {}),
+    });
+    // Another delivery mode or method: the window's steps follow it (the line below tells it).
+    if (option.action === 'switch_mode') run.mode = option.mode;
+    if (option.action === 'switch_method') run.deliveryMethod = option.method;
+    this.addLine(run, `[launcher] ${by ? `${by} chose` : 'Chosen'}: ${option.label}${plu ? ` (PLU ${plu})` : ''}`);
+    if (option.action === 'stop') {
+      this.stop();
+      return null;
+    }
+    writeRecord(run, 'running');
+    const file = path.join(run.dir, `answer-${question.id}.json`);
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify({ action: option.action, ...(plu ? { plu } : {}), ...(option.mode ? { mode: option.mode } : {}), ...(option.method ? { method: option.method } : {}) }));
+    fs.renameSync(`${file}.tmp`, file); // whole, or not there yet: the test never reads half of it
+    return null;
   }
 
   stop() {
@@ -585,6 +684,7 @@ class TestRunner {
 
   finish(run, exitCode) {
     if (this.current !== run) return;
+    run.question = null;
     if (run.cancelled) this.addLine(run, '[launcher] Test cancelled by user.');
     if (run.cancelled && run.risky) this.addLine(run, `[launcher] WARNING: ${RISKS[run.automation].warning}`);
     run.exitCode = exitCode;
@@ -758,6 +858,7 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
     },
     addDelaySeconds: record?.addDelaySeconds ?? null,
     backoffice: result?.backoffice ?? null,
+    decisions: decisionsOf(result, record),
     error: null,
     warning: null,
     screenshots,
@@ -775,6 +876,26 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
   }
   return row;
 }
+
+/**
+ * A run's decisions (2026-10-22): the test's, with what came of each, plus who chose each from the
+ * launcher's record. A stopped run has only the launcher's.
+ */
+function decisionsOf(result, record) {
+  const chosen = Array.isArray(record?.decisions) ? record.decisions : [];
+  const tested = Array.isArray(result?.decisions) ? result.decisions : [];
+  if (tested.length === 0) return chosen;
+  return tested.map((decision, index) => {
+    const same = chosen[index];
+    return same?.by && same.message === decision.message && same.action === decision.action ? { ...decision, by: same.by } : decision;
+  });
+}
+
+/** One line per decision, for the CSV export. */
+const decisionsText = (decisions) =>
+  decisions
+    .map((decision) => `${decision.step}: ${decision.message} → ${decision.label}${decision.plu ? ` (PLU ${decision.plu})` : ''}${decision.outcome ? `: ${decision.outcome}` : ''}${decision.by ? ` [${decision.by}]` : ''}`)
+    .join(' | ');
 
 /** Every run in reports/, newest first. */
 function readHistory(root, currentRunId = null) {
@@ -852,7 +973,7 @@ function historyCsv(rows) {
     if (/^[=+\-@]/.test(text)) text = `'${text}`; // never a formula in Excel
     return `"${text.replace(/"/g, '""')}"`;
   };
-  const header = ['Time', 'Run', 'Automation', 'Order', 'Delivery', 'Products', 'Excluded (not eligible)', 'Status', 'Error code', 'Error step', 'Error', 'Operator', 'Screenshots', 'Evidence'];
+  const header = ['Time', 'Run', 'Automation', 'Order', 'Delivery', 'Products', 'Excluded (not eligible)', 'Decisions', 'Status', 'Error code', 'Error step', 'Error', 'Operator', 'Screenshots', 'Evidence'];
   const lines = rows.map((row) =>
     [
       formatTime(row.startedAt),
@@ -862,6 +983,7 @@ function historyCsv(rows) {
       row.delivery?.label ?? '',
       productsText(row.products.ordered.length > 0 ? row.products.ordered : row.products.requested),
       row.products.excluded.join(', '),
+      decisionsText(row.decisions ?? []),
       row.statusLabel,
       row.error?.code ?? '',
       row.error?.step ?? '',
@@ -1041,6 +1163,11 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
         return json(res, problem ? 409 : 200, problem ? { error: problem } : { ok: true });
       }
       if (url.pathname === '/api/stop') return json(res, 200, { stopped: runner.stop() });
+      // The answer to the run's question (2026-10-22): skip, replace, retry, another delivery, stop.
+      if (url.pathname === '/api/answer') {
+        const problem = runner.answer(body, readOperator(root));
+        return json(res, problem ? 409 : 200, problem ? { error: problem } : { ok: true });
+      }
       if (url.pathname === '/api/history') return json(res, 200, { rows: readHistory(root, runner.current?.runId) });
       if (url.pathname === '/api/export') {
         const wanted = Array.isArray(body.runIds) ? new Set(body.runIds) : null;

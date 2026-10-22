@@ -21,8 +21,9 @@ interface HistoryRow {
   status: string;
   orderNumber: string | null;
   operator: string | null;
-  delivery: { label: string } | null;
+  delivery: { label: string; method: string; mode: string } | null;
   products: { requested: OrderLine[]; ordered: OrderLine[]; excluded: string[] };
+  decisions: { step: string; plus: string[]; action: string; label: string; plu?: string; outcome?: string; by?: string }[];
   error: { code: string | null; step: string | null; reason: string; screenshots: string[] } | null;
   warning: string | null;
   screenshots: string[];
@@ -94,6 +95,20 @@ function statusOf(url: string, path: string, headers: Record<string, string> = {
     });
     req.on('error', reject);
     req.end(method === 'POST' ? '{}' : undefined);
+  });
+}
+
+/** A JSON POST to the launcher, as its window sends one: the status and the answer. */
+function postJson(url: string, path: string, body: unknown, key: string) {
+  const { port } = new URL(url);
+  return new Promise<{ status: number; body: { error?: string } }>((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'X-Launcher-Token': key, 'Content-Type': 'application/json' } }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(data || '{}') }));
+    });
+    req.on('error', reject);
+    req.end(JSON.stringify(body));
   });
 }
 
@@ -602,6 +617,126 @@ test.describe('launcher window', () => {
     await expect(page.locator('#result')).toContainText('Stopped during Pay.');
     await expect(page.locator('#result')).toContainText('Check My Account → Order History');
     await expect.poll(() => isRunning(pid)).toBe(false);
+  });
+
+  // ---- Questions during a run (user's request 2026-10-22; the fake runner asks them) ----
+
+  async function startOrder(page: Page, products: string) {
+    await page.goto(app.url);
+    await page.getByLabel('One PLU per line').fill(products);
+    await page.locator('#run').click();
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
+  }
+  /** The run's folder (the only one in reports/). */
+  const runFolder = () => join(root, 'reports', readdirSync(join(root, 'reports')).filter((name) => /^\d{4}-\d{2}-\d{2}_/.test(name))[0]);
+
+  test('pauses on a product out of stock; skipping it goes on without it, and the decision is kept (2026-10-22)', async ({ page }) => {
+    await startOrder(page, '10117\n3333');
+    const ask = page.locator('#ask');
+    await expect(ask).toContainText('Product 3333 is out of stock. What would you like to do?');
+    await expect(ask).toContainText('Paused at Product Search · Out of stock');
+    await expect(ask.getByRole('button')).toHaveText(['Skip product and continue', 'Replace with another PLU', 'Stop automation']);
+    await expect(page.locator('#status')).toHaveText('Paused at Product Search: waiting for your decision below.');
+    await expect(page).toHaveTitle(/^Decision needed · /);
+    await expect(page.locator('#steps li.current .wa-step__name')).toHaveText('Product Search');
+    await ask.getByRole('button', { name: 'Skip product and continue' }).click();
+    await expect(ask).toBeHidden();
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#result')).toContainText('3333×1Skipped: sold out');
+    await expect(page.locator('#result')).toContainText('1 of 2 ordered');
+    await expect(page.locator('#result')).toContainText('Product 3333 is out of stock. What would you like to do?→ Skip product and continue: PLU 3333 left out of the order');
+    // The log: the question, who chose what, and what came of it.
+    const log = readFileSync(join(runFolder(), 'launcher-log.txt'), 'utf8');
+    expect(log).toContain('[ASK] Product 3333 is out of stock. What would you like to do?');
+    expect(log).toContain('[launcher] Test Operator chose: Skip product and continue');
+    expect(log).toContain('Outcome: PLU 3333 left out of the order');
+    // Logs / History: the decision, with who made it.
+    const [row] = launcher.readHistory(root);
+    expect(row.decisions).toMatchObject([{ step: 'Product Search', plus: ['3333'], action: 'skip', label: 'Skip product and continue', outcome: 'PLU 3333 left out of the order', by: 'Test Operator' }]);
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    await page.locator('tr.hrow').first().click();
+    await expect(page.locator('tr.hdetail')).toContainText('Decisions');
+    await expect(page.locator('tr.hdetail')).toContainText('→ Skip product and continue: PLU 3333 left out of the order');
+    await expect(page.locator('tr.hdetail')).toContainText('3333 ×1 Skipped: sold out');
+  });
+
+  test('a product can be replaced by another PLU; only the choices offered are taken (2026-10-22)', async ({ page }) => {
+    await startOrder(page, '3333 2');
+    const ask = page.locator('#ask');
+    // Its only product: nothing to skip it for.
+    await expect(ask.getByRole('button')).toHaveText(['Replace with another PLU', 'Stop automation']);
+    const { id } = JSON.parse(readFileSync(join(runFolder(), 'ask.json'), 'utf8'));
+    const key = new URL(app.url).searchParams.get('token')!;
+    const answer = (body: object) => postJson(app.url, '/api/answer', body, key);
+    expect(await answer({ id: id + 1, action: 'replace', plu: '45606' })).toMatchObject({ status: 409, body: { error: 'That question has already been answered.' } });
+    expect(await answer({ id, action: 'skip' })).toMatchObject({ status: 409, body: { error: 'That is not one of the choices.' } });
+    expect(await answer({ id, action: 'replace', plu: '45x' })).toMatchObject({ status: 409, body: { error: 'Enter the PLU to use instead (digits only).' } });
+    expect(await answer({ id, action: 'replace', plu: '3333' })).toMatchObject({ status: 409, body: { error: 'Enter a different PLU.' } });
+    expect(existsSync(join(runFolder(), `answer-${id}.json`))).toBe(false);
+    await expect(ask).toBeVisible();
+
+    await ask.getByRole('button', { name: 'Replace with another PLU' }).click();
+    await ask.getByLabel('PLU to use instead').fill('abc');
+    await ask.getByRole('button', { name: 'Use this PLU' }).click();
+    await expect(ask).toContainText('Enter the PLU to use instead (digits only).');
+    await ask.getByLabel('PLU to use instead').fill('45606');
+    await ask.getByRole('button', { name: 'Use this PLU' }).click();
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#result')).toContainText('3333×2Replaced by PLU 45606');
+    await expect(page.locator('#result')).toContainText('45606×2Ordered');
+    expect(launcher.readHistory(root)[0].decisions).toMatchObject([{ action: 'replace', plu: '45606', outcome: 'PLU 45606 is available: it replaces PLU 3333' }]);
+    // Nothing is waiting now.
+    expect(await answer({ id, action: 'replace', plu: '45606' })).toMatchObject({ status: 409, body: { error: 'The run is not waiting for an answer.' } });
+  });
+
+  test('"Stop automation" stops the run where it paused (2026-10-22)', async ({ page }) => {
+    await startOrder(page, '3333');
+    await page.locator('#ask').getByRole('button', { name: 'Stop automation' }).click();
+    await expect(page.locator('#result .verdict')).toHaveText('Stopped at Product Search');
+    await expect(page.locator('#result')).toContainText('→ Stop automation');
+    const [row] = launcher.readHistory(root);
+    expect(row.status).toBe('stopped');
+    expect(row.decisions).toMatchObject([{ action: 'stop', label: 'Stop automation', plus: ['3333'], by: 'Test Operator' }]);
+  });
+
+  test('a product Express can’t take: "Use Standard instead" goes on with Standard, and the steps follow (2026-10-22)', async ({ page }) => {
+    await startOrder(page, '10117\n4444');
+    const ask = page.locator('#ask');
+    await expect(ask).toContainText('Product 4444 is not eligible for Express delivery with Click & Collect.');
+    await expect(ask.getByRole('button')).toHaveText(['Use Standard instead', 'Try Home Delivery', 'Try Shell Station', 'Leave it out and continue', 'Replace with another PLU', 'Stop automation']);
+    await expect(page.locator('#steps li.current .wa-step__name')).toHaveText('Express Delivery Selection');
+    await ask.getByRole('button', { name: 'Use Standard instead' }).click();
+    await expect(page.locator('#run-details')).toContainText('Standard');
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#steps')).toContainText('Standard Delivery Selection');
+    const [row] = launcher.readHistory(root);
+    expect(row.delivery).toMatchObject({ method: 'click_collect', mode: 'standard' });
+    expect(row.decisions).toMatchObject([{ action: 'switch_mode', label: 'Use Standard instead', outcome: 'Delivery mode: Standard' }]);
+  });
+
+  test('another delivery method can be tried; the run goes back to the bag (2026-10-22)', async ({ page }) => {
+    await startOrder(page, '10117\n4444');
+    await page.locator('#ask').getByRole('button', { name: 'Try Shell Station' }).click();
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    const [row] = launcher.readHistory(root);
+    expect(row.delivery).toMatchObject({ method: 'shell_station', mode: 'express' });
+    expect(readFileSync(join(runFolder(), 'launcher-log.txt'), 'utf8')).toMatch(/Step: Express Delivery Selection[\s\S]*Step: Cart validation[\s\S]*Step: Express Delivery Selection/);
+  });
+
+  test('an add that failed can be tried again (2026-10-22)', async ({ page }) => {
+    await startOrder(page, '10117\n5555');
+    const ask = page.locator('#ask');
+    await expect(ask).toContainText('Something went wrong at Add to bag (PLU 5555). How would you like to proceed?');
+    await expect(ask).toContainText('Details: Adding unit 1 of 1 for PLU 5555 did not increase the bag count (still 1).');
+    await expect(ask.getByRole('button')).toHaveText(['Retry', 'Skip product 5555', 'Stop automation']);
+    await ask.getByRole('button', { name: 'Retry' }).click();
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#result')).toContainText('→ Retry: PLU 5555 is in the bag');
   });
 
   test('approves an existing order, and never places one', async ({ page }) => {

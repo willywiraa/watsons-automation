@@ -1,7 +1,9 @@
-import type { DeliveryMode, OrderLine } from '../config/order';
+import type { DeliveryMethod, DeliveryMode, OrderLine } from '../config/order';
 import { MODE_NAMES, type CheckoutPage } from '../pages/CheckoutPage';
+import { ask, interactive, type Decision } from '../utils/ask';
 import { StepError } from '../utils/errors';
 import { log } from '../utils/log';
+import { eligibilityQuestion, stopped } from './order-issues';
 
 // What each delivery mode does on the checkout summary page. The order flow itself
 // (tests/order.e2e.spec.ts) is the same for every mode.
@@ -71,4 +73,67 @@ const MODE_STEPS: Record<DeliveryMode, DeliveryModeSteps> = {
 
 export function deliveryModeSteps(mode: DeliveryMode): DeliveryModeSteps {
   return MODE_STEPS[mode];
+}
+
+/** After the checkout page's delivery mode: on to Checkout, or back to change something first. */
+export type DeliveryNext =
+  | ({ kind: 'ready' } & ModeResult)
+  | { kind: 'mode'; mode: DeliveryMode }
+  | { kind: 'method'; method: DeliveryMethod }
+  | { kind: 'replace'; plu: string; replacement: string };
+
+/**
+ * The checkout page (user's request 2026-10-22): when some products can't go with this mode and
+ * method, the person chooses first (the other mode when it takes them, another method, leave them
+ * out, replace the product, or stop) instead of the run leaving them out by itself. A
+ * command-line run: selectOnCheckout, as before.
+ */
+export async function chooseDelivery(input: {
+  checkout: CheckoutPage;
+  mode: DeliveryMode;
+  method: DeliveryMethod;
+  lines: OrderLine[];
+  namesByPlu: Record<string, string>;
+  decisions: Decision[];
+  triedMethods: DeliveryMethod[];
+}): Promise<DeliveryNext> {
+  const { checkout, mode, method, lines, namesByPlu, decisions, triedMethods } = input;
+  const steps = deliveryModeSteps(mode);
+  if (!interactive()) return { kind: 'ready', ...(await steps.selectOnCheckout(checkout, lines, namesByPlu)) };
+
+  const other: DeliveryMode = mode === 'express' ? 'standard' : 'express';
+  const offered = await checkout.offeredModes(mode);
+  let unavailable: string[] = [];
+  let otherTakesThem = false;
+  if (offered.length === 1 && offered[0] !== mode) {
+    // The page offers only the other mode: none of the products can go this way.
+    unavailable = lines.map((line) => line.plu);
+    otherTakesThem = true;
+  } else if (offered.length === 2) {
+    unavailable = await checkout.unavailableFor(mode, namesByPlu);
+    if (unavailable.length > 0) {
+      const otherUnavailable = await checkout.unavailableFor(other, namesByPlu).catch(() => null);
+      otherTakesThem = otherUnavailable !== null && unavailable.some((plu) => !otherUnavailable.includes(plu));
+    }
+  }
+  if (unavailable.length === 0) return { kind: 'ready', ...(await steps.selectOnCheckout(checkout, lines, namesByPlu)) };
+
+  const answer = await ask(
+    eligibilityQuestion({
+      plus: unavailable,
+      mode,
+      method,
+      otherMode: otherTakesThem ? other : null,
+      othersLeft: lines.filter((line) => !unavailable.includes(line.plu)).length,
+      triedMethods,
+    }),
+    { action: 'stop' },
+    decisions,
+  );
+  if (answer.action === 'switch_mode' && answer.mode) return { kind: 'mode', mode: answer.mode };
+  if (answer.action === 'switch_method' && answer.method) return { kind: 'method', method: answer.method };
+  if (answer.action === 'replace' && answer.plu) return { kind: 'replace', plu: unavailable[0], replacement: answer.plu };
+  // Leave them out: staging does that once the mode is chosen, as before.
+  if (answer.action === 'skip') return { kind: 'ready', ...(await steps.selectOnCheckout(checkout, lines, namesByPlu)) };
+  return stopped(`${MODE_NAMES[mode]} Delivery Selection`, answer);
 }

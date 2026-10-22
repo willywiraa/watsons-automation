@@ -70,12 +70,13 @@ mode: Express
 ```
 
 - `delivery:` is `Home Delivery`, `Click & Collect` or `Shell Station`.
-- `mode:` is `Express` (the default) or `Standard`. Products that the mode can't deliver right
-  now are left out of the order and listed in the result.
+- `mode:` is `Express` (the default) or `Standard`. From the command line, products that the
+  mode can't deliver right now are left out of the order and listed in the result; a run from
+  the launcher window asks first ("When a run needs your decision", below).
 - One PLU per line (paste freely; blank lines are fine). Add a quantity after a PLU for more
   than one unit (`10321 2`). Lines starting with `#` are ignored.
-- Sold-out products are skipped and listed. A PLU that isn't found stops the test before
-  anything is added.
+- From the command line, sold-out products are skipped and listed, and a PLU that isn't found
+  stops the test before anything is added. A run from the launcher window asks instead.
 - To use another order file for one run, set `WATSONS_ORDER_FILE` to its path, e.g. in
   PowerShell: `$env:WATSONS_ORDER_FILE = "C:\path\my-order.txt"` (set it to `''` afterwards).
 
@@ -113,8 +114,8 @@ On the left, the **workflow**; on the right, the **Ready** bar with the run butt
   read. The window starts with the products of your last run (or `test-data/order.txt`);
   **Clear** empties the list.
 - **Delivery**: the method, and the mode: **Express** (the default; "Fastest" on the checkout
-  page) or **Standard** (the regular delivery or pickup date). Products that the mode can't
-  deliver are left out of the order and listed in the result. The test waits 5 seconds from one
+  page) or **Standard** (the regular delivery or pickup date). When the mode or method can't
+  take some products, the run asks you what to do (below). The test waits 5 seconds from one
   "add to bag" click to the next (fixed since 2026-10-21; not a setting).
 - **Order** (approving): its number (`07091012` or `WTCSG07091012`); beside it, its backoffice
   code, and below it who placed that order, if it is in the history.
@@ -143,6 +144,40 @@ again. **Approve Order is clicked at most once**: if the result is unclear, the 
 first, because the order or its approval may then already exist); the result is then **Stopped
 at** that step. The launcher adds `order.txt` (what you asked for), `launcher-log.txt` (the full
 log) and `launcher-run.json` (what it knows about the run) to the run's evidence folder.
+
+### When a run needs your decision (since 2026-10-22)
+
+Before **Checkout**, a run started from the window doesn't skip products or guess when something
+is wrong: it **pauses** and asks, in a card under the run's bar (the page title says "Decision
+needed"). It shows only the choices that make sense then:
+
+| What happened | The question | The choices |
+|---|---|---|
+| Out of stock (Product Search) | "Product 39656 is out of stock. What would you like to do?" | Skip product and continue · Replace with another PLU · Stop automation |
+| Not found (Product Search) | "Product 12345 was not found on staging. …" | the same |
+| Staging won't add it (Add to bag): its "not available for checkout" pop-up, or its "add to bag" only opens the product's page | "Product 57893 can't be added to the bag. …" | the same |
+| The delivery mode can't take some products (checkout page) | "Products 17971 and 21684 are not eligible for Express delivery with Home Delivery." | Use Standard instead (when Standard takes them) · Try another delivery method · Leave them out and continue · Replace with another PLU (one product) · Stop automation |
+| The delivery method can't take some products (bag page) | "Products 45614 and 24264 are not eligible for Click & Collect." | Try another delivery method · Leave them out and continue · Replace with another PLU (one product) · Stop automation |
+| Anything else before Checkout | "Something went wrong at Add to bag (PLU 5555). How would you like to proceed?", with the reason | Retry · Skip that product (when there is one) · Try another delivery method (at the bag) · Stop automation |
+
+- **Skip** is offered only when other products are left to order.
+- **Replace** asks for the PLU to use instead. The new product is checked like the others: if it
+  is out of stock too, the run asks again.
+- **Retry** first reads the bag again, so nothing is added twice.
+- **Stop automation** stops the run as **Stop** does.
+- After your choice the run goes on from where it paused. Another delivery method goes back to
+  the bag first; the steps follow your choice.
+- A question waits up to 30 minutes, then the run stops there (`NO_ANSWER`).
+- Nothing is asked from **Checkout** on: the order may exist by then, so a problem there ends the
+  run as before, and nothing is retried.
+- Each question, the choice, who made it and what came of it are in the log, in the result's
+  **Decisions**, in Logs / History (and its CSV export), and in `result.json` (`decisions`).
+- Runs from the command line (`npm run order`) are never asked. They do what they always did:
+  skip sold-out products, stop on a PLU that isn't found, and leave out products the mode can't
+  deliver.
+
+On the hosted version, only the person whose run it is can answer, and every answer is in the
+audit trail.
 
 Closing the window stops the launcher about 20 seconds later. A test that is running then
 carries on to the end (its result is still saved in `reports/`; a run that has passed then
@@ -178,8 +213,9 @@ an operator. The operator is `WATSONS_OPERATOR` from `.env`, or your Windows use
 The checkout summary page offers one option per delivery mode, each a radio with a
 **View N item(s)** list of which products it can deliver. **Express** is the option that shows
 "Fastest"; **Standard** is the other one (it shows the estimated delivery or pickup date). For
-either mode the test reads that list, leaves out the products marked "Not available", selects
-the option and waits for **Checkout** (`src/pages/CheckoutPage.ts`, `src/flows/delivery-modes.ts`).
+either mode the test reads that list, leaves out the products marked "Not available" (a run from
+the launcher window asks first: the other mode when it takes them, another method, leave them
+out, replace, or stop), selects the option and waits for **Checkout** (`src/pages/CheckoutPage.ts`, `src/flows/delivery-modes.ts`).
 When the chosen option asks for a delivery date ("Please Select a delivery date", usually
 Standard **home delivery**), whatever the mode, the test opens "Select delivery date", picks
 the **latest** available date in the list and confirms it, before Checkout (since 2026-10-16;
@@ -199,7 +235,8 @@ by the options themselves, not by whether Express shows:
 
 If options still appear by the time Checkout is ready, the test selects the mode as usual. If the
 run asked for **Express** but the page offers only Standard, it stops before Checkout with
-`EXPRESS_OPTION_NOT_FOUND` ("offers only Standard for these products") and places no order. A
+`EXPRESS_OPTION_NOT_FOUND` ("offers only Standard for these products") and places no order; a
+run from the launcher window asks instead ("Use Standard instead"). A
 page that doesn't load, or whose Checkout button stays unavailable, stops the run with
 `CHECKOUT_FAILED`.
 
@@ -207,6 +244,18 @@ page that doesn't load, or whose Checkout button stays unavailable, stops the ru
 ("Recent Pickup Store"), and with one, Click & Collect runs reach Checkout (2026-10-14). Without
 one, the bag's **Next** stays locked (seen 2026-10-13); the test doesn't choose a store itself
 yet. Home Delivery works with both modes.
+
+**Products a delivery method can't take** (seen 2026-10-22): with Click & Collect or Shell
+Station, the bag page lists them in a box above the others ("Sorry, your order includes item(s)
+not available for Click & Collect service…"; Shell Station: "…not applicable for Click and
+Collect, please select Home Delivery") with **Buy Next Time**, and **Next** can't be clicked.
+The test reads that list (`BagPage.methodProblem`). A run from the launcher window asks: another
+method, leave them out (they are removed from the bag), replace, or stop. From the command line
+it stops with `DELIVERY_METHOD_NOT_AVAILABLE`, naming them.
+
+**Free items** (seen 2026-10-22): with "Buy 1 Get 1 Free" (e.g. PLU 17971) staging adds the free
+unit by itself, as its own bag line marked FREE without a quantity box. The bag check leaves it
+out of the comparison and logs it; it comes with the order.
 
 To add another mode: give it a step in `src/flows/delivery-modes.ts`, then add it to `MODES` in
 `launcher/launcher.cjs`. The window, its checks, the order file and the progress steps follow
@@ -347,7 +396,7 @@ Every `npm run test:e2e` or `npm run order` run saves its evidence in its own fo
 
 | File | Contents |
 |---|---|
-| `result.json` | Passed/failed, the automation (`order` or `approve`), the outcome (`order_placed`, `order_placed_unapproved` (placed without a backoffice account), `ready_to_check_out`, `approved`, `no_change` or `failed`), the order number, the failed step and error code with the time it failed, the pages open then and their screenshots, the products ordered / skipped as sold out / left out as not eligible, browser console errors |
+| `result.json` | Passed/failed, the automation (`order` or `approve`), the outcome (`order_placed`, `order_placed_unapproved` (placed without a backoffice account), `ready_to_check_out`, `approved`, `no_change` or `failed`), the order number, the failed step and error code with the time it failed, the pages open then and their screenshots, the products ordered / skipped as sold out / left out as not eligible, the questions the run asked and what was chosen (`decisions`, since 2026-10-22), browser console errors |
 | `log.txt` | The step-by-step log of the run |
 | `screenshot-*.png` | The checkout summary, the order confirmation and the backoffice order (when an order is placed or approved), and `screenshot-N-failure.png`: each open page when the run failed |
 | `order.txt`, `launcher-log.txt`, `launcher-run.json` | Launcher runs only: what was asked, the full log, and what the launcher knows about the run (automation, operator, status, seconds between adds) for Logs / History |

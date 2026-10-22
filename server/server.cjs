@@ -301,6 +301,11 @@ async function startServer(overrides = {}) {
     const problem = runs.stop(req.session, typeof req.body?.runId === 'string' ? req.body.runId : null, req.ip);
     res.status(problem ? 409 : 200).json(problem ? { stopped: false, error: problem } : { stopped: true });
   });
+  // The answer to the question the person's run is waiting on (2026-10-22).
+  app.post('/api/answer', ...changes, (req, res) => {
+    const problem = runs.answer(req.session, req.body, req.ip);
+    res.status(problem ? 409 : 200).json(problem ? { error: problem } : { ok: true });
+  });
 
   // ---- Shared Logs / History --------------------------------------------------------------------
 
