@@ -28,6 +28,14 @@ export interface AskOption {
   /** For switch_mode / switch_method: which one. */
   mode?: DeliveryMode;
   method?: DeliveryMethod;
+  /** replace: the answer may name several PLUs, separated by spaces or commas (2026-10-22). */
+  many?: boolean;
+}
+
+/** The PLUs in a replace answer ("45606 21679", "45606, 21679"); none when any isn't a PLU. */
+export function pluList(text: string | undefined): string[] {
+  const items = (text ?? '').split(/[\s,]+/).filter(Boolean);
+  return items.length > 0 && items.every((item) => /^\d{1,12}$/.test(item)) ? [...new Set(items)] : [];
 }
 
 export interface Question {
@@ -95,7 +103,8 @@ export async function ask(question: Question, fallback: Answer, decisions: Decis
   }
   const answer = JSON.parse(readFileSync(answerFile, 'utf8')) as Answer;
   const option = question.options.find((candidate) => candidate.action === answer.action && candidate.mode === answer.mode && candidate.method === answer.method);
-  if (!option || (answer.action === 'replace' && !/^\d+$/.test(answer.plu ?? ''))) {
+  const replacements = answer.action === 'replace' ? pluList(answer.plu) : [];
+  if (!option || (answer.action === 'replace' && (replacements.length === 0 || (!option.many && replacements.length > 1)))) {
     throw new StepError('UNEXPECTED_PAGE', question.step, `The answer to "${question.message}" was not one of the choices offered.`);
   }
   decisions.push({
@@ -106,16 +115,18 @@ export async function ask(question: Question, fallback: Answer, decisions: Decis
     message: question.message,
     action: answer.action,
     label: option.label,
-    ...(answer.plu ? { plu: answer.plu } : {}),
+    ...(replacements.length > 0 ? { plu: replacements.join(' ') } : {}),
   });
-  log(`Decision: ${option.label}${answer.plu ? ` (PLU ${answer.plu})` : ''}`);
+  log(`Decision: ${option.label}${replacements.length > 0 ? ` (PLU ${replacements.join(', ')})` : ''}`);
   return answer;
 }
 
-/** What came of the latest decision, e.g. "Replaced by PLU 45606": logged and kept with it. */
-export function decided(decisions: Decision[], outcome: string): void {
+/**
+ * What came of a decision (the latest, unless `decision` says which), e.g. "Replaced by PLU
+ * 45606": logged and kept with it.
+ */
+export function decided(decisions: Decision[], outcome: string, decision: Decision | undefined = decisions.at(-1)): void {
   if (!interactive()) return;
-  const latest = decisions.at(-1);
-  if (latest) latest.outcome = outcome;
+  if (decision) decision.outcome = outcome;
   log(`Outcome: ${outcome}`);
 }

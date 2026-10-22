@@ -207,11 +207,13 @@ function question(step) {
     return true;
   }
   if (step === 'Express Delivery Selection' && ordered.some((line) => line.plu === '4444') && method !== 'shell_station') {
+    // As src/flows/order-issues.ts asks it (2026-10-22): remove it, or replace it (one or several
+    // PLUs), first; then the other mode and the other methods.
     const options = [
+      ...(others('4444') > 0 ? [{ action: 'skip', label: 'Remove it and continue' }] : []),
+      { action: 'replace', label: 'Replace with another PLU', many: true },
       { action: 'switch_mode', mode: 'standard', label: 'Use Standard instead' },
       ...['home_delivery', 'click_collect', 'shell_station'].filter((other) => other !== method).map((other) => ({ action: 'switch_method', method: other, label: `Try ${METHOD_LABELS[other]}` })),
-      ...(others('4444') > 0 ? [{ action: 'skip', label: 'Leave it out and continue' }] : []),
-      { action: 'replace', label: 'Replace with another PLU' },
       { action: 'stop', label: 'Stop automation' },
     ];
     const message = `Product 4444 is not eligible for Express delivery with ${METHOD_LABELS[method]}.`;
@@ -225,12 +227,16 @@ function question(step) {
         steps.splice(index, 0, 'Cart validation', step); // back to the bag, then the checkout page again (Shell Station takes it)
         decided(`Delivery method: ${METHOD_LABELS[method]}`);
       } else if (answer.action === 'skip') {
-        excluded = ordered.filter((line) => line.plu === '4444');
+        // Out of the order; Cart validation takes it out of the bag, then the checkout page again.
         ordered = without('4444');
-        console.log('[12:00:00] [WARN] Not available for Express, left out of this order: PLU 4444');
+        steps.splice(index, 0, 'Cart validation', step);
+        decided('PLU 4444 taken out of the order');
       } else {
-        ordered = replaced('4444', answer.plu);
+        const added = answer.plu.split(/\s+/);
+        const quantity = ordered.find((line) => line.plu === '4444').quantity;
+        ordered = [...without('4444'), ...added.map((plu) => ({ plu, quantity }))];
         steps.splice(index, 0, 'Add to bag', 'Cart validation', step);
+        decided(`PLU 4444 removed; PLU ${added.join(', ')} added instead`);
       }
       next();
     });

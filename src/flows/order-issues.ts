@@ -45,9 +45,22 @@ export function otherMethods(current: DeliveryMethod, tried: DeliveryMethod[]): 
 }
 
 /**
+ * The choices for products a delivery can't take (user's request 2026-10-22): take them out of
+ * the bag and go on with the others, or take them out and add other PLUs instead; then the other
+ * mode or methods, which keep them.
+ */
+function removalOptions(plus: string[], othersLeft: number): AskOption[] {
+  const one = plus.length === 1;
+  const options: AskOption[] = [];
+  if (othersLeft > 0) options.push({ action: 'skip', label: one ? 'Remove it and continue' : 'Remove them and continue' });
+  options.push({ action: 'replace', label: one ? 'Replace with another PLU' : 'Remove them and add other PLUs', many: true });
+  return options;
+}
+
+/**
  * Products the chosen delivery can't take, on the checkout page. `otherMode`: the other mode,
  * when it is offered and takes some of them; `othersLeft`: products that would remain if they were
- * left out.
+ * removed.
  */
 export function eligibilityQuestion(input: {
   plus: string[];
@@ -58,11 +71,9 @@ export function eligibilityQuestion(input: {
   triedMethods: DeliveryMethod[];
 }): Question {
   const { plus, mode, method, otherMode, othersLeft, triedMethods } = input;
-  const options: AskOption[] = [];
+  const options = removalOptions(plus, othersLeft);
   if (otherMode) options.push({ action: 'switch_mode', mode: otherMode, label: `Use ${MODE_NAMES[otherMode]} instead` });
   options.push(...otherMethods(method, triedMethods));
-  if (othersLeft > 0) options.push({ action: 'skip', label: plus.length === 1 ? 'Leave it out and continue' : 'Leave them out and continue' });
-  if (plus.length === 1) options.push({ action: 'replace', label: 'Replace with another PLU' });
   options.push({ action: 'stop', label: 'Stop automation' });
   const verb = plus.length === 1 ? 'is' : 'are';
   return {
@@ -80,10 +91,8 @@ export function eligibilityQuestion(input: {
  */
 export function methodEligibilityQuestion(input: { plus: string[]; method: DeliveryMethod; message: string; othersLeft: number; triedMethods: DeliveryMethod[] }): Question {
   const { plus, method, message, othersLeft, triedMethods } = input;
-  const options: AskOption[] = otherMethods(method, triedMethods);
-  if (othersLeft > 0 && plus.length > 0) options.push({ action: 'skip', label: plus.length === 1 ? 'Leave it out and continue' : 'Leave them out and continue' });
-  if (plus.length === 1) options.push({ action: 'replace', label: 'Replace with another PLU' });
-  options.push({ action: 'stop', label: 'Stop automation' });
+  const options: AskOption[] = plus.length > 0 ? removalOptions(plus, othersLeft) : [];
+  options.push(...otherMethods(method, triedMethods), { action: 'stop', label: 'Stop automation' });
   const which = plus.length === 0 ? 'Some products are' : `${listOf(plus)} ${plus.length === 1 ? 'is' : 'are'}`;
   return { kind: 'not_eligible', step: 'Cart validation', plus, message: `${which} not eligible for ${METHOD_NAMES[method]}.`, ...(message ? { detail: message } : {}), options };
 }

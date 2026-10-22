@@ -401,6 +401,8 @@ function readQuestion(dir) {
     .map((option) => ({
       action: option.action,
       label: text(option.label, 80) || option.action,
+      // Replace: several PLUs allowed (2026-10-22).
+      ...(option.action === 'replace' && option.many === true ? { many: true } : {}),
       ...(has(MODES, option.mode) ? { mode: option.mode } : {}),
       ...(has(DELIVERY_METHODS, option.method) ? { method: option.method } : {}),
     }));
@@ -639,10 +641,17 @@ class TestRunner {
       (candidate) => candidate.action === answer.action && (candidate.mode ?? null) === (answer.mode ?? null) && (candidate.method ?? null) === (answer.method ?? null),
     );
     if (!option) return 'That is not one of the choices.';
-    const plu = option.action === 'replace' ? String(answer.plu ?? '').trim() : null;
+    // Replace: one PLU, or several (separated by spaces or commas) where the choice allows them.
+    let plu = null;
     if (option.action === 'replace') {
-      if (!/^\d{1,12}$/.test(plu)) return 'Enter the PLU to use instead (digits only).';
-      if (question.plus.includes(plu)) return 'Enter a different PLU.';
+      const list = String(answer.plu ?? '').trim().split(/[\s,]+/).filter(Boolean);
+      if (list.length === 0 || !list.every((item) => /^\d{1,12}$/.test(item))) {
+        return option.many ? 'Enter the PLUs to add (digits; separate several with spaces).' : 'Enter the PLU to use instead (digits only).';
+      }
+      if (!option.many && list.length > 1) return 'Enter one PLU.';
+      if (list.length > 10) return 'Enter at most 10 PLUs.';
+      if (list.some((item) => question.plus.includes(item))) return 'Enter a different PLU.';
+      plu = [...new Set(list)].join(' ');
     }
     run.question = null;
     run.decisions.push({
@@ -659,7 +668,7 @@ class TestRunner {
     // Another delivery mode or method: the window's steps follow it (the line below tells it).
     if (option.action === 'switch_mode') run.mode = option.mode;
     if (option.action === 'switch_method') run.deliveryMethod = option.method;
-    this.addLine(run, `[launcher] ${by ? `${by} chose` : 'Chosen'}: ${option.label}${plu ? ` (PLU ${plu})` : ''}`);
+    this.addLine(run, `[launcher] ${by ? `${by} chose` : 'Chosen'}: ${option.label}${plu ? ` (PLU ${plu.replace(/ /g, ', ')})` : ''}`);
     if (option.action === 'stop') {
       this.stop();
       return null;

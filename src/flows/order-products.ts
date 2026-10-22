@@ -187,16 +187,35 @@ export class OrderProducts {
   }
 
   /**
-   * After the checkout page: `plu` replaced by `replacement` (the person's choice). The
-   * replacement is checked and added; `plu` comes out of the bag at Cart validation (tidyBag).
+   * After the bag or checkout page (the person's choice): `plus` out of the order, `replacements`
+   * in. Each replacement is checked like the others (and asked about if it is out of stock or not
+   * found too), then added; `plus` come out of the bag at Cart validation (tidyBag). One product
+   * replaced: each replacement gets its quantity; several: one each.
    */
-  async replace(plu: string, replacement: string): Promise<void> {
-    const line = this.lines.find((other) => other.plu === plu);
-    if (!line) return;
-    const others = this.lines.filter((other) => other !== line);
-    const ready = await this.resolve(line, others.length, others, [], this.replacement(line, replacement));
-    this.lines = ready ? replaceLine(this.lines, plu, ready.plu) : others;
+  async replace(plus: string[], replacements: string[]): Promise<void> {
+    const decision = this.decisions.at(-1);
+    const removed = this.lines.filter((line) => plus.includes(line.plu));
+    const quantity = removed.length === 1 ? removed[0].quantity : 1;
+    const kept = this.lines.filter((line) => !plus.includes(line.plu));
+    const added: string[] = [];
+    for (const plu of replacements) {
+      log(`Checking PLU ${plu} to add instead of PLU ${plus.join(', ')}`);
+      this.everWanted.add(plu);
+      const ready = await this.resolve({ plu, quantity }, kept.length, kept, []);
+      if (!ready) continue;
+      const same = kept.find((line) => line.plu === ready.plu);
+      if (same) same.quantity += ready.quantity;
+      else kept.push(ready);
+      added.push(ready.plu);
+    }
+    this.lines = kept;
+    decided(this.decisions, `PLU ${plus.join(', ')} removed${added.length > 0 ? `; PLU ${added.join(', ')} added instead` : ''}`, decision);
     await this.addAll();
+  }
+
+  /** Takes these products out of the order (the person's choice); Cart validation takes them out of the bag (tidyBag). */
+  drop(plus: string[]): void {
+    this.lines = this.lines.filter((line) => !plus.includes(line.plu));
   }
 
   /** Leaves these products out of the order and takes them out of the bag (the person's choice). */

@@ -741,10 +741,10 @@ dialog::backdrop{background:var(--scrim)}
             </div>
             <div class="p-ask__actions" id="ask-actions"></div>
             <form class="p-ask__replace" id="ask-replace" autocomplete="off" hidden>
-              <label class="wa-label" for="ask-plu">PLU to use instead</label>
+              <label class="wa-label" for="ask-plu" id="ask-plu-label">PLU to use instead</label>
               <div class="p-ask__row">
                 <input class="wa-input wa-num" id="ask-plu" inputmode="numeric" maxlength="12" spellcheck="false">
-                <button type="submit" class="wa-btn wa-btn--primary">Use this PLU</button>
+                <button type="submit" class="wa-btn wa-btn--primary" id="ask-replace-go">Use this PLU</button>
                 <button type="button" class="wa-btn wa-btn--ghost" id="ask-replace-back">Back</button>
               </div>
             </form>
@@ -1448,7 +1448,7 @@ function renderRun(view, queued) {
 
 // ---- The run's question (2026-10-22): only the choices that are valid then ---------------------
 
-const ask = { id: null, replacing: false, sending: false, error: '' };
+const ask = { id: null, replacing: false, many: false, sending: false, error: '' };
 const ASK_TITLES = {
   out_of_stock: 'Out of stock',
   not_found: 'Product not found',
@@ -1491,7 +1491,12 @@ function renderAsk() {
 
 function chooseAnswer(option) {
   if (option.action !== 'replace') return sendAnswer({ action: option.action, mode: option.mode, method: option.method });
-  Object.assign(ask, { replacing: true, error: '' });
+  // One PLU, or several where the choice allows them (2026-10-22).
+  Object.assign(ask, { replacing: true, many: Boolean(option.many), error: '' });
+  $('ask-plu-label').textContent = ask.many ? 'PLUs to add (separate several with spaces)' : 'PLU to use instead';
+  $('ask-replace-go').textContent = ask.many ? 'Add these PLUs' : 'Use this PLU';
+  $('ask-plu').maxLength = ask.many ? 140 : 12;
+  $('ask-plu').inputMode = ask.many ? 'text' : 'numeric';
   render();
   $('ask-plu').focus();
 }
@@ -2052,7 +2057,7 @@ function failureDetail(row) {
   );
 }
 
-const SKIPPED = { out_of_stock: 'Skipped: sold out', not_found: 'Skipped: not found', not_available: 'Skipped: can’t be added', not_eligible: 'Left out: delivery not possible', error: 'Skipped after an error' };
+const SKIPPED = { out_of_stock: 'Skipped: sold out', not_found: 'Skipped: not found', not_available: 'Skipped: can’t be added', not_eligible: 'Removed: delivery not possible', error: 'Skipped after an error' };
 
 /** Each product of an order run, and what became of it. */
 function productRows(row) {
@@ -2063,13 +2068,13 @@ function productRows(row) {
   const chosen = new Map();
   const lines = [...requested];
   for (const decision of row.decisions ?? []) {
-    for (const plu of decision.plus) {
-      if (decision.action === 'skip') chosen.set(plu, SKIPPED[decision.kind] ?? 'Skipped');
-      if (decision.action !== 'replace' || !decision.plu) continue;
-      chosen.set(plu, `Replaced by PLU ${decision.plu}`);
-      const old = lines.find((line) => line.plu === plu);
-      if (!lines.some((line) => line.plu === decision.plu)) lines.push({ plu: decision.plu, quantity: old?.quantity ?? 1, instead: plu });
-    }
+    if (decision.action === 'skip') for (const plu of decision.plus) chosen.set(plu, SKIPPED[decision.kind] ?? 'Skipped');
+    if (decision.action !== 'replace' || !decision.plu) continue;
+    // One or several PLUs instead (2026-10-22); one product replaced passes its quantity on.
+    const added = decision.plu.split(/\s+/);
+    const one = decision.plus.length === 1 ? lines.find((line) => line.plu === decision.plus[0]) : null;
+    for (const plu of decision.plus) chosen.set(plu, `Replaced by PLU ${added.join(', ')}`);
+    for (const plu of added) if (!lines.some((line) => line.plu === plu)) lines.push({ plu, quantity: one?.quantity ?? 1, instead: decision.plus.join(', ') });
   }
   return lines.map(({ plu, quantity, instead }) => {
     const ordered = row.products.ordered.find((line) => line.plu === plu);
@@ -2116,7 +2121,7 @@ function decisionItems(row) {
       'li',
       { className: 'p-decision' },
       el('span', { textContent: decision.message }),
-      el('span', { className: 'p-decision__answer', textContent: `→ ${decision.label}${decision.plu ? ` (PLU ${decision.plu})` : ''}${decision.outcome ? `: ${decision.outcome}` : ''}` }),
+      el('span', { className: 'p-decision__answer', textContent: `→ ${decision.label}${decision.plu ? ` (PLU ${decision.plu.split(/\s+/).join(', ')})` : ''}${decision.outcome ? `: ${decision.outcome}` : ''}` }),
       el('span', { className: 'wa-meta', textContent: [decision.step, decision.by, formatTime(decision.at)].filter(Boolean).join(' · ') }),
     ),
   );
@@ -2690,8 +2695,8 @@ $('stop-keep').addEventListener('click', () => $('stop-confirm').close());
 $('ask-replace').addEventListener('submit', (event) => {
   event.preventDefault();
   const plu = $('ask-plu').value.trim();
-  if (/^\d{1,12}$/.test(plu)) return sendAnswer({ action: 'replace', plu });
-  ask.error = 'Enter the PLU to use instead (digits only).';
+  if (ask.many ? /^\d{1,12}(?:[\s,]+\d{1,12})*$/.test(plu) : /^\d{1,12}$/.test(plu)) return sendAnswer({ action: 'replace', plu });
+  ask.error = ask.many ? 'Enter the PLUs to add (digits; separate several with spaces).' : 'Enter the PLU to use instead (digits only).';
   render();
 });
 $('ask-replace-back').addEventListener('click', () => {

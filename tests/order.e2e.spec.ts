@@ -12,7 +12,7 @@ import { LoginPage } from '../src/pages/LoginPage';
 import { OrderConfirmationPage } from '../src/pages/OrderConfirmationPage';
 import { PaymentPage } from '../src/pages/PaymentPage';
 import { ProductSearch } from '../src/pages/ProductSearch';
-import { ask, decided } from '../src/utils/ask';
+import { ask, decided, pluList } from '../src/utils/ask';
 import { StepError } from '../src/utils/errors';
 import { log } from '../src/utils/log';
 
@@ -87,7 +87,7 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
   // Bag: delivery method, free gift, contents. Products the method can't take (the bag page says
   // so): the person chooses another method, to leave them out, a replacement, or to stop. Any other
   // problem: retry, another method, or stop. Ends on the checkout page, or with a replacement to add.
-  type Cart = { kind: 'ready'; names: Record<string, string> } | { kind: 'replace'; plu: string; replacement: string };
+  type Cart = { kind: 'ready'; names: Record<string, string> } | { kind: 'replace'; plus: string[]; replacements: string[] };
   const validateCart = async (): Promise<Cart> => {
     for (;;) {
       let problem: { message: string; plus: string[] } | null = null;
@@ -123,7 +123,7 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
       const others = products.lines.filter((line) => !problem.plus.includes(line.plu)).length;
       const answer = await ask(methodEligibilityQuestion({ plus: problem.plus, method, message: problem.message, othersLeft: others, triedMethods }), { action: 'stop' }, decisions);
       if (answer.action === 'switch_method' && answer.method) useMethod(answer.method);
-      else if (answer.action === 'replace' && answer.plu) return { kind: 'replace', plu: problem.plus[0], replacement: answer.plu };
+      else if (answer.action === 'replace' && answer.plu) return { kind: 'replace', plus: problem.plus, replacements: pluList(answer.plu) };
       else if (answer.action === 'skip') {
         const leftOut = problem.plus;
         await retryOrAsk('Cart validation', decisions, () => products.leaveOut(leftOut));
@@ -139,7 +139,7 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
       const cart = await orderRun.step('Cart validation', validateCart);
       if (cart.kind === 'ready') return cart.names;
       await backToShop();
-      await orderRun.step('Add to bag', () => products.replace(cart.plu, cart.replacement));
+      await orderRun.step('Add to bag', () => products.replace(cart.plus, cart.replacements));
     }
   };
 
@@ -169,7 +169,11 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
     }
     await backToShop();
     if (next.kind === 'method') useMethod(next.method);
-    else await orderRun.step('Add to bag', () => products.replace(next.plu, next.replacement));
+    // Products the mode can't take, out of the order: Cart validation takes them out of the bag.
+    else if (next.kind === 'remove') {
+      products.drop(next.plus);
+      decided(decisions, `PLU ${next.plus.join(', ')} taken out of the order`);
+    } else await orderRun.step('Add to bag', () => products.replace(next.plus, next.replacements));
     namesByPlu = await cartToCheckout();
   }
   log(`In the order: ${plus(orderRun.data.ordered)}`);

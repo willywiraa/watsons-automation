@@ -8,7 +8,7 @@ import { eligibilityQuestion, errorQuestion, methodEligibilityQuestion, productQ
 import { BagPage } from '../src/pages/BagPage';
 import type { CheckoutPage } from '../src/pages/CheckoutPage';
 import { ProductSearch } from '../src/pages/ProductSearch';
-import { ask, type Answer, type Decision, type Question } from '../src/utils/ask';
+import { ask, pluList, type Answer, type Decision, type Question } from '../src/utils/ask';
 import { StepError } from '../src/utils/errors';
 
 // Offline checks of what an order run does when something needs the person's decision before
@@ -36,21 +36,23 @@ test.describe('the questions and their choices', () => {
     const question = eligibilityQuestion({ plus: ['17971', '21684'], mode: 'express', method: 'home_delivery', otherMode: 'standard', othersLeft: 11, triedMethods: [] });
     expect(question.message).toBe('Products 17971 and 21684 are not eligible for Express delivery with Home Delivery.');
     expect(question.step).toBe('Express Delivery Selection');
-    expect(labels(question)).toEqual(['Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Leave them out and continue', 'Stop automation']);
+    // Remove them (or add others instead) first: the user's request 2026-10-22.
+    expect(labels(question)).toEqual(['Remove them and continue', 'Remove them and add other PLUs', 'Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Stop automation']);
+    expect(question.options.find((option) => option.action === 'replace')?.many).toBe(true);
     // One product, nothing else to order, a method already tried, no other mode: only what is possible.
     const only = eligibilityQuestion({ plus: ['82074'], mode: 'standard', method: 'home_delivery', otherMode: null, othersLeft: 0, triedMethods: ['click_collect'] });
     expect(only.message).toBe('Product 82074 is not eligible for Standard delivery with Home Delivery.');
-    expect(labels(only)).toEqual(['Try Shell Station', 'Replace with another PLU', 'Stop automation']);
+    expect(labels(only)).toEqual(['Replace with another PLU', 'Try Shell Station', 'Stop automation']);
   });
 
   test('products the delivery method can’t take (the bag page): another method, leave out, replace, stop; staging’s words as details', () => {
     const said = 'Sorry, your order includes item(s) not available for Click & Collect service. Please review your shopping bag or try another delivery option.';
     const question = methodEligibilityQuestion({ plus: ['24264', '21684'], method: 'click_collect', message: said, othersLeft: 3, triedMethods: [] });
     expect(question).toMatchObject({ kind: 'not_eligible', step: 'Cart validation', plus: ['24264', '21684'], message: 'Products 24264 and 21684 are not eligible for Click & Collect.', detail: said });
-    expect(labels(question)).toEqual(['Try Home Delivery', 'Try Shell Station', 'Leave them out and continue', 'Stop automation']);
+    expect(labels(question)).toEqual(['Remove them and continue', 'Remove them and add other PLUs', 'Try Home Delivery', 'Try Shell Station', 'Stop automation']);
     const one = methodEligibilityQuestion({ plus: ['34626'], method: 'shell_station', message: '', othersLeft: 0, triedMethods: ['click_collect'] });
     expect(one.message).toBe('Product 34626 is not eligible for Shell Station.');
-    expect(labels(one)).toEqual(['Try Home Delivery', 'Replace with another PLU', 'Stop automation']);
+    expect(labels(one)).toEqual(['Replace with another PLU', 'Try Home Delivery', 'Stop automation']);
   });
 
   test('an unexpected error: retry, skip the product concerned, stop; with the reason', () => {
@@ -60,6 +62,12 @@ test.describe('the questions and their choices', () => {
     expect(question.detail).toBe('Adding unit 1 of 1 for PLU 5555 did not increase the bag count (still 1).');
     expect(labels(question)).toEqual(['Retry', 'Skip product 5555', 'Stop automation']);
     expect(labels(errorQuestion('Empty bag', new Error('boom')))).toEqual(['Retry', 'Stop automation']);
+  });
+
+  test('a list of PLUs: spaces or commas, each one once; anything else is no list (2026-10-22)', () => {
+    expect(pluList('45606, 21679 45606')).toEqual(['45606', '21679']);
+    expect(pluList('45606 abc')).toEqual([]);
+    expect(pluList('')).toEqual([]);
   });
 
   test('a replacement takes the old product’s place and quantity, or joins the same PLU', () => {
@@ -135,6 +143,15 @@ test.describe('asking the person', () => {
       expect(decisions).toEqual([expect.objectContaining({ step: 'Product Search', plus: ['39656'], action: 'replace', label: 'Replace with another PLU', plu: '45606' })]);
     });
 
+    test('several PLUs where the choice allows them, one where it doesn’t (2026-10-22)', async () => {
+      const decisions: Decision[] = [];
+      const question = eligibilityQuestion({ plus: ['17971', '82074'], mode: 'express', method: 'home_delivery', otherMode: null, othersLeft: 1, triedMethods: [] });
+      await Promise.all([ask(question, { action: 'stop' }, decisions), answerNext({ action: 'replace', plu: '45606,21679 45606' })]);
+      expect(decisions).toMatchObject([{ action: 'replace', label: 'Remove them and add other PLUs', plu: '45606 21679' }]);
+      const [single] = await Promise.all([ask(productQuestion('out_of_stock', '39656', 1), { action: 'stop' }, []).catch((error) => error), answerNext({ action: 'replace', plu: '45606 21679' })]);
+      expect(single).toBeInstanceOf(StepError);
+    });
+
     test('an answer that was not offered ends the run instead of guessing', async () => {
       const [result] = await Promise.all([ask(productQuestion('out_of_stock', '39656', 0), { action: 'stop' }, []).catch((error) => error), answerNext({ action: 'skip' })]);
       expect(result).toBeInstanceOf(StepError);
@@ -188,33 +205,34 @@ test.describe('delivery choice when products can’t go that way', () => {
         answerNext({ action: 'switch_mode', mode: 'standard' }),
       ]);
       expect(asked.message).toBe('Products 17971 and 21684 are not eligible for Express delivery with Home Delivery.');
-      expect(labels(asked)).toEqual(['Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Leave them out and continue', 'Stop automation']);
+      expect(labels(asked)).toEqual(['Remove them and continue', 'Remove them and add other PLUs', 'Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Stop automation']);
       expect(next).toEqual({ kind: 'mode', mode: 'standard' });
       expect(calls).toEqual(['look up express', 'look up standard']);
       expect(decisions).toMatchObject([{ action: 'switch_mode', plus: ['17971', '21684'] }]);
     });
 
-    test('"Leave them out and continue": the mode is selected and staging leaves them out', async () => {
+    test('"Remove it and continue": back to the bag to take it out; nothing is selected here (2026-10-22)', async () => {
       const calls: string[] = [];
       const [next] = await Promise.all([choose(fakeCheckout(['express', 'standard'], { express: ['17971'], standard: ['17971'] }, calls)), answerNext({ action: 'skip' })]);
-      expect(next).toMatchObject({ kind: 'ready', kept: [{ plu: '45274' }, { plu: '21684' }], excluded: [{ plu: '17971' }] });
-      expect(calls.at(-1)).toBe('select express');
+      expect(next).toEqual({ kind: 'remove', plus: ['17971'] });
+      expect(calls).toEqual(['look up express', 'look up standard']);
     });
 
     test('another method, or another PLU: back to the bag', async () => {
       const notFor = { express: ['17971'], standard: ['17971'] };
       const [method, asked] = await Promise.all([choose(fakeCheckout(['express', 'standard'], notFor, [])), answerNext({ action: 'switch_method', method: 'click_collect' })]);
       // Standard can't take it either: not offered.
-      expect(labels(asked)).toEqual(['Try Click & Collect', 'Try Shell Station', 'Leave it out and continue', 'Replace with another PLU', 'Stop automation']);
+      expect(labels(asked)).toEqual(['Remove it and continue', 'Replace with another PLU', 'Try Click & Collect', 'Try Shell Station', 'Stop automation']);
       expect(method).toEqual({ kind: 'method', method: 'click_collect' });
-      const [replace] = await Promise.all([choose(fakeCheckout(['express', 'standard'], notFor, [])), answerNext({ action: 'replace', plu: '45606' })]);
-      expect(replace).toEqual({ kind: 'replace', plu: '17971', replacement: '45606' });
+      // One PLU or several instead.
+      const [replace] = await Promise.all([choose(fakeCheckout(['express', 'standard'], notFor, [])), answerNext({ action: 'replace', plu: '45606, 21679' })]);
+      expect(replace).toEqual({ kind: 'replace', plus: ['17971'], replacements: ['45606', '21679'] });
     });
 
     test('the page offers only Standard: none can go Express, so nothing to leave out', async () => {
       const [next, asked] = await Promise.all([choose(fakeCheckout(['standard'], { express: [], standard: [] }, [])), answerNext({ action: 'switch_mode', mode: 'standard' })]);
       expect(asked.plus).toEqual(['45274', '17971', '21684']);
-      expect(labels(asked)).toEqual(['Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Stop automation']);
+      expect(labels(asked)).toEqual(['Remove them and add other PLUs', 'Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Stop automation']);
       expect(next).toEqual({ kind: 'mode', mode: 'standard' });
     });
 
@@ -222,7 +240,8 @@ test.describe('delivery choice when products can’t go that way', () => {
       const calls: string[] = [];
       const next = await choose(fakeCheckout(['express', 'standard'], { express: [], standard: [] }, calls));
       expect(next).toMatchObject({ kind: 'ready', excluded: [] });
-      expect(calls).toEqual(['look up express', 'look up express', 'select express']);
+      // The list is read once (2026-10-22), then the mode selected.
+      expect(calls).toEqual(['look up express', 'select express']);
     });
   });
 });
@@ -342,4 +361,16 @@ test('the bag: the products the delivery method can’t take, as staging marks t
   // Home Delivery: no such box, and "Next" can be clicked.
   await page.setContent(`${item('45274')}${item('24264')}<button class="next-btn"><i></i> Next</button>`);
   expect(await bag.methodProblem()).toBeNull();
+});
+
+test('the bag: a free-gift area showing "0/0 selected" has nothing to remove (seen 2026-10-22 with Click & Collect)', async ({ page }) => {
+  // As staging drew it: the only gift is "Fully redeemed", so none is in the bag.
+  await page.setContent(`
+    <div class="free-gift-widget-wrapper"><div class="title-group"><div class="title"><span> 0 Free Gift(s) to select </span></div></div>
+      <button class="free-gift-counter-container"><div class="free-gift-counter"> 0/0 selected </div><i class="icon-arrow-down"></i></button>
+      <div class="free-gift-container" style="height: 0px;"><div class="free-gift-wrapper"><wtc-free-gift-item><button class="free-gift oos" tabindex="-1">
+        <div class="gift-info"><p class="name">HOME DELIVERY CHARGES</p><p class="quantity">1</p><p class="oos"> Fully redeemed </p></div>
+      </button></wtc-free-gift-item></div></div>
+    </div>`);
+  expect(await new BagPage(page).removeFreeGiftIfPresent()).toBeNull();
 });

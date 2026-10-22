@@ -705,7 +705,7 @@ test.describe('launcher window', () => {
     await startOrder(page, '10117\n4444');
     const ask = page.locator('#ask');
     await expect(ask).toContainText('Product 4444 is not eligible for Express delivery with Click & Collect.');
-    await expect(ask.getByRole('button')).toHaveText(['Use Standard instead', 'Try Home Delivery', 'Try Shell Station', 'Leave it out and continue', 'Replace with another PLU', 'Stop automation']);
+    await expect(ask.getByRole('button')).toHaveText(['Remove it and continue', 'Replace with another PLU', 'Use Standard instead', 'Try Home Delivery', 'Try Shell Station', 'Stop automation']);
     await expect(page.locator('#steps li.current .wa-step__name')).toHaveText('Express Delivery Selection');
     await ask.getByRole('button', { name: 'Use Standard instead' }).click();
     await expect(page.locator('#run-details')).toContainText('Standard');
@@ -715,6 +715,40 @@ test.describe('launcher window', () => {
     const [row] = launcher.readHistory(root);
     expect(row.delivery).toMatchObject({ method: 'click_collect', mode: 'standard' });
     expect(row.decisions).toMatchObject([{ action: 'switch_mode', label: 'Use Standard instead', outcome: 'Delivery mode: Standard' }]);
+  });
+
+  test('a product the delivery can’t take is removed from the bag, and the run goes on with the others (2026-10-22)', async ({ page }) => {
+    await startOrder(page, '10117\n4444');
+    await page.locator('#ask').getByRole('button', { name: 'Remove it and continue' }).click();
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#result')).toContainText('4444×1Removed: delivery not possible');
+    await expect(page.locator('#result')).toContainText('1 of 2 ordered');
+    // Back to the bag (Cart validation takes it out), then the checkout page again.
+    expect(readFileSync(join(runFolder(), 'launcher-log.txt'), 'utf8')).toMatch(/Step: Express Delivery Selection[\s\S]*Remove it and continue[\s\S]*Step: Cart validation[\s\S]*Step: Express Delivery Selection/);
+    expect(launcher.readHistory(root)[0].decisions).toMatchObject([{ action: 'skip', plus: ['4444'], outcome: 'PLU 4444 taken out of the order' }]);
+  });
+
+  test('a product the delivery can’t take can be replaced by several PLUs (2026-10-22)', async ({ page }) => {
+    await startOrder(page, '10117\n4444 2');
+    const ask = page.locator('#ask');
+    await ask.getByRole('button', { name: 'Replace with another PLU' }).click();
+    await expect(ask.getByLabel('PLUs to add (separate several with spaces)')).toBeVisible();
+    await ask.getByLabel('PLUs to add (separate several with spaces)').fill('45606 abc');
+    await ask.getByRole('button', { name: 'Add these PLUs' }).click();
+    await expect(ask).toContainText('Enter the PLUs to add (digits; separate several with spaces).');
+    // The launcher checks it too: a list of digits, not the product itself.
+    const { id } = JSON.parse(readFileSync(join(runFolder(), 'ask.json'), 'utf8'));
+    const key = new URL(app.url).searchParams.get('token')!;
+    expect(await postJson(app.url, '/api/answer', { id, action: 'replace', plu: '45606 4444' }, key)).toMatchObject({ status: 409, body: { error: 'Enter a different PLU.' } });
+    await ask.getByLabel('PLUs to add (separate several with spaces)').fill('45606, 21679');
+    await ask.getByRole('button', { name: 'Add these PLUs' }).click();
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#result')).toContainText('4444×2Replaced by PLU 45606, 21679');
+    await expect(page.locator('#result')).toContainText('45606×2Ordered');
+    await expect(page.locator('#result')).toContainText('21679×2Ordered');
+    await expect(page.locator('#result')).toContainText('→ Replace with another PLU (PLU 45606, 21679): PLU 4444 removed; PLU 45606, 21679 added instead');
   });
 
   test('another delivery method can be tried; the run goes back to the bag (2026-10-22)', async ({ page }) => {

@@ -329,6 +329,12 @@ export class BagPage {
       return null;
     }
     const counterText = (await giftCounter.first().innerText()).trim();
+    // "0/0 selected": the free-gift area shows, but no gift is in the bag (seen 2026-10-22 with
+    // Click & Collect: its only gift, "HOME DELIVERY CHARGES", was "Fully redeemed"). Nothing to remove.
+    if (/^0\s*\//.test(counterText)) {
+      log(`Free-gift area shows "${counterText}": no free gift in the bag`);
+      return null;
+    }
     log(`Free gift detected ("${counterText}"); removing it`);
     const fail = (reason: string, error?: unknown) =>
       new StepError('FREE_GIFT_REMOVAL_FAILED', 'Free gift', reason, [

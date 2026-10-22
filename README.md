@@ -156,13 +156,18 @@ needed"). It shows only the choices that make sense then:
 | Out of stock (Product Search) | "Product 39656 is out of stock. What would you like to do?" | Skip product and continue · Replace with another PLU · Stop automation |
 | Not found (Product Search) | "Product 12345 was not found on staging. …" | the same |
 | Staging won't add it (Add to bag): its "not available for checkout" pop-up, or its "add to bag" only opens the product's page | "Product 57893 can't be added to the bag. …" | the same |
-| The delivery mode can't take some products (checkout page) | "Products 17971 and 21684 are not eligible for Express delivery with Home Delivery." | Use Standard instead (when Standard takes them) · Try another delivery method · Leave them out and continue · Replace with another PLU (one product) · Stop automation |
-| The delivery method can't take some products (bag page) | "Products 45614 and 24264 are not eligible for Click & Collect." | Try another delivery method · Leave them out and continue · Replace with another PLU (one product) · Stop automation |
+| The delivery mode can't take some products (checkout page) | "Products 17971 and 21684 are not eligible for Express delivery with Home Delivery." | Remove them and continue · Remove them and add other PLUs (one product: Replace with another PLU) · Use Standard instead (when Standard takes them) · Try another delivery method · Stop automation |
+| The delivery method can't take some products (bag page) | "Products 45614 and 24264 are not eligible for Click & Collect." | Remove them and continue · Remove them and add other PLUs (one product: Replace with another PLU) · Try another delivery method · Stop automation |
 | Anything else before Checkout | "Something went wrong at Add to bag (PLU 5555). How would you like to proceed?", with the reason | Retry · Skip that product (when there is one) · Try another delivery method (at the bag) · Stop automation |
 
 - **Skip** is offered only when other products are left to order.
 - **Replace** asks for the PLU to use instead. The new product is checked like the others: if it
   is out of stock too, the run asks again.
+- **Remove … and continue** (products a delivery can't take, since 2026-10-22) takes them out of
+  the bag, a "Buy 1 Get 1 Free" line with them, and the run goes on with the others. **Remove them
+  and add other PLUs** (or **Replace with another PLU** for one product) takes several PLUs,
+  separated by spaces; each is checked and added instead. One product replaced passes its quantity
+  on; several: one each.
 - **Retry** first reads the bag again, so nothing is added twice.
 - **Stop automation** stops the run as **Stop** does.
 - After your choice the run goes on from where it paused. Another delivery method goes back to
@@ -249,13 +254,20 @@ yet. Home Delivery works with both modes.
 Station, the bag page lists them in a box above the others ("Sorry, your order includes item(s)
 not available for Click & Collect service…"; Shell Station: "…not applicable for Click and
 Collect, please select Home Delivery") with **Buy Next Time**, and **Next** can't be clicked.
-The test reads that list (`BagPage.methodProblem`). A run from the launcher window asks: another
-method, leave them out (they are removed from the bag), replace, or stop. From the command line
-it stops with `DELIVERY_METHOD_NOT_AVAILABLE`, naming them.
+The test reads that list (`BagPage.methodProblem`). A run from the launcher window asks: remove
+them, remove them and add other PLUs, another method, or stop. From the command line it stops
+with `DELIVERY_METHOD_NOT_AVAILABLE`, naming them.
 
 **Free items** (seen 2026-10-22): with "Buy 1 Get 1 Free" (e.g. PLU 17971) staging adds the free
 unit by itself, as its own bag line marked FREE without a quantity box. The bag check leaves it
 out of the comparison and logs it; it comes with the order.
+
+**Free gifts** (seen 2026-10-22 with Click & Collect and 10 products): the bag shows a free-gift
+area ("0 Free Gift(s) to select", a **0/0 selected** counter) and, opened, "For Express orders,
+online free gift/s are not applicable. Please remove them if you would still like to go for
+Express delivery." With **0** selected no gift is in the bag (its only gift, "HOME DELIVERY
+CHARGES", was "Fully redeemed"), so there is nothing to remove and the run goes on; before, it
+failed with `FREE_GIFT_REMOVAL_FAILED`. A selected gift is removed, as before.
 
 To add another mode: give it a step in `src/flows/delivery-modes.ts`, then add it to `MODES` in
 `launcher/launcher.cjs`. The window, its checks, the order file and the progress steps follow

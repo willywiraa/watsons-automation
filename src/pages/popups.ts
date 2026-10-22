@@ -28,7 +28,9 @@ export async function closeCookieNoticeIfShown(page: Page): Promise<void> {
 export async function closePromoPopupWhenShown(page: Page): Promise<void> {
   const popup = page.locator('.mp-popup-banners.active');
   await page.addLocatorHandler(popup, async () => {
-    await popup.locator('.icon-close').first().click();
+    // force: this click must not wait for the pop-up handler itself (seen 2026-10-22: it did, until
+    // it timed out after 30 seconds, and the run failed).
+    await popup.locator('.icon-close').first().click({ force: true, timeout: 10_000 });
     log('Promotion pop-up closed');
   });
 }
@@ -77,8 +79,9 @@ export async function closeChatPanelIfShown(page: Page): Promise<void> {
   const close = page.getByRole('img', { name: 'icon-close-chat' }).filter({ visible: true });
   if ((await close.count()) !== 1) return;
   // The panel slides in, and can hide again by itself (seen 2026-10-22: the icon was moving, then
-  // hidden, and one long click failed an add): short clicks, done once it has gone.
-  for (let attempt = 1; attempt <= 3 && (await close.count()) > 0; attempt++) await close.click({ timeout: 5_000 }).catch(() => {});
+  // hidden, and one long click failed an add): shorter clicks, done once it has gone. Not too short:
+  // the promotion pop-up's handler may run first, within the click's time.
+  for (let attempt = 1; attempt <= 3 && (await close.count()) > 0; attempt++) await close.click({ timeout: 10_000 }).catch(() => {});
   await expect(close).toHaveCount(0);
   log('Chat panel closed');
 }
