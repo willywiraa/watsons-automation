@@ -430,7 +430,9 @@ test.describe('launcher window', () => {
     await expect(page.locator('#stop')).toBeHidden();
     await expect(page.locator('#result .order-number')).toHaveText('12345678');
     await expect(page.locator('#result .verdict')).toHaveText('Completed');
-    await expect(page.locator('#log')).toContainText('--headed place=yes');
+    // The browser runs hidden: Live browser shows it, no separate Edge window (user's request 2026-10-22).
+    await expect(page.locator('#log')).toContainText('order.e2e place=yes');
+    await expect(page.locator('#log')).not.toContainText('--headed');
     await expect(page.locator('#steps li.done')).toHaveCount(14);
     await expect(page.locator('#result')).toContainText('Placed and approved in the backoffice. The order is now ORDER_EXTRACTED.');
   });
@@ -626,7 +628,7 @@ test.describe('launcher window', () => {
     await expect(page.locator('#result')).toContainText('Approved in the backoffice: Approve Order was clicked once. The order is now ORDER_EXTRACTED.');
     await expect(page.locator('#steps li.done')).toHaveCount(4);
     // Only the approve test runs: no order switch, no order file.
-    await expect(page.locator('#log')).toContainText('args=test --project=approve approve.e2e --headed place=undefined');
+    await expect(page.locator('#log')).toContainText('args=test --project=approve approve.e2e place=undefined');
     await expect(page.locator('#log')).toContainText('approve=07091012');
     await expect(page.locator('#log')).toContainText('approves existing order WTCSG07091012 in the STAGING backoffice (no new order)');
   });
@@ -663,6 +665,9 @@ test.describe('launcher window', () => {
     await expect(rows.nth(3)).toContainText('1 left out (not eligible)');
     await expect(rows.nth(3)).toContainText('Completed');
     await expect(rows.nth(3)).toContainText('Test Operator');
+
+    // Logs / History has no "Reports folder" (2026-10-22); each run's evidence is in its details.
+    await expect(page.getByRole('button', { name: 'Reports folder' })).toHaveCount(0);
 
     // Search and filters.
     await page.getByLabel('Search runs').fill('wtcsg00000404');

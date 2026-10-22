@@ -50,8 +50,9 @@ const steps = approving
 const approvesNewOrder = placeOrder && Boolean(process.env.WATSONS_BACKOFFICE_USERNAME);
 if (placeOrder) steps.push('Checkout', 'Pay', 'OTP', 'Order confirmation');
 if (approvesNewOrder) steps.push('Backoffice login', 'Find order in backoffice', 'Approve order', 'Order extracted');
-// Like the real tests with the browser shown: at the end, they wait for the window to close.
-const holdsLastPage = (placeOrder || approving) && process.argv.includes('--headed');
+// Like the real tests: with the browser shown (--headed), or when asked to (WATSONS_HOLD_LAST_PAGE:
+// the live view shows it), they keep the last page open at the end until the browser is closed.
+const holdsLastPage = (placeOrder || approving) && (process.argv.includes('--headed') || process.env.WATSONS_HOLD_LAST_PAGE === 'yes');
 
 // PLU 555: a real headless Edge with the live view's DevTools port, opened right away.
 const liveBrowser =
@@ -152,9 +153,8 @@ function next() {
     else if (approving) console.log(`[12:00:00] [PASS] No change needed. Order number: ${orderNumber} (backoffice: already ORDER_EXTRACTED)`);
     else if (approvesNewOrder) console.log('[12:00:00] [PASS] Order test completed successfully. Order number: 12345678 (backoffice: ORDER_EXTRACTED)');
     else console.log('[12:00:00] [PASS] Order placed (not approved yet: no backoffice account for this run). Order number: 12345678');
-    // The live view (PLU 555): the page stays open until the browser is closed (the hosted server
-    // asks for that; with the browser shown, the tests always do it).
-    if (liveBrowser && (process.env.WATSONS_HOLD_LAST_PAGE === 'yes' || holdsLastPage)) {
+    // The live view (PLU 555): the page stays open until the browser is closed.
+    if (liveBrowser && holdsLastPage) {
       console.log('[12:00:00] [INFO] The order confirmation page stays open. Close the browser to finish (it closes by itself after 5 minutes).');
       liveBrowser
         .then(({ page }) => page.waitForEvent('close', { timeout: 60_000 }))

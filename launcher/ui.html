@@ -765,7 +765,6 @@ dialog::backdrop{background:var(--scrim)}
       <div class="p-hhead__t"><h1 class="p-hhead__title">Logs / History</h1><p class="p-hhead__sum" id="history-summary">Loading…</p></div>
       <div class="p-hhead__acts">
         <button type="button" class="wa-btn wa-btn--ghost" id="history-refresh"><span data-icon="refresh-cw"></span>Refresh</button>
-        <button type="button" class="wa-btn wa-btn--ghost" id="history-folder"><span data-icon="folder-open"></span>Reports folder</button>
         <button type="button" class="wa-btn wa-btn--secondary" id="history-export"><span data-icon="download"></span>Export CSV</button>
       </div>
     </div>
@@ -785,7 +784,7 @@ dialog::backdrop{background:var(--scrim)}
       <div class="p-lfoot" id="history-foot">
         <span class="wa-meta" id="history-shown"></span>
         <button type="button" class="wa-btn wa-btn--secondary wa-btn--sm" id="history-more" hidden>Load 100 more</button>
-        <span class="wa-meta" id="history-note">Each run keeps its evidence in reports\&lt;date_time&gt;: screenshots, log, Playwright report and, for failures, error-report.txt. The last 500 runs are listed.</span>
+        <span class="wa-meta" id="history-note">Each run keeps its evidence: screenshots, log, Playwright report and, for failures, error-report.txt. Click a run for its details. The last 500 runs are listed.</span>
       </div>
     </div>
   </section>
@@ -1158,7 +1157,7 @@ function runNote(kind) {
   if (kind === 'approve') {
     return `Clicks Approve Order once in the STAGING backoffice${serverMode ? ', with your backoffice account' : ''}. Never creates an order. You confirm first.`;
   }
-  const where = serverMode ? ' It runs on the server: watch it in Live browser.' : '';
+  const where = serverMode ? ' It runs on the server: watch it in Live browser.' : liveAvailable() ? ' Watch it in Live browser.' : '';
   return approvesNewOrders()
     ? `Places a STAGING order with the test card, then approves it in the backoffice.${where} You confirm first.`
     : `Places a STAGING order with the test card and stops at "Thank you for your order": with no backoffice account, it waits for approval.${where} You confirm first.`;
@@ -1344,12 +1343,8 @@ function runStatus() {
     run.automation === 'approve'
       ? `WTCSG${run.orderNumber}`
       : [plural(run.products?.length ?? 0, 'product'), methodLabel(run.deliveryMethod), modeLabel(run.mode)].join(' · ');
-  // The browser stays open, in Live browser, until Close browser (2026-10-14); on this PC, also until its window is closed.
-  const ending = serverMode
-    ? ' Click Close browser in Live browser when you’re done.'
-    : liveAvailable()
-      ? ' Click Close browser in Live browser, or close the Edge window, when you’re done.'
-      : null;
+  // The last page stays open in Live browser until Close browser (2026-10-14; on this PC since 2026-10-22).
+  const ending = liveAvailable() ? ' Click Close browser in Live browser when you’re done.' : null;
   if (run.passed === 'order_placed_unapproved') {
     return {
       tone: 'warning',
@@ -2502,7 +2497,11 @@ async function openConfirm() {
     const paid = approvesNewOrders()
       ? 'The order is paid with the staging test payment and approved in the staging backoffice.'
       : 'The order is paid with the staging test payment, stops at "Thank you for your order", and waits for someone with a backoffice account to approve it.';
-    $('confirm-note').textContent = serverMode ? `${paid} It runs on the server: watch and control it in Live browser, or close this page and look in Logs / History later.` : paid;
+    $('confirm-note').textContent = serverMode
+      ? `${paid} It runs on the server: watch and control it in Live browser, or close this page and look in Logs / History later.`
+      : liveAvailable()
+        ? `${paid} Watch and control it in Live browser: no separate Edge window opens.`
+        : paid;
     $('confirm-run').textContent = info.automations.order.runLabel;
   }
   $('confirm').showModal();
@@ -2704,7 +2703,6 @@ $('history-more').addEventListener('click', () => {
   historyLimit += 100;
   renderHistory();
 });
-$('history-folder').addEventListener('click', () => api('/api/open', { what: 'reports' }));
 $('history-export').addEventListener('click', async () => {
   const runIds = shownHistory().map((row) => row.runId);
   if (!serverMode) {
@@ -2946,7 +2944,6 @@ async function startPage() {
   $('operator-item').hidden = true;
   $('user-menu-wrap').hidden = false;
   $('history-who-wrap').hidden = false;
-  $('history-folder').hidden = true;
   $('history-note').textContent = 'Everyone’s runs, with their evidence kept on the server: screenshots, logs, the Playwright report and, for failures, error-report.txt. The last 500 runs are listed.';
   $('viewer-open-label').textContent = 'Download';
   $('viewer-open-icon').innerHTML = svg('download');

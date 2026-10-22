@@ -415,7 +415,7 @@ function writeRecord(run, state) {
 /**
  * Runs one test at a time and follows it. The desktop launcher has one; the hosted server
  * (server/lib/runs.cjs) has one per signed-in person. Options (the defaults are the desktop's):
- *   headed            show the browser (true); the server runs headless
+ *   headed            show the browser (true), unless the live view shows it; the server runs headless
  *   reportsDir        evidence folder elsewhere, grouped by day (runFolderPath); null: <root>/reports
  *   isolate           own Playwright output and HTML report folders per run, so runs can go on in parallel
  *   rememberDefaults  save the last order for the next window (true)
@@ -438,10 +438,15 @@ class TestRunner {
     return this.current !== null;
   }
 
-  /** Starts a run checked by checkRunRequest(). livePort: the browser's DevTools port, for the live view. */
+  /**
+   * Starts a run checked by checkRunRequest(). livePort: the browser's DevTools port for the live
+   * view. The browser then runs hidden and shows in the window instead, with its last page kept
+   * open there until Close browser (user's request 2026-10-22: no separate Edge window).
+   */
   start(request, { livePort = null } = {}) {
     if (this.current) throw new Error('A test is already running.');
-    const { headed, reportsDir, isolate, rememberDefaults } = this.options;
+    const { reportsDir, isolate, rememberDefaults } = this.options;
+    const headed = this.options.headed && !livePort;
     const automation = has(AUTOMATIONS, request.automation) ? request.automation : 'order';
     const runId = newRunId(this.root, reportsDir);
     const folder = runFolderPath(this.root, runId, reportsDir);
@@ -461,7 +466,10 @@ class TestRunner {
       delete env[name];
     }
     if (reportsDir) env.WATSONS_REPORTS_DIR = reportsDir; // the test writes its evidence there too
-    if (livePort) env.WATSONS_LIVE_VIEW_PORT = String(livePort); // playwright.config.ts: the browser opens it
+    if (livePort) {
+      env.WATSONS_LIVE_VIEW_PORT = String(livePort); // playwright.config.ts: the browser opens it
+      env.WATSONS_HOLD_LAST_PAGE = 'yes'; // hidden, so the last page stays open in Live browser instead
+    }
     if (this.options.env) {
       for (const name of SECRET_SETTINGS) delete env[name];
       for (const [name, value] of Object.entries(this.options.env(request) ?? {})) if (value !== undefined && value !== null) env[name] = String(value);
@@ -483,7 +491,7 @@ class TestRunner {
 
     const { project, spec } = AUTOMATIONS[automation];
     const args = [playwrightCli(this.root), 'test', `--project=${project}`, spec];
-    // --headed: the browser is shown, and the test then leaves its last page open (desktop).
+    // --headed: the browser is shown (the desktop without the live view), and the test then leaves its last page open.
     if (headed) args.push('--headed');
     // Parallel runs (the hosted server): Playwright empties its output folder when a run starts, and
     // writes one HTML report folder, so each run gets its own; deleted when the run has ended.
@@ -1044,12 +1052,6 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
         return json(res, 200, { file: path.relative(root, file), rows: rows.length });
       }
       if (url.pathname === '/api/open') {
-        if (body.what === 'reports') {
-          const reports = path.join(root, 'reports');
-          fs.mkdirSync(reports, { recursive: true });
-          openFile(reports);
-          return json(res, 200, { opened: 'reports' });
-        }
         if (typeof body.runId !== 'string' || !RUN_ID.test(body.runId)) return json(res, 404, { error: 'No such run.' });
         const folder = path.join(root, 'reports', body.runId);
         if (!fs.existsSync(folder)) return json(res, 404, { error: 'The evidence folder no longer exists.' });
@@ -1082,7 +1084,15 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
       if (clients.size > 0) return;
       if (runner.running) {
         echo('[launcher] The window was closed; the test continues here. Its result will be in the reports folder.');
+        let closing = false;
         const wait = setInterval(() => {
+          // The window is back: it follows the run again.
+          if (clients.size > 0) return clearInterval(wait);
+          // A run that has passed keeps its last page open for the window, which is gone: end it.
+          if (runner.current?.passed && live && !closing) {
+            closing = true;
+            live.closeBrowser();
+          }
           if (!runner.running) {
             clearInterval(wait);
             onIdle?.();
