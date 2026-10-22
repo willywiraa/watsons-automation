@@ -30,6 +30,10 @@ try {
       if ($changed -match 'package(-lock)?\.json$') {
         Write-Host 'The packages changed: run "npm install" in C:\WatsonsAutomation\app and in C:\WatsonsAutomation\app\server, then run this script again.' -ForegroundColor Yellow
       }
+      # The IIS site's folder holds its own copy of server\iis\web.config.
+      if ($changed -match 'server/iis/web\.config$') {
+        Write-Host 'The IIS settings changed: copy C:\WatsonsAutomation\app\server\iis\web.config into the IIS site''s folder (e.g. C:\WatsonsAutomation\iis). IIS uses it right away.' -ForegroundColor Yellow
+      }
     }
   }
 } finally {

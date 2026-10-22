@@ -122,6 +122,11 @@ test.describe('launcher checks', () => {
     }
   });
 
+  test('the page asks for everything relative to its own address (so it also works under IIS’s /automation/)', () => {
+    const page = readFileSync(join(__dirname, '..', 'launcher', 'ui.html'), 'utf8');
+    expect(page).not.toMatch(/["'`]\/api\//);
+  });
+
   test('waits the same fixed 5 seconds between adds as the order test (user\'s decision 2026-10-21)', () => {
     expect(launcher.ADD_DELAY_SECONDS).toBe(ADD_DELAY_SECONDS);
     expect(ADD_DELAY_SECONDS).toBe(5);

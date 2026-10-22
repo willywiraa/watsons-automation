@@ -337,8 +337,9 @@ async function startServer(overrides = {}) {
     const image = evidence.typeOf(file).startsWith('image/');
     sendFile(res, file, image ? null : `${req.params.runId}-${path.basename(file)}`);
   });
-  // The run's Playwright report, viewed in the browser.
-  app.get('/api/runs/:runId/report', signedIn, (req, res) => res.redirect(`/api/runs/${encodeURIComponent(req.params.runId)}/report/index.html`));
+  // The run's Playwright report, viewed in the browser. Relative, so it also works under IIS's
+  // path (http://<VM>/automation/…, server/iis/web.config).
+  app.get('/api/runs/:runId/report', signedIn, (req, res) => res.redirect('report/index.html'));
   app.get('/api/runs/:runId/report/*file', signedIn, (req, res) => {
     const folder = runDir(req.params.runId);
     const file = folder ? evidence.fileInside(path.join(folder, 'html-report'), req.params.file) : null;

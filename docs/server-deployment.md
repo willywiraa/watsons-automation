@@ -117,7 +117,7 @@ backoffice account approves it (**Approve**).
 | `WATSONS_CONFIG_DIR` | `C:\CentralAuth\config` |
 | `WATSONS_DATA_DIR` | `D:\WatsonsAutomation\data` |
 | `WATSONS_EVIDENCE_DIR` | `D:\WatsonsAutomation\evidence` |
-| `WATSONS_PUBLIC_ORIGIN` | `https://watsons-automation.<company>`: the address people open (requests that change something must come from it) |
+| `WATSONS_PUBLIC_ORIGIN` | `https://watsons-automation.<company>`: the address people open, without its path (no `/automation`; requests that change something must come from it) |
 | `WATSONS_MAX_PARALLEL_RUNS` | `3` (more runs wait in line; raise it with the RAM) |
 | Optional | `WATSONS_SERVER_PORT` (3000), `WATSONS_RETENTION_DAYS` (180), `WATSONS_BACKUPS_KEPT` (14), `WATSONS_SESSION_IDLE_HOURS` (2), `WATSONS_SESSION_MAX_HOURS` (10), `WATSONS_LOGIN_LIMIT_PER_MINUTE` (5), `WATSONS_LOGIN_FAILURES_PER_USER` (10 per 15 minutes) |
 
@@ -151,7 +151,11 @@ it couldn't follow to the end shows as **Interrupted** in the history.
      `server\iis\web.config`.
    - **Binding:** HTTPS 443 with the company certificate and the DNS name.
    - **No HTTP binding:** or redirect HTTP to HTTPS.
-4. Open `https://watsons-automation.<company>/api/health`. The answer is
+   - **The app's path:** `/automation/` (since 2026-10-22), e.g. `http://<VM>/automation/`. The
+     two rules in `web.config` set it: the site's root and `/automation` lead there, and only
+     `/automation/…` goes to the service. The page asks for everything relative to its own
+     address, so another path only needs `automation` changed in both rules.
+4. Open `https://watsons-automation.<company>/automation/api/health`. The answer is
    `{"ok":true,"running":0,"waiting":0}`.
 
 ## 6. Check it (the PRD's test matrix)
@@ -161,7 +165,7 @@ it couldn't follow to the end shows as **Interrupted** in the history.
 | VPN gate | Open the address with the VPN off, then on | Off: the page doesn't load. On: the sign-in page |
 | Sign-in | Wrong password, then the right one | "Wrong user name or password.", then the app |
 | Sign-in limit | 6 wrong passwords within a minute | "Too many sign-in attempts…" |
-| Config not served | `https://…/users.json` | 404 |
+| Config not served | `https://…/automation/users.json` | 404 |
 | Removing a user | `users.cjs disable <name>` while they are signed in | Their next click asks them to sign in again |
 | Accounts | Enter the testing and backoffice accounts, then reload the page | Shown masked (`wi•••@…`); never in Logs / History or the evidence |
 | Remembered accounts | Sign out, then sign in again | Both accounts are set again ("remembered"); after **Forget**, the next sign-in no longer has that one |
@@ -231,6 +235,9 @@ it couldn't follow to the end shows as **Interrupted** in the history.
   - The page is read when the service starts, so after an update without a restart it stays the
     old page: the page and the rules always come from the same version.
   - When `package.json` changed, it says so: then run `npm install` in `app` and `app\server`.
+  - When `server\iis\web.config` changed, it says so: then copy it into the IIS site's folder
+    again (e.g. `copy /Y C:\WatsonsAutomation\app\server\iis\web.config C:\WatsonsAutomation\iis\`).
+    IIS uses it right away.
   - `.env`, `node_modules`, `reports` and the like are never in Git (`.gitignore`).
   - Sessions end, so people sign in again; their remembered accounts come back.
 

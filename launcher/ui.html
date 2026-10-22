@@ -934,21 +934,21 @@ const api = async (path, body = {}, method = 'POST') => {
   return { ok: response.ok, status: response.status, data };
 };
 const shotUrl = (runId, name) =>
-  `/api/screenshot?${serverMode ? '' : `token=${encodeURIComponent(token)}&`}run=${encodeURIComponent(runId)}&name=${encodeURIComponent(name)}`;
+  `api/screenshot?${serverMode ? '' : `token=${encodeURIComponent(token)}&`}run=${encodeURIComponent(runId)}&name=${encodeURIComponent(name)}`;
 
 // Evidence: the desktop launcher opens it with Windows; the hosted server lets the browser download or show it.
-const evidenceUrl = (row, file) => `/api/runs/${encodeURIComponent(row.runId)}/${file}`;
+const evidenceUrl = (row, file) => `api/runs/${encodeURIComponent(row.runId)}/${file}`;
 function openReport(row) {
   if (serverMode) window.open(evidenceUrl(row, 'report/index.html'), '_blank', 'noopener');
-  else api('/api/open', { runId: row.runId, what: 'report' });
+  else api('api/open', { runId: row.runId, what: 'report' });
 }
 function openEvidence(row) {
   if (serverMode) location.href = evidenceUrl(row, 'evidence.zip');
-  else api('/api/open', { runId: row.runId, what: 'folder' });
+  else api('api/open', { runId: row.runId, what: 'folder' });
 }
 function openErrorReport(row) {
   if (serverMode) location.href = evidenceUrl(row, 'files/error-report.txt');
-  else api('/api/open', { runId: row.runId, what: 'error-report' });
+  else api('api/open', { runId: row.runId, what: 'error-report' });
 }
 const evidenceLabel = serverMode ? 'Evidence (.zip)' : 'Evidence folder';
 const evidenceIcon = serverMode ? 'download' : 'folder-open';
@@ -1066,7 +1066,7 @@ let checkTimer;
 async function refreshProducts() {
   clearTimeout(checkTimer);
   const text = $('products').value;
-  const { data } = await api('/api/check', { products: text });
+  const { data } = await api('api/check', { products: text });
   parsed = { products: data.products ?? [], problems: data.problems ?? [], text };
   renderProducts();
   render();
@@ -1573,7 +1573,7 @@ function renderLive(view, queued) {
         textContent: tab.title || 'Tab',
         title: tab.title,
         attrs: { role: 'tab', 'aria-selected': String(tab.id === live.selected) },
-        onclick: () => sendLive('/api/live/select', { targetId: tab.id }),
+        onclick: () => sendLive('api/live/select', { targetId: tab.id }),
       }),
     ),
   );
@@ -1609,7 +1609,7 @@ function livePoint(event) {
 
 $('live-img').addEventListener('click', (event) => {
   $('live-screen').focus();
-  sendLive('/api/live/input', { kind: 'click', ...livePoint(event) });
+  sendLive('api/live/input', { kind: 'click', ...livePoint(event) });
 });
 let liveWheel = null;
 $('live-screen').addEventListener(
@@ -1623,7 +1623,7 @@ $('live-screen').addEventListener(
     liveWheel.timer = setTimeout(() => {
       const { timer, ...wheel } = liveWheel;
       liveWheel = null;
-      sendLive('/api/live/input', wheel);
+      sendLive('api/live/input', wheel);
     }, 120);
   },
   { passive: false },
@@ -1635,7 +1635,7 @@ let liveTypedTimer = null;
 function flushLiveTyped() {
   clearTimeout(liveTypedTimer);
   liveTypedTimer = null;
-  if (liveTyped) sendLive('/api/live/input', { kind: 'text', text: liveTyped });
+  if (liveTyped) sendLive('api/live/input', { kind: 'text', text: liveTyped });
   liveTyped = '';
 }
 $('live-screen').addEventListener('keydown', (event) => {
@@ -1648,7 +1648,7 @@ $('live-screen').addEventListener('keydown', (event) => {
   } else if (LIVE_KEYS.has(event.key)) {
     event.preventDefault();
     flushLiveTyped();
-    sendLive('/api/live/input', { kind: 'key', key: event.key });
+    sendLive('api/live/input', { kind: 'key', key: event.key });
   }
 });
 $('live-screen').addEventListener('paste', (event) => {
@@ -1656,7 +1656,7 @@ $('live-screen').addEventListener('paste', (event) => {
   if (!text || !live.hasFrame) return;
   event.preventDefault();
   flushLiveTyped();
-  sendLive('/api/live/input', { kind: 'text', text });
+  sendLive('api/live/input', { kind: 'text', text });
 });
 $('live-screen').addEventListener('focus', () => {
   if (!current) return;
@@ -1670,7 +1670,7 @@ $('live-screen').addEventListener('blur', () => {
 $('live-close').addEventListener('click', async () => {
   $('live-close').disabled = true;
   try {
-    const { ok, data } = await api('/api/live/close', { runId: live.runId });
+    const { ok, data } = await api('api/live/close', { runId: live.runId });
     toast(ok ? 'Closing the browser: the result follows in a moment.' : (data.error ?? 'Could not close the browser.'));
   } catch {
     toast('Could not reach the server. Try again in a moment.');
@@ -2044,7 +2044,7 @@ function pill(row) {
 }
 
 async function loadHistory() {
-  const { ok, data } = await api('/api/history').catch(() => ({ ok: false }));
+  const { ok, data } = await api('api/history').catch(() => ({ ok: false }));
   if (!ok) return;
   history = data.rows;
   renderHistory();
@@ -2378,7 +2378,7 @@ $('viewer-next').addEventListener('click', () => {
 $('viewer-open').addEventListener('click', () => {
   const name = viewing.row.screenshots[viewing.index];
   if (serverMode) location.href = `${shotUrl(viewing.row.runId, name)}&download=1`;
-  else api('/api/open', { runId: viewing.row.runId, what: 'screenshot', name });
+  else api('api/open', { runId: viewing.row.runId, what: 'screenshot', name });
 });
 $('viewer-close').addEventListener('click', () => $('viewer').close());
 $('viewer').addEventListener('keydown', (event) => {
@@ -2442,7 +2442,7 @@ function runAgain() {
 
 async function startRun(confirmed) {
   $('run-problems').hidden = true;
-  const { ok, data } = await api('/api/run', { ...formValues(), confirmed });
+  const { ok, data } = await api('api/run', { ...formValues(), confirmed });
   if (!ok) {
     showCompose();
     $('run-problems').hidden = false;
@@ -2518,7 +2518,7 @@ $('confirm-run').addEventListener('click', () => {
 $('stop').addEventListener('click', async () => {
   if (!current) {
     // Waiting in line on the server: Stop takes the run out of the line.
-    const { ok, data } = await api('/api/stop');
+    const { ok, data } = await api('api/stop');
     if (!ok) return toast(data.error ?? 'Could not leave the queue.');
     if (info) info.queuePosition = null;
     render();
@@ -2535,12 +2535,12 @@ $('stop').addEventListener('click', async () => {
     $('stop-keep').focus();
     return;
   }
-  await api('/api/stop');
+  await api('api/stop');
 });
 $('stop-keep').addEventListener('click', () => $('stop-confirm').close());
 $('stop-yes').addEventListener('click', async () => {
   $('stop-confirm').close();
-  await api('/api/stop');
+  await api('api/stop');
 });
 
 $('form').addEventListener('submit', (event) => event.preventDefault());
@@ -2706,11 +2706,11 @@ $('history-more').addEventListener('click', () => {
 $('history-export').addEventListener('click', async () => {
   const runIds = shownHistory().map((row) => row.runId);
   if (!serverMode) {
-    const { ok, data } = await api('/api/export', { runIds });
+    const { ok, data } = await api('api/export', { runIds });
     return toast(ok ? `Saved ${data.rows} run(s) to ${data.file} and opened it.` : `Could not export: ${data.error}`);
   }
   // The hosted server sends the file; the browser saves it (Downloads).
-  const response = await fetch('/api/export', {
+  const response = await fetch('api/export', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Launcher-Token': token },
     body: JSON.stringify({ runIds }),
@@ -2748,7 +2748,7 @@ const historyLater = () => {
 
 function connect() {
   events?.close();
-  events = new EventSource(serverMode ? '/api/events' : `/api/events?token=${encodeURIComponent(token)}`);
+  events = new EventSource(serverMode ? 'api/events' : `api/events?token=${encodeURIComponent(token)}`);
   events.addEventListener('state', (event) => {
     const state = JSON.parse(event.data);
     info = state;
@@ -2835,7 +2835,7 @@ function connect() {
     connected = false;
     render();
     if (serverMode) {
-      const answer = await fetch('/api/session', { cache: 'no-store' }).then((response) => response.json(), () => null);
+      const answer = await fetch('api/session', { cache: 'no-store' }).then((response) => response.json(), () => null);
       if (answer && !answer.signedIn) showLogin('Your session has ended. Please sign in again.');
     }
   });
@@ -2859,7 +2859,7 @@ $('login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('login-submit').disabled = true;
   try {
-    const response = await fetch('/api/login', {
+    const response = await fetch('api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: $('login-username').value, password: $('login-password').value }),
@@ -2889,12 +2889,12 @@ $('login-form').addEventListener('submit', async (event) => {
 });
 
 $('sign-out').addEventListener('click', async () => {
-  await api('/api/logout');
+  await api('api/logout');
   location.reload();
 });
 
 async function saveAccount(kind) {
-  const { ok, data } = await api(`/api/${kind}-account`, {
+  const { ok, data } = await api(`api/${kind}-account`, {
     username: $(`${kind}-username`).value,
     password: $(`${kind}-password`).value,
     remember: $(`${kind}-remember`).checked,
@@ -2928,7 +2928,7 @@ for (const kind of Object.keys(ACCOUNTS)) {
     render();
   });
   $(`${kind}-forget`).addEventListener('click', async () => {
-    const { ok } = await api(`/api/${kind}-account`, {}, 'DELETE');
+    const { ok } = await api(`api/${kind}-account`, {}, 'DELETE');
     if (!ok) return;
     const wasRemembered = accountInfo(kind).remembered;
     info[`${kind}Account`] = { set: false };
@@ -2949,7 +2949,7 @@ async function startPage() {
   $('viewer-open-icon').innerHTML = svg('download');
   $('login-logo').src = $('logo').src;
   try {
-    const session = await fetch('/api/session', { cache: 'no-store' }).then((response) => response.json());
+    const session = await fetch('api/session', { cache: 'no-store' }).then((response) => response.json());
     if (!session.signedIn) return showLogin();
     token = session.csrf;
     connect();

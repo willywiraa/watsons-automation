@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createServer, request } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { STAGING_HOST } from '../src/safety/staging-guard';
@@ -782,6 +784,50 @@ test.describe('hosted server', () => {
     await expect(page.locator('#testing-remembered')).toBeVisible();
     await expect(page.locator('#backoffice-remembered')).toBeVisible();
     await expect(run).toBeEnabled();
+  });
+
+  test('the page works under IIS’s path, http://<VM>/automation/ (2026-10-22)', async ({ page }) => {
+    // A stand-in for IIS (server/iis/web.config): /automation/… goes to the service without
+    // "/automation". Anything else asked for would mean the page left its path.
+    const service = new URL(setup.app.url);
+    const outside: string[] = [];
+    const iis = createServer((req, res) => {
+      const url = req.url ?? '/';
+      if (!url.startsWith('/automation/')) {
+        if (url !== '/favicon.ico') outside.push(url);
+        res.writeHead(404).end();
+        return;
+      }
+      const forward = request({ host: service.hostname, port: service.port, method: req.method, path: url.slice('/automation'.length), headers: req.headers }, (answer) => {
+        res.writeHead(answer.statusCode ?? 502, answer.headers);
+        answer.pipe(res);
+      });
+      forward.on('error', () => res.destroy());
+      req.pipe(forward);
+    });
+    await new Promise<void>((resolve) => iis.listen(0, '127.0.0.1', resolve));
+    try {
+      await page.goto(`http://127.0.0.1:${(iis.address() as AddressInfo).port}/automation/`);
+      await page.locator('#login-username').fill('alice');
+      await page.locator('#login-password').fill(PEOPLE.alice.password);
+      await page.getByRole('button', { name: 'Sign in' }).click();
+      await expect(page.locator('#user-button')).toContainText('Alice');
+      await page.locator('#testing-username').fill(PEOPLE.alice.testing.username);
+      await page.locator('#testing-password').fill(PEOPLE.alice.testing.password);
+      await page.locator('#testing-save').click();
+      await expect(page.locator('#testing-masked')).toHaveText('al•••@e•••.com');
+      await page.getByLabel('One PLU per line').fill('10117');
+      await page.locator('#run').click();
+      await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
+      await expect(page.locator('#result .verdict')).toHaveText('Awaiting approval', { timeout: 15_000 });
+      await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+      const thumbnail = page.locator('tr.hrow').first().locator('.p-ev__thumb img');
+      await expect.poll(() => thumbnail.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
+      expect(outside).toEqual([]);
+    } finally {
+      iis.closeAllConnections();
+      await new Promise((resolve) => iis.close(resolve));
+    }
   });
 });
 
