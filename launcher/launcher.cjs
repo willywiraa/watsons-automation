@@ -475,8 +475,8 @@ class TestRunner {
 
   /**
    * Starts a run checked by checkRunRequest(). livePort: the browser's DevTools port for the live
-   * view. The browser then runs hidden and shows in the window instead, with its last page kept
-   * open there until Close browser (user's request 2026-10-22: no separate Edge window).
+   * view. The browser then runs hidden and shows in the window instead (user's request
+   * 2026-10-22: no separate Edge window). The run ends as soon as the test is done (2026-10-23).
    */
   start(request, { livePort = null } = {}) {
     if (this.current) throw new Error('A test is already running.');
@@ -495,7 +495,6 @@ class TestRunner {
       'WATSONS_APPROVE_ORDER',
       'WATSONS_REPORTS_DIR',
       'WATSONS_HTML_REPORT_DIR',
-      'WATSONS_HOLD_LAST_PAGE',
       'WATSONS_LIVE_VIEW_PORT',
       'WATSONS_INTERACTIVE',
     ]) {
@@ -504,10 +503,7 @@ class TestRunner {
     if (reportsDir) env.WATSONS_REPORTS_DIR = reportsDir; // the test writes its evidence there too
     // Someone is watching the window: the test asks them when something needs a decision (src/utils/ask.ts).
     env.WATSONS_INTERACTIVE = 'yes';
-    if (livePort) {
-      env.WATSONS_LIVE_VIEW_PORT = String(livePort); // playwright.config.ts: the browser opens it
-      env.WATSONS_HOLD_LAST_PAGE = 'yes'; // hidden, so the last page stays open in Live browser instead
-    }
+    if (livePort) env.WATSONS_LIVE_VIEW_PORT = String(livePort); // playwright.config.ts: the browser opens it
     if (this.options.env) {
       for (const name of SECRET_SETTINGS) delete env[name];
       for (const [name, value] of Object.entries(this.options.env(request) ?? {})) if (value !== undefined && value !== null) env[name] = String(value);
@@ -558,8 +554,10 @@ class TestRunner {
       // From the risky steps on (RISKS), stopping can leave the order or its approval unknown.
       risky: false,
       // "order_placed", "order_placed_unapproved", "approved" or "no_change" once the test has passed
-      // (PASS_LINES); the run then ends when the browser window is closed.
+      // (PASS_LINES); the run ends right after (2026-10-23).
       passed: null,
+      // Passed at "Order Split": ORDER_EXTRACTED still to come (2026-10-23).
+      extractionPending: false,
       // Approve runs know it from the start; order runs once the test logs it.
       orderNumber: request.orderNumber ?? null,
       // Products the delivery mode left out, as the test logs them.
@@ -604,6 +602,8 @@ class TestRunner {
       if (orderNumber) {
         run.passed = outcome;
         run.orderNumber = orderNumber;
+        // Approved, but at "Order Split" with ORDER_EXTRACTED still to come (2026-10-23).
+        run.extractionPending = /extraction still pending/.test(line);
       }
     }
     // src/flows/delivery-modes.ts logs the products the mode can't deliver.
@@ -617,6 +617,7 @@ class TestRunner {
       step: run.step,
       risky: run.risky,
       passed: run.passed,
+      extractionPending: run.extractionPending,
       orderNumber: run.orderNumber,
       excluded: run.excluded,
       // A question's answer can change the delivery mode or method (answer()).
@@ -682,8 +683,8 @@ class TestRunner {
 
   stop() {
     const run = this.current;
-    // Once the test has passed, the run ends when the browser window is closed; stopping it then
-    // would only lose its result.
+    // Once the test has passed, the run is ending by itself; stopping it then would only lose its
+    // result.
     if (!run || run.cancelled || run.passed) return false;
     run.cancelled = true;
     this.addLine(run, '[launcher] Test cancelled by user. Stopping the test and its browser...');
@@ -1158,17 +1159,13 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
         }
         return json(res, 200, { runId: run.runId });
       }
-      // The live browser view of the run (2026-10-21): clicks, scrolling and typing; the tab shown;
-      // Close browser once the test has passed and keeps its last page open.
+      // The live browser view of the run (2026-10-21): clicks, scrolling and typing; the tab shown.
       if (url.pathname.startsWith('/api/live/')) {
         if (!live || body.runId !== live.runId) return json(res, 404, { error: 'That run has ended.' });
         let problem;
         if (url.pathname === '/api/live/input') problem = await live.input(body);
         else if (url.pathname === '/api/live/select') problem = await live.select(typeof body.targetId === 'string' ? body.targetId : '');
-        else if (url.pathname === '/api/live/close') {
-          if (!runner.current?.passed) return json(res, 409, { error: 'The test is still running: use Stop to end it.' });
-          problem = await live.closeBrowser();
-        } else return json(res, 404, { error: 'Not found.' });
+        else return json(res, 404, { error: 'Not found.' });
         return json(res, problem ? 409 : 200, problem ? { error: problem } : { ok: true });
       }
       if (url.pathname === '/api/stop') return json(res, 200, { stopped: runner.stop() });
@@ -1220,15 +1217,9 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
       if (clients.size > 0) return;
       if (runner.running) {
         echo('[launcher] The window was closed; the test continues here. Its result will be in the reports folder.');
-        let closing = false;
         const wait = setInterval(() => {
           // The window is back: it follows the run again.
           if (clients.size > 0) return clearInterval(wait);
-          // A run that has passed keeps its last page open for the window, which is gone: end it.
-          if (runner.current?.passed && live && !closing) {
-            closing = true;
-            live.closeBrowser();
-          }
           if (!runner.running) {
             clearInterval(wait);
             onIdle?.();

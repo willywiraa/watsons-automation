@@ -279,7 +279,7 @@ async function startServer(overrides = {}) {
     res.status(outcome.status).json(outcome.body);
   });
   // The live browser view of the person's own run (2026-10-14): clicks, scrolling and typing; the
-  // tab shown; Close browser once the test has passed and keeps its last page open.
+  // tab shown.
   app.post('/api/live/input', ...changes, async (req, res) => {
     const found = runs.liveOf(req.session, req.body?.runId);
     if (found.error) return res.status(found.status).json({ error: found.error });
@@ -291,10 +291,6 @@ async function startServer(overrides = {}) {
     if (found.error) return res.status(found.status).json({ error: found.error });
     const problem = await found.live.select(text(req.body?.targetId));
     res.status(problem ? 409 : 200).json(problem ? { error: problem } : { ok: true });
-  });
-  app.post('/api/live/close', ...changes, async (req, res) => {
-    const problem = await runs.closeBrowser(req.session, req.body?.runId, req.ip);
-    res.status(problem ? problem.status : 200).json(problem ? { error: problem.error } : { closed: true });
   });
 
   app.post('/api/stop', ...changes, (req, res) => {

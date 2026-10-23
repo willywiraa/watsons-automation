@@ -310,23 +310,19 @@ body{background:var(--canvas);min-width:1024px}
 .p-viewer__img img{display:block;max-width:100%;height:auto;margin:0 auto;background:#fff}
 .p-viewer__bar{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);flex-wrap:wrap}
 /* A run going on: status bar, then Live browser | Steps over Log. Fits the window; Steps and Log scroll on their own. */
-.p-main--run{display:flex;flex-direction:column;height:calc(100vh - var(--header-h))}
-.p-run{flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--card-gap)}
-.p-run > .p-run-grid{flex:1;min-height:0;grid-template-rows:minmax(0,1fr)}
-.p-run-side{display:flex;flex-direction:column;gap:var(--card-gap);min-width:0;min-height:0;max-height:100%}
+/* Since 2026-10-23 the page scrolls as a whole: the steps show in full (no scrolling of their own), the log keeps its box. */
+.p-run{display:flex;flex-direction:column;gap:var(--card-gap)}
+.p-run-side{display:flex;flex-direction:column;gap:var(--card-gap);min-width:0}
 .p-run-grid--desktop .p-run-side{display:contents}
 .p-run-side .wa-card{--card-pad:20px}
 .p-run-side .wa-card__head{padding-top:16px}
-.p-run-grid--desktop .wa-card{max-height:100%;min-height:0}
-.p-run-steps{flex:0 1 auto;min-height:152px}
-.p-run-steps .wa-card__body{min-height:0;grid-template-rows:minmax(0,1fr);padding-top:12px}
-.p-run-steps__scroll{min-height:0;overflow:auto;overscroll-behavior:contain}
+.p-run-steps .wa-card__body{padding-top:12px}
 .p-run-steps .wa-step{min-height:28px}
 .p-run-grid--desktop .p-run-steps .wa-step{min-height:40px}
-.p-run-log{flex:none}
 .p-run-log .wa-card__body{padding-top:12px}
-.p-run-grid--desktop .p-run-log .wa-card__body{flex:1;min-height:0;display:flex;flex-direction:column}
-.p-run-grid--desktop .p-run-log .p-term{flex:1;height:auto;min-height:calc(8 * var(--lh-log) + 22px)}
+.p-run-log .p-term{height:calc(22 * var(--lh-log) + 22px)}
+.p-run-grid--desktop .p-run-log .wa-card__body{flex:1;display:flex;flex-direction:column}
+.p-run-grid--desktop .p-run-log .p-term{flex:1;height:auto;min-height:calc(16 * var(--lh-log) + 22px)}
 .p-runbar .wa-card__body{padding:12px var(--card-pad)}
 .p-runbar__task{display:grid;gap:2px;min-width:0}
 .p-runbar__line{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 8px;font-size:var(--text-heading);line-height:var(--lh-heading);font-weight:var(--weight-semibold)}
@@ -338,7 +334,8 @@ body{background:var(--canvas);min-width:1024px}
 .p-term:has(> .p-term__scroll:focus-visible){box-shadow:0 0 0 2px var(--focus-ring)}
 .p-term__scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:6px 0;border-radius:4px;outline:none;scrollbar-width:thin;scrollbar-color:#646d75 transparent}
 .p-term__scroll:empty::before{content:"No log yet";display:block;padding:0 8px;color:var(--term-dim)}
-.p-term__line{display:flex;gap:12px;box-sizing:border-box;width:max-content;min-width:100%;padding:0 8px;white-space:pre}
+.p-term__line{display:flex;gap:12px;box-sizing:border-box;padding:0 8px;white-space:pre-wrap;overflow-wrap:anywhere}
+.p-term__line > span{min-width:0}
 .p-term__line time{flex:none;color:var(--term-dim)}
 .p-term__line.is-live{color:var(--term-live)}
 .p-term__line.is-err{color:var(--term-err)}
@@ -448,7 +445,6 @@ body{background:var(--canvas);min-width:1024px}
 /* Live browser */
 .p-live__sub{color:var(--text-2);font-size:var(--text-body);line-height:var(--lh-body);white-space:nowrap}
 .p-live__sub.is-on{color:var(--accent)}
-.p-live__kept{display:inline-flex;align-items:center;gap:12px;color:var(--text-2);font-size:var(--text-small);white-space:nowrap}
 .p-live__tabs{display:flex;flex-wrap:wrap;gap:8px}
 .p-live__tab{height:36px;max-width:320px;padding:0 16px;border:1px solid var(--border);border-radius:var(--radius-pill);background:var(--surface);color:var(--text);font:inherit;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background-color var(--dur-hover) var(--ease),border-color var(--dur-hover) var(--ease)}
 .p-live__tab:hover{background:var(--hover-row)}
@@ -476,6 +472,9 @@ body{background:var(--canvas);min-width:1024px}
 .tone-neutral{--_c:var(--text-3);--_t:var(--tint-neutral)}
 .tone-accent{--_c:var(--accent);--_t:var(--tint-accent)}
 .p-pill.tone-neutral{--_c:var(--text-2)}
+/* Completed, with what is still to come for the order (2026-10-23): awaiting approval, extraction pending. */
+.p-note{display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:var(--radius-panel);background:var(--tint-warning);color:var(--text);font-size:var(--text-body);line-height:var(--lh-body);max-width:var(--measure)}
+.p-note > [data-icon], .p-note > .wa-icon{color:var(--warning);margin-top:2px}
 /* The workflow (side navigation) and the delivery choices are real radio buttons, laid over their labels. */
 .p-wfitem input,.p-segopt input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:inherit}
 .p-wfitem:has(input:checked){background:var(--tint-accent);color:var(--accent);font-weight:var(--weight-semibold)}
@@ -756,7 +755,7 @@ dialog::backdrop{background:var(--scrim)}
           <section class="wa-card" id="live-card" aria-labelledby="live-title" hidden>
             <div class="wa-card__head">
               <div class="wa-card__titles"><h2 class="wa-card__title" id="live-title">Live browser</h2></div>
-              <div class="wa-card__actions"><span class="p-live__sub" id="live-sub">Your run’s browser on the server</span><span class="p-live__kept" id="live-kept" hidden>Closes by itself after 5 minutes<button type="button" class="wa-btn wa-btn--secondary wa-btn--sm" id="live-close">Close browser</button></span></div>
+              <div class="wa-card__actions"><span class="p-live__sub" id="live-sub">Your run’s browser on the server</span></div>
             </div>
             <div class="wa-card__body">
               <div class="p-live__tabs" id="live-tabs" role="tablist" aria-label="Browser tabs" hidden></div>
@@ -1382,25 +1381,25 @@ function runStatus() {
     run.automation === 'approve'
       ? `WTCSG${run.orderNumber}`
       : [plural(run.products?.length ?? 0, 'product'), methodLabel(run.deliveryMethod), modeLabel(run.mode)].join(' · ');
-  // The last page stays open in Live browser until Close browser (2026-10-14; on this PC since 2026-10-22).
-  const ending = liveAvailable() ? ' Click Close browser in Live browser when you’re done.' : null;
+  // Passed: the run ends by itself in a moment (2026-10-23: no keeping the last page open).
+  const extraction = run.extractionPending ? ': it is at Order Split, extraction still pending' : ' and extracted';
   if (run.passed === 'order_placed_unapproved') {
     return {
-      tone: 'warning',
-      icon: 'hourglass',
+      tone: 'success',
+      icon: 'check',
       title: 'Order placed, awaiting approval',
       details,
-      text: `Order ${run.orderNumber} is placed, not approved yet (no backoffice account).${ending ?? ' The browser shows the order confirmation: close the browser window to finish.'}`,
+      text: `Order ${run.orderNumber} is placed and awaiting approval by someone with a backoffice account. Finishing the run…`,
     };
   }
   if (run.passed === 'order_placed') {
-    return { tone: 'success', icon: 'check', title: 'Order placed', details, text: `Order ${run.orderNumber} placed and extracted.${ending ?? ' The browser shows the backoffice order and the confirmation page: close the browser window to finish.'}` };
+    return { tone: 'success', icon: 'check', title: 'Order placed', details, text: `Order ${run.orderNumber} placed${run.extractionPending ? ' and approved' : ', approved'}${extraction}. Finishing the run…` };
   }
   if (run.passed === 'approved') {
-    return { tone: 'success', icon: 'check', title: 'Order approved', details, text: `Order WTCSG${run.orderNumber} approved and extracted.${ending ?? ' The browser shows the backoffice order: close the browser window to finish.'}` };
+    return { tone: 'success', icon: 'check', title: 'Order approved', details, text: `Order WTCSG${run.orderNumber} approved${extraction}. Finishing the run…` };
   }
   if (run.passed === 'no_change') {
-    return { tone: 'neutral', icon: 'minus', title: 'No change', details, text: `Order WTCSG${run.orderNumber} was already extracted, so nothing was approved.${ending ?? ' Close the browser window to finish.'}` };
+    return { tone: 'neutral', icon: 'minus', title: 'No change', details, text: `Order WTCSG${run.orderNumber} was already approved, so nothing was approved now. Finishing the run…` };
   }
   if (run.cancelled) return { tone: 'warning', icon: 'minus', title: 'Stopping…', details, text: 'Stopping the test and its browser…' };
   const steps = stepsOf(run);
@@ -1561,8 +1560,7 @@ function renderSteps(view, queued) {
   if (view === 'compose') return;
   const run = view === 'run' ? current : last;
   const row = view === 'result' ? last.row : null;
-  // A question (2026-10-22) changes the room the list has: the current step is scrolled into view again.
-  const key = JSON.stringify([view, queued, run?.runId, run?.step, run?.mode, run?.question?.id, run?.passed, run?.cancelled, row, view === 'result' ? resultOpen.message : null, automation(), formValues().mode]);
+  const key = JSON.stringify([view, queued, run?.runId, run?.step, run?.mode, run?.passed, run?.cancelled, row, view === 'result' ? resultOpen.message : null, automation(), formValues().mode]);
   if (key === stepsKey) return;
   stepsKey = key;
   const steps = stepsOf(run ?? { automation: automation(), mode: formValues().mode });
@@ -1607,15 +1605,6 @@ function renderSteps(view, queued) {
   }
   $('steps').replaceChildren(...items);
   $('progress-hint').textContent = run ? `${Math.max(0, Math.min(doneUpTo + 1, steps.length))} of ${steps.length} done` : plural(steps.length, 'step');
-  // Keep the current step in view when the list has to scroll.
-  const now = $('steps').querySelector('li.current');
-  const box = $('run-steps-slot');
-  if (now && view === 'run') {
-    const outer = box.getBoundingClientRect();
-    const inner = now.getBoundingClientRect();
-    if (inner.top < outer.top) box.scrollTop -= outer.top - inner.top + 8;
-    else if (inner.bottom > outer.bottom) box.scrollTop += inner.bottom - outer.bottom + 8;
-  }
 }
 
 function stepItem({ name, state, seconds = null, detail = null, title = '' }) {
@@ -1676,11 +1665,9 @@ function renderLive(view, queued) {
         : [el('b', { textContent: 'Waiting for a free slot' }), el('span', { textContent: 'The browser opens when your run starts.' })]),
     );
   }
-  $('live-kept').hidden = !run?.passed;
-  $('live-sub').hidden = Boolean(run?.passed);
   $('live-note').hidden = !run;
   $('live-note').textContent = run?.passed
-    ? 'The test has passed. Look around if you like, then click Close browser to finish.'
+    ? 'The test has passed: the run is finishing.'
     : 'Clicks, scrolling and typing here go to the real browser. While the test runs, they can disturb it.';
   $('live-tabs').hidden = !run || live.tabs.length === 0;
   $('live-tabs').replaceChildren(
@@ -1785,17 +1772,6 @@ $('live-screen').addEventListener('blur', () => {
   $('live-sub').textContent = liveSubText();
   $('live-sub').classList.remove('is-on');
 });
-$('live-close').addEventListener('click', async () => {
-  $('live-close').disabled = true;
-  try {
-    const { ok, data } = await api('api/live/close', { runId: live.runId });
-    toast(ok ? 'Closing the browser: the result follows in a moment.' : (data.error ?? 'Could not close the browser.'));
-  } catch {
-    toast('Could not reach the server. Try again in a moment.');
-  } finally {
-    $('live-close').disabled = false;
-  }
-});
 
 // ---- Side navigation and header: orders awaiting approval, the server, your run --------------
 
@@ -1874,13 +1850,12 @@ function sentenceOf(row, step = null) {
   const at = step ?? row.error?.step ?? stoppedAt(row);
   if (row.status === 'completed') {
     if (row.automation === 'approve') return `Approved in the backoffice: Approve Order was clicked once.${final ? ` The order is now ${final}.` : ''}`;
+    // (An extraction still pending is said in the note under this sentence.)
     if (row.outcome === 'ready_to_check_out') return 'Stopped at the Checkout button: no order was placed (placing an order was switched off, e.g. npm run test:e2e).';
     if (row.approvedLater) return 'Placed without a backoffice account and approved later.';
     return `Placed and approved in the backoffice.${final ? ` The order is now ${final}.` : ''}`;
   }
-  if (row.status === 'awaiting_approval') {
-    return `Placed without a backoffice account, so it is not approved yet.${approvesNewOrders() ? '' : ' Someone with a backoffice account can approve it from Logs / History.'}`;
-  }
+  if (row.status === 'awaiting_approval') return 'Order placed. The run stopped at "Thank you for your order": there was no backoffice account to approve it.';
   if (row.status === 'no_change') return `WTCSG${row.orderNumber} was already ${final ?? 'extracted'}, so Approve Order was not clicked.`;
   if (row.status === 'stopped') {
     return `Stopped${at ? ` during ${at}` : ''}. ${row.warning ? riskText(row.automation) : row.automation === 'approve' ? 'Nothing was approved.' : 'No order was placed.'}`;
@@ -1889,7 +1864,22 @@ function sentenceOf(row, step = null) {
   return [row.automationLabel, row.delivery ? `${methodLabel(row.delivery.method)} · ${modeLabel(row.delivery.mode)}` : null, row.operator].filter(Boolean).join(' · ');
 }
 
+/** What is still to come for a completed run's order (2026-10-23), or null. */
+function pendingNote(row) {
+  if (row.status === 'awaiting_approval') {
+    return `Awaiting approval: someone with a backoffice account must approve order ${row.orderNumber}${approvesNewOrders() ? ' (Approve now)' : ' (Logs / History → Approve)'}. Until then it is not extracted.`;
+  }
+  if (row.backoffice?.extractionPending) {
+    return `Extraction still pending: WTCSG${row.orderNumber} is at ${row.backoffice.finalStatus ?? 'Order Split'}, not yet ORDER_EXTRACTED. Wait a few minutes, then check it in the backoffice.`;
+  }
+  return null;
+}
+const noteBox = (text) => el('p', { className: 'p-note', attrs: { role: 'status' } }, iconNode('circle-alert'), el('span', { textContent: text }));
+/** The status a run is shown with: an order awaiting approval is a completed run (2026-10-23). */
+const shownStatus = (row) => (row.status === 'awaiting_approval' ? 'completed' : row.status);
+
 function resultTitle(run, row, steps) {
+  if (row.status === 'awaiting_approval') return 'Completed';
   const at = haltedStep(run, row, steps);
   if (row.status === 'failed') return at ? `Failed at ${at}` : 'Failed';
   if (row.status === 'stopped') return at ? `Stopped at ${at}` : 'Stopped';
@@ -1969,10 +1959,11 @@ function resultHead(run, row, steps) {
   const sentence = row.status === 'failed' ? el('span', { className: 'wa-muted', textContent: sentenceOf(row) }) : sentenceOf(row, run.step);
   return el(
     'section',
-    { className: `wa-result tone-${TONES[row.status] ?? 'neutral'}`, attrs: { 'aria-label': 'Result', 'data-state': row.status } },
-    el('div', { className: 'wa-result__row' }, statusBadge(row.status, resultTitle(run, row, steps), 'title'), row.orderNumber ? null : el('span', { className: 'wa-result__facts', textContent: facts })),
+    { className: `wa-result tone-${TONES[shownStatus(row)] ?? 'neutral'}`, attrs: { 'aria-label': 'Result', 'data-state': row.status } },
+    el('div', { className: 'wa-result__row' }, statusBadge(shownStatus(row), resultTitle(run, row, steps), 'title'), row.orderNumber ? null : el('span', { className: 'wa-result__facts', textContent: facts })),
     row.orderNumber ? el('div', { className: 'wa-result__row' }, copyable(row.orderNumber, `Backoffice code WTCSG${row.orderNumber}`, 'display'), el('span', { className: 'wa-result__facts', textContent: facts })) : null,
     el('p', { className: 'wa-result__sentence' }, sentence),
+    pendingNote(row) ? noteBox(pendingNote(row)) : null,
     row.approvedLater ? el('span', { className: 'wa-muted p-small', textContent: approvedLaterText(row) }) : null,
     el('div', { className: 'wa-result__actions' }, ...resultActions(row)),
   );
@@ -2188,11 +2179,12 @@ function showLines(lines, replace) {
 // ---- Rendering: Logs / History ---------------------------------------------------------------
 
 function pill(row) {
+  const status = shownStatus(row);
   return el(
     'span',
-    { className: `p-pill tone-${TONES[row.status] ?? 'neutral'}`, attrs: { 'data-state': row.status } },
+    { className: `p-pill tone-${TONES[status] ?? 'neutral'}`, attrs: { 'data-state': row.status } },
     el('span', { className: 'p-pill__dot', attrs: { 'aria-hidden': 'true' } }),
-    el('span', { textContent: row.statusLabel }),
+    el('span', { textContent: status === row.status ? row.statusLabel : 'Completed' }),
   );
 }
 
@@ -2353,7 +2345,16 @@ const approveButton = (row) =>
 
 function statusCell(row) {
   const at = row.error?.step ?? stoppedAt(row);
-  return el('span', { className: 'p-lstatus' }, pill(row), at ? el('span', { className: 'p-l2__sub p-ell', textContent: `at ${at}` }) : null, approveButton(row));
+  // What is still to come for the order (2026-10-23).
+  const next = row.status === 'awaiting_approval' ? 'Awaiting approval' : row.backoffice?.extractionPending ? 'Extraction pending' : null;
+  return el(
+    'span',
+    { className: 'p-lstatus' },
+    pill(row),
+    at ? el('span', { className: 'p-l2__sub p-ell', textContent: `at ${at}` }) : null,
+    next ? el('span', { className: 'p-l2__sub p-warn', textContent: next }) : null,
+    approveButton(row),
+  );
 }
 
 function errorCell(row) {
@@ -2399,7 +2400,8 @@ const factsList = (pairs) =>
 function backofficeText(row) {
   if (!row.backoffice) return row.outcome === 'order_placed_unapproved' ? (row.approvedLater ? `Approved later by ${row.approvedLater.by}` : 'Not approved yet') : null;
   const status = row.backoffice.finalStatus ?? '?';
-  return `${status}${row.backoffice.approved ? ' (approved by this run)' : ' (was already extracted)'}`;
+  const pending = row.backoffice.extractionPending ? ', extraction pending' : '';
+  return `${status}${pending}${row.backoffice.approved ? ' (approved by this run)' : ' (approved before this run)'}`;
 }
 
 /** The expanded row: what happened, the run's facts, and its evidence. */
@@ -2422,6 +2424,7 @@ function runDetails(row) {
     }
   } else {
     what.push(el('p', { className: 'p-x__msg', textContent: sentenceOf(row) }));
+    if (pendingNote(row)) what.push(noteBox(pendingNote(row)));
   }
   if (row.approvedLater) what.push(el('div', { className: 'p-x__muted', textContent: approvedLaterText(row) }));
   if (row.evidenceState === 'deleted') what.push(el('div', { className: 'p-x__muted', textContent: 'Its screenshots and files were removed after the retention period; this summary stays.' }));
@@ -2956,6 +2959,7 @@ function connect() {
       step: data.step,
       risky: data.risky,
       passed: data.passed,
+      extractionPending: data.extractionPending ?? false,
       orderNumber: data.orderNumber,
       excluded: data.excluded,
       // The run's question to the person, and what they decided (2026-10-22).

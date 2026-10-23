@@ -222,7 +222,6 @@ test.describe('hosted server', () => {
       ['POST', '/api/testing-account'],
       ['POST', '/api/backoffice-account'],
       ['POST', '/api/live/input'],
-      ['POST', '/api/live/close'],
       ['GET', '/api/events'],
       ['GET', '/api/screenshot?run=2026-10-08_10-00-00&name=screenshot-1.png'],
       ['GET', '/api/runs/2026-10-08_10-00-00/files/log.txt'],
@@ -479,7 +478,7 @@ test.describe('hosted server', () => {
     expect(runLog(setup, runId)).toContain('[launcher] Alice chose: Skip product and continue');
   });
 
-  test('shows a run’s browser live to its owner only, passes clicks and typing on, and keeps the last page until Close browser', async () => {
+  test('shows a run’s browser live to its owner only, passes clicks and typing on; the run ends by itself once done', async () => {
     const alice = client(setup.app);
     const bob = client(setup.app);
     await alice.login('alice');
@@ -491,7 +490,6 @@ test.describe('hosted server', () => {
     const runId = (await alice.run({ ...ORDER, products: '555' })).data.runId as string;
     const live = () => (setup.app.runs.active.get(runId) as { live?: { lastFrame: unknown } } | undefined)?.live;
     await expect.poll(() => Boolean(live()?.lastFrame), { timeout: 20_000 }).toBe(true);
-    await expect.poll(() => runLog(setup, runId), { timeout: 15_000 }).toContain('[PASS] Order placed (not approved yet');
 
     // Only Alice controls it: a click on the page's button, then typing into its field.
     expect((await bob.call('POST', '/api/live/input', { runId, kind: 'click', x: 100, y: 50 })).status).toBe(403);
@@ -503,20 +501,22 @@ test.describe('hosted server', () => {
     await expect.poll(() => runLog(setup, runId)).toContain('fake page: clicked');
     await expect.poll(() => runLog(setup, runId)).toContain('fake page: typed hell');
 
-    // The test has passed, but its page stays open until Close browser.
-    expect(setup.app.runs.active.has(runId)).toBe(true);
-    expect((await bob.call('POST', '/api/live/close', { runId })).status).toBe(403);
-    expect((await alice.call('POST', '/api/live/close', { runId })).data).toEqual({ closed: true });
+    // Then the test passes and the run ends by itself: no Close browser (2026-10-23).
     await ended(setup, runId);
+    expect(runLog(setup, runId)).toContain('[PASS] Order placed (not approved yet');
     const row = ((await alice.history()).data.rows as { runId: string }[]).find((candidate) => candidate.runId === runId);
     expect(row).toMatchObject({ status: 'awaiting_approval' });
+    // Alice can start her next order straight away: nothing to close or cancel first.
+    const next = await alice.run({ ...ORDER, products: '10117' });
+    expect(next.status).toBe(200);
+    await ended(setup, next.data.runId as string);
 
     // The screen went to Alice's windows only.
     expect(await aliceLive).toContain('event: frame');
     expect(await bobLive).not.toContain('event: frame');
   });
 
-  test('the page: Live browser, Close browser, and Approve from Logs / History', async ({ page }) => {
+  test('the page: Live browser, the run ending by itself, and Approve from Logs / History', async ({ page }) => {
     await page.goto(setup.app.url);
     await page.locator('#login-username').fill('alice');
     await page.locator('#login-password').fill(PEOPLE.alice.password);
@@ -533,15 +533,15 @@ test.describe('hosted server', () => {
     // The run's browser shows in the page; a click on its button reaches the real page.
     const screen = page.locator('#live-img');
     await expect(screen).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator('#live-close')).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('#banner-title')).toHaveText('Order placed, awaiting approval');
+    await expect(page.getByRole('button', { name: 'Close browser' })).toHaveCount(0);
     const runId = [...setup.app.runs.active.keys()][0];
     const box = (await screen.boundingBox())!;
     await screen.click({ position: { x: box.width * (100 / 800), y: box.height * (50 / 450) } });
     await expect.poll(() => runLog(setup, runId)).toContain('fake page: clicked');
 
-    await page.locator('#live-close').click();
-    await expect(page.locator('#result .verdict')).toHaveText('Awaiting approval', { timeout: 15_000 });
+    // The run ends by itself: Completed, and the order awaits approval (2026-10-23).
+    await expect(page.locator('#result .verdict')).toHaveText('Completed', { timeout: 15_000 });
+    await expect(page.locator('#result .p-note')).toContainText('Awaiting approval: someone with a backoffice account must approve order 12345678');
     await expect(page.locator('#live-card')).toBeHidden();
     await expect(page.locator('#steps li.skipped')).toHaveCount(4); // the approval steps
 
@@ -841,7 +841,8 @@ test.describe('hosted server', () => {
       await page.getByLabel('One PLU per line').fill('10117');
       await page.locator('#run').click();
       await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
-      await expect(page.locator('#result .verdict')).toHaveText('Awaiting approval', { timeout: 15_000 });
+      // Without a backoffice account: Completed at once, the order awaiting approval (2026-10-23).
+      await expect(page.locator('#result .verdict')).toHaveText('Completed', { timeout: 15_000 });
       await page.getByRole('tab', { name: /Logs \/ History/ }).click();
       const thumbnail = page.locator('tr.hrow').first().locator('.p-ev__thumb img');
       await expect.poll(() => thumbnail.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);

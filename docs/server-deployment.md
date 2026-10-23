@@ -173,8 +173,8 @@ it couldn't follow to the end shows as **Interrupted** in the history.
 | Shared history | The other person opens Logs / History | Sees both runs, with screenshots |
 | A failure | A run with an unknown PLU | Failed, with its error report and screenshot |
 | Live browser | Run **Approve existing order** with `00000000` (nothing changes on staging), and watch **Live browser** | The backoffice pages appear as the run goes; a click or typing in the picture reaches the page; another signed-in person doesn't see it. It ends after about 3 minutes with "not in the backoffice's Orders list" |
-| The first real run | **Only with the owner's go-ahead:** one full order + approval | Completed with an order number (proves payment and backoffice work headless); the last pages stay in Live browser until **Close browser** |
-| An order without a backoffice account | **Only with the owner's go-ahead:** a person with no backoffice account entered places an order | Ends on "Thank you for your order" in Live browser; **Awaiting approval** in Logs / History. Someone with a backoffice account clicks **Approve in Backoffice** on it and runs it: the approval completes and the order shows **Completed**, "approved later by …" |
+| The first real run | **Only with the owner's go-ahead:** one full order + approval | Completed with an order number (proves payment and backoffice work headless); the run ends by itself, at Order Split at the latest |
+| An order without a backoffice account | **Only with the owner's go-ahead:** a person with no backoffice account entered places an order | Ends on "Thank you for your order" at once: **Completed**, with **Awaiting approval** under it in Logs / History. Someone with a backoffice account clicks **Approve in Backoffice** on it and runs it: the approval completes and the order shows **Completed**, "approved later by …" |
 
 ## 7. Running it
 
@@ -258,14 +258,11 @@ it couldn't follow to the end shows as **Interrupted** in the history.
     program on the VM itself could use that port too (see "Server admins").
   - The pictures are about 40–80 KB each, at most about 3 a second, and only while the page
     changes and its owner has it open.
-  - When the order is placed (or approved), the run has passed but its browser stays open until
-    the owner clicks **Close browser**, at most 5 minutes. Meanwhile that person can't start
-    another run; a service restart closes it.
-  - **Close browser** closes the run's tabs; the test then ends and closes the browser itself.
-    (Until 2026-10-14 it closed the whole browser, so the test's clean-up failed and runs that
-    had passed were saved as **Failed**. At its next start, the service corrects those from
-    their evidence: an order placed without a backoffice account then shows **Awaiting
-    approval**.)
+  - When the order is placed (or approved), the run ends by itself, and its owner can start the
+    next one straight away (since 2026-10-23; until then the browser stayed open until **Close
+    browser**, at most 5 minutes).
+  - Runs saved as **Failed** although they had passed (a **Close browser** problem until
+    2026-10-14) are corrected from their evidence at the service's next start.
   - A run counts by the test's own PASS line: something failing after it, while the browser is
     kept open, doesn't turn the run into a failure.
 - **Server admins:** while a run goes on, an administrator of the VM could read that run's

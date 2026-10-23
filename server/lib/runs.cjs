@@ -6,8 +6,8 @@
 // per testing account, at a time.
 //
 // Since 2026-10-14 (user's requests):
-// - The person watches and controls their run's browser in their page (LiveView), and the run
-//   keeps its last page open until they click Close browser (at most 5 minutes).
+// - The person watches and controls their run's browser in their page (LiveView). The run ends as
+//   soon as its test is done (2026-10-23; until then it kept its last page open until Close browser).
 // - The backoffice account is optional for a new order: without it the run stops at the order
 //   confirmation, and the order shows "Awaiting approval" until an approve run approves it.
 
@@ -136,11 +136,7 @@ class RunManager {
     if (!placing && !backoffice) problems.push('Enter your backoffice account first (under "Accounts").');
     if (problems.length > 0 || !checked.order) return { status: 400, body: { problems } };
     const own = this.activeOf(session.username);
-    if (own) {
-      const holding = own.state === 'running' && own.runner.current?.passed;
-      const problem = holding ? 'Your last run’s browser is still open: click Close browser first.' : 'You already have a run going on. Wait until it ends, or stop it.';
-      return { status: 409, body: { problems: [problem] } };
-    }
+    if (own) return { status: 409, body: { problems: ['You already have a run going on. Wait until it ends, or stop it.'] } };
     if (placing && this.accountInUse(account.fingerprint)) {
       return { status: 409, body: { problems: ['This testing account is in use by another run. Use another testing account, or wait until that run ends.'] } };
     }
@@ -180,7 +176,7 @@ class RunManager {
     const runner = this.runnerFor(entry.username, entry.displayName);
     const port = this.livePort();
     // This run's accounts go into the test's environment only (TestRunner option "env"). The
-    // browser opens a DevTools port for the live view and keeps its last page open at the end.
+    // browser opens a DevTools port for the live view.
     runner.options.env = () => ({
       WATSONS_STAGING_URL: this.config.stagingUrl,
       WATSONS_USERNAME: entry.account?.username,
@@ -188,7 +184,6 @@ class RunManager {
       WATSONS_BACKOFFICE_USERNAME: entry.backoffice?.username,
       WATSONS_BACKOFFICE_PASSWORD: entry.backoffice?.password,
       WATSONS_LIVE_VIEW_PORT: String(port),
-      WATSONS_HOLD_LAST_PAGE: 'yes',
     });
     let run;
     try {
@@ -348,17 +343,6 @@ class RunManager {
     return { live: entry.live, entry };
   }
 
-  /** Close browser: ends a run that keeps its last page open. Returns { status, error }, or null. */
-  async closeBrowser(session, runId, ip) {
-    const found = this.liveOf(session, runId);
-    if (found.error) return found;
-    if (!found.entry.runner.current?.passed) return { status: 409, error: 'The test is still running: use Stop to end it.' };
-    const error = await found.live.closeBrowser();
-    if (error) return { status: 409, error };
-    this.store.audit({ username: session.username, ip, action: 'live-browser-closed', runId });
-    return null;
-  }
-
   /**
    * Runs saved as failed although their test had passed: Close browser used to close the whole
    * browser, which made the test's clean-up fail afterwards (until 2026-10-14). Read again from
@@ -396,11 +380,8 @@ class RunManager {
   /** The service is stopping: stop the runs (their rows become "interrupted" at the next start). */
   shutdown() {
     this.queue.length = 0;
-    for (const entry of this.active.values()) {
-      // A run that has passed keeps its last page open: closing its browser ends it with its result.
-      if (entry.runner.current?.passed) entry.live?.closeBrowser();
-      else entry.runner.stop();
-    }
+    // A run that has passed is ending by itself, with its result.
+    for (const entry of this.active.values()) if (!entry.runner.current?.passed) entry.runner.stop();
   }
 }
 

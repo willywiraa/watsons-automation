@@ -125,16 +125,26 @@ On the left, the **workflow**; on the right, the **Ready** bar with the run butt
 While a test runs, the page shows what runs with the time so far and **Stop**, the **Live
 browser** (the run's browser, live: click, scroll and type into it, and switch its tabs; it runs
 hidden, with no Edge window of its own, as on the hosted version), the **Steps** (with the time
-each took) and the **Log**; on the Logs / History page, the header shows your run.
-A new order ends on the backoffice's Orders list showing the order with **Status
-ORDER_EXTRACTED** (the order's bar at the bottom keeps the status it had when it was opened: the
-backoffice doesn't update it), with the shop's "Thank you for your order!!" page in the first
-tab; without a backoffice account it ends on that page; an approval ends on the backoffice
-order. That last page stays open in Live browser until you click **Close browser** (or 5 minutes
-pass), and you can use it; the launcher already shows the order number. After you close it, the
-result shows **Completed** with
-the order number (**Copy** copies it) and the backoffice status, **Awaiting approval** (placed,
-not approved yet), **No change**, or **Failed at** a step with its error report (below); then
+each took) and the **Log**; on the Logs / History page, the header shows your run. The page
+scrolls as a whole: the steps show in full, and the log keeps its own box, its lines wrapped
+(since 2026-10-23).
+
+A run ends as soon as it is done (since 2026-10-23; before, its last page stayed open until
+**Close browser**, up to 5 minutes, and you couldn't start another run meanwhile):
+- A new order with a backoffice account ends once the order is **ORDER_EXTRACTED** in the
+  backoffice. Once it is **Order Split** it gets at most 1 more minute; if it isn't extracted by
+  then, the run still completes and says **extraction still pending**: wait a few minutes, then
+  check the order in the backoffice. (Before, it waited 10 minutes and then failed with
+  `ORDER_NOT_EXTRACTED`.)
+- Without a backoffice account it ends on "Thank you for your order" right away: **Completed**,
+  with a note that the order is **awaiting approval** until someone with a backoffice account
+  approves it (Logs / History → **Approve**).
+- An approval ends the same way as a new order. An order that is already at Order Split was
+  approved before: **No change**, and Approve Order isn't clicked.
+
+The result then shows **Completed** with
+the order number (**Copy** copies it), the backoffice status and what is still pending, if
+anything; **No change**, or **Failed at** a step with its error report (below); then
 the products, the evidence (screenshots, the report, the evidence folder), and the steps and
 log. **New order** (or **Edit order**) goes back to the form; **Run again** asks to run the same
 again. **Approve Order is clicked at most once**: if the result is unclear, the run stops with
@@ -282,8 +292,8 @@ on the server, headless, and everyone sees **one shared Logs / History**.
 | Topic | Hosted version |
 |---|---|
 | Sign-in | With an account the admin creates (`server/scripts/users.cjs`; bcrypt hashes in `users.json` on the server). |
-| Testing and backoffice accounts | Each person enters their own under **Accounts**, once: the staging shop account (to place orders) and the staging backoffice account (to approve them; approving an existing order needs only this one). The backoffice account is **optional for new orders**: without it, the order stops at "Thank you for your order" and shows **Awaiting approval** in Logs / History until someone with a backoffice account approves it there (**Approve**). The server **remembers them** for the person's next sign-in (unless they untick Remember), **sealed with a key made from their own portal password**, so only their sign-in opens them. They are used only for their runs, and never logged or shown to anyone else. |
-| Live browser | While a run goes on, its owner sees the server's browser in the page (**Live browser**, about 3 pictures a second) and can use it: click, scroll, type, and switch between its tabs. Nobody else sees it. When the order is placed, the last page (e.g. "Thank you for your order") stays open until **Close browser**, at most 5 minutes. |
+| Testing and backoffice accounts | Each person enters their own under **Accounts**, once: the staging shop account (to place orders) and the staging backoffice account (to approve them; approving an existing order needs only this one). The backoffice account is **optional for new orders**: without it, the order stops at "Thank you for your order", the run shows **Completed** with **Awaiting approval** under it in Logs / History until someone with a backoffice account approves it there (**Approve**). The server **remembers them** for the person's next sign-in (unless they untick Remember), **sealed with a key made from their own portal password**, so only their sign-in opens them. They are used only for their runs, and never logged or shown to anyone else. |
+| Live browser | While a run goes on, its owner sees the server's browser in the page (**Live browser**, about 3 pictures a second) and can use it: click, scroll, type, and switch between its tabs. Nobody else sees it. The run ends as soon as it is done (since 2026-10-23), so the next one can start straight away. |
 | Parallel runs | One run per person, and per testing account, at a time; up to `WATSONS_MAX_PARALLEL_RUNS` runs at once, then a waiting line. |
 | Logs / History | Everyone's runs, from a database on the server (SQLite), with a **Mine / All** filter. Evidence is downloaded (zip, error report) or shown in the browser (screenshots, Playwright report). |
 

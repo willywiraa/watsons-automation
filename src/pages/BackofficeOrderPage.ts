@@ -70,11 +70,12 @@ export class BackofficeOrderPage {
         'the backoffice is slow',
       ], error);
     }
-    if (status !== WAITING_FOR_VALIDATION && !isExtracted(status)) {
+    // Already approved: "Order Split" (on its way to ORDER_EXTRACTED) or extracted. Nothing to wait for.
+    if (status !== WAITING_FOR_VALIDATION && !isExtracted(status) && !isSplit(status)) {
       log(`Backoffice: ${code} is "${status}"; waiting for "${WAITING_FOR_VALIDATION}"`);
       await expect(async () => {
         status = await this.status(orderNumber);
-        expect(status === WAITING_FOR_VALIDATION || isExtracted(status)).toBe(true);
+        expect(status === WAITING_FOR_VALIDATION || isExtracted(status) || isSplit(status)).toBe(true);
       })
         .toPass({ timeout: 5 * 60_000, intervals: [15_000] })
         .catch(() => {}); // approve() refuses any other status, naming it
@@ -98,18 +99,19 @@ export class BackofficeOrderPage {
 
   /**
    * Clicks the opened order's "Approve Order" once, only when its status (from open()) is
-   * "Waiting For Manual Validation". An order already extracted is left alone. Returns whether
+   * "Waiting For Manual Validation". An order already at "Order Split" or extracted is left alone. Returns whether
    * it was approved here. Never clicks twice (PRD §41–42).
    */
   async approve(orderNumber: string, status: string): Promise<boolean> {
     const code = backofficeCode(orderNumber);
-    if (status !== WAITING_FOR_VALIDATION && !isExtracted(status)) {
+    if (status !== WAITING_FOR_VALIDATION && !isExtracted(status) && !isSplit(status)) {
       throw new StepError('ORDER_APPROVAL_FAILED', 'Approve order', `${code} is "${status}", not "${WAITING_FOR_VALIDATION}", so it was not approved.`, [
         'the order failed its checks (e.g. "Checked Invalid")',
         'the order is still being processed',
       ]);
     }
-    if (isExtracted(status)) {
+    // Approved before: "Order Split" (2026-10-23) or already extracted.
+    if (isExtracted(status) || isSplit(status)) {
       log(`Backoffice: ${code} is already ${status}; nothing to approve`, 'WARN');
       return false;
     }
@@ -146,31 +148,50 @@ export class BackofficeOrderPage {
    * Waits until the order is extracted (seen 2026-10-06: ORDER_EXTRACTED 1–2 minutes after
    * approving), reading its status from the list every 15 s for up to 10 minutes. (The opened
    * order's summary keeps its old status, even after its Refresh button: seen 2026-10-06.)
-   * Reading the list folds the opened order away. Returns the statuses seen.
+   * Reading the list folds the opened order away.
+   *
+   * Once the order is "Order Split" (user's request 2026-10-23: extraction can take much longer on
+   * staging), it gets at most 1 more minute: ORDER_EXTRACTED then or not, the approval is done and
+   * the run can end. `extracted` says whether it got there. Returns the statuses seen.
    */
-  async waitUntilExtracted(orderNumber: string): Promise<string[]> {
+  async waitUntilExtracted(
+    orderNumber: string,
+    { timeoutMs = 10 * 60_000, splitWaitMs = 60_000, intervalMs = 15_000 } = {},
+  ): Promise<{ statuses: string[]; extracted: boolean }> {
     const code = backofficeCode(orderNumber);
     const seen: string[] = [];
+    const started = Date.now();
     let status = '';
-    try {
-      await expect(async () => {
+    let splitAt: number | null = null;
+    let lastError: unknown;
+    for (;;) {
+      try {
         status = await this.status(orderNumber);
         if (seen.at(-1) !== status) {
           seen.push(status);
           log(`Backoffice: ${code} is ${status}`);
         }
-        expect(isExtracted(status)).toBe(true);
-      }).toPass({ timeout: 10 * 60_000, intervals: [15_000] });
-    } catch (error) {
-      if (status === WAITING_FOR_VALIDATION) {
-        throw new StepError('ORDER_APPROVAL_UNKNOWN', 'Order extracted', `${code} still waits for manual validation 10 minutes after "Approve Order" was clicked. ${CHECK_BY_HAND}`, [], error);
+        if (isExtracted(status)) return { statuses: seen, extracted: true };
+        if (isSplit(status)) splitAt ??= Date.now();
+      } catch (error) {
+        lastError = error; // the list didn't answer this time: read it again
       }
-      throw new StepError('ORDER_NOT_EXTRACTED', 'Order extracted', `${code} is "${status || 'unknown'}" 10 minutes after approving, not ORDER_EXTRACTED.`, [
-        'extraction is slow on staging',
-        'the order is stuck: check it in the backoffice',
-      ], error);
+      if (splitAt !== null && Date.now() - splitAt >= splitWaitMs) {
+        log(`Backoffice: ${code} is still ${status} ${Math.round(splitWaitMs / 1000)} s after Order Split: extraction is pending`, 'WARN');
+        return { statuses: seen, extracted: false };
+      }
+      if (Date.now() - started >= timeoutMs) break;
+      // Every 10 s once it is split, so the minute is measured closely.
+      await this.page.waitForTimeout(splitAt !== null ? Math.min(intervalMs, 10_000) : intervalMs);
     }
-    return seen;
+    const minutes = Math.round(timeoutMs / 60_000);
+    if (status === WAITING_FOR_VALIDATION) {
+      throw new StepError('ORDER_APPROVAL_UNKNOWN', 'Order extracted', `${code} still waits for manual validation ${minutes} minutes after "Approve Order" was clicked. ${CHECK_BY_HAND}`, [], lastError);
+    }
+    throw new StepError('ORDER_NOT_EXTRACTED', 'Order extracted', `${code} is "${status || 'unknown'}" ${minutes} minutes after approving: neither Order Split nor ORDER_EXTRACTED.`, [
+      'the backoffice is slow on staging',
+      'the order is stuck: check it in the backoffice',
+    ], lastError);
   }
 
   /**
@@ -195,4 +216,6 @@ export class BackofficeOrderPage {
 
 export const WAITING_FOR_VALIDATION = 'Waiting For Manual Validation';
 const isExtracted = (status: string) => /EXTRACTED/i.test(status);
+/** "Order Split": approved, on its way to ORDER_EXTRACTED (seen 2026-10-23). */
+export const isSplit = (status: string) => /order split/i.test(status);
 const CHECK_BY_HAND = 'Check the order in the backoffice by hand before running again: "Approve Order" is never clicked twice automatically.';

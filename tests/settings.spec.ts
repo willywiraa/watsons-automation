@@ -21,7 +21,6 @@ test.describe('settings check', () => {
       orderFile: undefined,
       approveOrder: undefined,
       backoffice: undefined,
-      holdLastPage: false,
     });
   });
 
@@ -68,12 +67,6 @@ test.describe('settings check', () => {
     expect(() => readSettings({ ...complete, WATSONS_APPROVE_ORDER: '07091012' })).toThrow(
       'Missing settings in .env: WATSONS_BACKOFFICE_USERNAME, WATSONS_BACKOFFICE_PASSWORD.',
     );
-  });
-
-  test('keeps the last page open only when asked to', () => {
-    expect(readSettings(complete).holdLastPage).toBe(false);
-    expect(readSettings({ ...complete, WATSONS_HOLD_LAST_PAGE: 'yes' }).holdLastPage).toBe(true);
-    expect(readSettings({ ...complete, WATSONS_HOLD_LAST_PAGE: 'true' }).holdLastPage).toBe(false);
   });
 
   test('uses OTP 1234 unless one is set', () => {

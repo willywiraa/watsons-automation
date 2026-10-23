@@ -5,8 +5,8 @@
 //
 // The run's browser (Playwright, headless Edge) also opens a DevTools port on this computer only
 // (playwright.config.ts, WATSONS_LIVE_VIEW_PORT). This connects to that port with the Chrome
-// DevTools Protocol, next to Playwright: screencast frames out, mouse and keyboard in. At the end
-// the test keeps its last page open (WATSONS_HOLD_LAST_PAGE) until closeBrowser() or 5 minutes.
+// DevTools Protocol, next to Playwright: screencast frames out, mouse and keyboard in. The run ends
+// as soon as its test is done (2026-10-23: no keeping the last page open until Close browser).
 
 const POLL_MS = 1000; // looking for the browser and its tabs
 const FRAME_GAP_MS = 300; // at most about 3 frames a second to the person's windows
@@ -244,28 +244,6 @@ class LiveView {
       }
     } catch {
       return 'The browser did not take it (the tab may have just closed).';
-    }
-  }
-
-  /**
-   * Close browser: closes the run's tabs, so a test keeping its last page open ends. Not the
-   * browser itself: the test's clean-up still needs it, and without it a run that had passed
-   * ended "Failed" (seen 2026-10-14). Returns what's wrong, or null.
-   */
-  async closeBrowser() {
-    try {
-      const response = await fetch(`${this.base}/json/version`, { signal: AbortSignal.timeout(2_000) });
-      const browser = new Connection((await response.json()).webSocketDebuggerUrl);
-      try {
-        const { targetInfos } = await browser.send('Target.getTargets');
-        const tabs = targetInfos.filter((target) => target.type === 'page');
-        await Promise.all(tabs.map((tab) => browser.send('Target.closeTarget', { targetId: tab.targetId }).catch(() => {})));
-      } finally {
-        browser.close();
-      }
-      return null;
-    } catch {
-      return 'Could not reach the browser: it closes by itself within 5 minutes.';
     }
   }
 

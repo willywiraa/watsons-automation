@@ -445,9 +445,7 @@ test.describe('launcher window', () => {
 
     await run.click();
     await dialog.getByRole('button', { name: 'Place test order' }).click();
-    // While the browser shows the confirmation page, the number is already there, without Stop.
-    await expect(page.locator('#status')).toContainText('Order 12345678 placed and extracted');
-    await expect(page.locator('#stop')).toBeHidden();
+    // Done: the run ends by itself once the order is extracted (2026-10-23: no Close browser).
     await expect(page.locator('#result .order-number')).toHaveText('12345678');
     await expect(page.locator('#result .verdict')).toHaveText('Completed');
     // The browser runs hidden: Live browser shows it, no separate Edge window (user's request 2026-10-22).
@@ -478,9 +476,11 @@ test.describe('launcher window', () => {
     await page.locator('#run').click();
     await expect(page.locator('#confirm')).toContainText('None: the order waits for approval');
     await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
+    // It ends at "Thank you for your order" at once, Completed, and says the order awaits approval (2026-10-23).
     await runEnded(page, 0);
-    await expect(page.locator('#result .verdict')).toHaveText('Awaiting approval');
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
     await expect(page.locator('#result .order-number')).toHaveText('12345678');
+    await expect(page.locator('#result .p-note')).toHaveText('Awaiting approval: someone with a backoffice account must approve order 12345678 (Logs / History → Approve). Until then it is not extracted.');
     await expect(page.locator('#steps li.skipped')).toHaveCount(4); // the approval steps
 
     // Approving needs the backoffice account.
@@ -531,8 +531,9 @@ test.describe('launcher window', () => {
     await expect(page.locator('#log')).toContainText('by Test Operator: places a STAGING test order');
   });
 
-  test('shows the run’s browser live, passes clicks on, and Close browser ends a passed run (2026-10-21)', async ({ page }) => {
-    // PLU 555: the stand-in opens a real (headless) Edge with the run's DevTools port.
+  test('shows the run’s browser live, passes clicks on, and the run ends by itself once done (2026-10-23)', async ({ page }) => {
+    // PLU 555: the stand-in opens a real (headless) Edge with the run's DevTools port; its last step
+    // lasts until the page is clicked.
     process.env.FAKE_PLAYWRIGHT_MODULE = require.resolve('@playwright/test');
     try {
       await page.goto(app.url);
@@ -544,11 +545,11 @@ test.describe('launcher window', () => {
       const screen = page.locator('#live-img');
       await expect(screen).toBeVisible({ timeout: 20_000 });
       await expect(page.locator('#live-tabs')).toContainText('Thank you for your order');
-      await expect(page.locator('#live-close')).toBeVisible({ timeout: 15_000 });
+      // No Close browser any more: nothing to click to end a run.
+      await expect(page.getByRole('button', { name: 'Close browser' })).toHaveCount(0);
       const box = (await screen.boundingBox())!;
       await screen.click({ position: { x: box.width * (100 / 800), y: box.height * (50 / 450) } });
       await expect(page.locator('#log')).toContainText('fake page: clicked');
-      await page.locator('#live-close').click();
       await expect(page.locator('#result .verdict')).toHaveText('Completed', { timeout: 15_000 });
       await expect(page.locator('#live-card')).toBeHidden();
     } finally {
@@ -812,6 +813,28 @@ test.describe('launcher window', () => {
     await approveOrder(page, '11111111', 0);
     await expect(page.locator('#result .verdict')).toHaveText('No change');
     await expect(page.locator('#result')).toContainText('WTCSG11111111 was already ORDER_EXTRACTED, so Approve Order was not clicked.');
+  });
+
+  test('an approval that reaches Order Split completes, saying extraction is still pending (2026-10-23)', async ({ page }) => {
+    await page.goto(app.url);
+    // Order 22222222: the stand-in ends at "Order Split", extraction pending.
+    await approveOrder(page, '22222222', 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#result')).toContainText('Approved in the backoffice: Approve Order was clicked once. The order is now Order Split.');
+    await expect(page.locator('#result .p-note')).toHaveText(
+      'Extraction still pending: WTCSG22222222 is at Order Split, not yet ORDER_EXTRACTED. Wait a few minutes, then check it in the backoffice.',
+    );
+    const [row] = launcher.readHistory(root);
+    expect(row).toMatchObject({ status: 'completed', backoffice: { finalStatus: 'Order Split', extractionPending: true } });
+    // Logs / History says so too.
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    await expect(page.locator('tr.hrow').first()).toContainText('Extraction pending');
+    // And another run can start straight away: nothing to close or cancel first.
+    await page.getByRole('tab', { name: 'Automation' }).click();
+    await placeOrder(page, '10117\n2222', 1);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#result')).toContainText('Placed and approved in the backoffice. The order is now Order Split.');
+    await expect(page.locator('#result .p-note')).toContainText('Extraction still pending: WTCSG12345678 is at Order Split');
   });
 
   test('Logs / History lists every run with its status, error and evidence', async ({ page }) => {

@@ -28,12 +28,6 @@ export interface Settings {
    * someone with a backoffice account to approve it.
    */
   backoffice?: { username: string; password: string };
-  /**
-   * Keep the last page open at the end until the browser is closed, at most 5 minutes:
-   * WATSONS_HOLD_LAST_PAGE=yes. The hosted server sets it (its live browser view shows that page);
-   * with the browser shown (--headed) the tests always do it.
-   */
-  holdLastPage: boolean;
 }
 
 // The .env name each required setting is read from.
@@ -42,7 +36,7 @@ const ENV_NAMES = {
   username: 'WATSONS_USERNAME',
   password: 'WATSONS_PASSWORD',
 } as const satisfies Record<
-  Exclude<keyof Settings, 'paymentOtp' | 'placeOrder' | 'orderFile' | 'approveOrder' | 'backoffice' | 'holdLastPage'>,
+  Exclude<keyof Settings, 'paymentOtp' | 'placeOrder' | 'orderFile' | 'approveOrder' | 'backoffice'>,
   string
 >;
 
@@ -99,6 +93,5 @@ export function readSettings(env: Record<string, string | undefined> = process.e
       env[BACKOFFICE_ENV_NAMES.username]?.trim() && env[BACKOFFICE_ENV_NAMES.password]?.trim()
         ? { username: env[BACKOFFICE_ENV_NAMES.username]!, password: env[BACKOFFICE_ENV_NAMES.password]! }
         : undefined,
-    holdLastPage: env.WATSONS_HOLD_LAST_PAGE?.trim().toLowerCase() === 'yes',
   };
 }

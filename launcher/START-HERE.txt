@@ -52,12 +52,13 @@ RUNNING A TEST
 3. The bar at the top must say Ready. If it says Not ready, it names what to fix ("Show
    checks" lists every check).
 4. The test runs in "Live browser" in the launcher window (no separate Edge window opens); you
-   can watch it and use it there. A new order is placed, approved in the staging backoffice, and
-   the browser stops on the backoffice order showing ORDER_EXTRACTED (the shop's "Thank you" page
-   is in the first tab). Without a backoffice account, it stops on the "Thank you for your order"
-   page. When you have seen it, click "Close browser"; it closes by itself after 5 minutes. The
-   launcher then shows Completed with the order number, Awaiting approval (placed, not approved
-   yet), No change, or Failed.
+   can watch it and use it there. A new order is placed and approved in the staging backoffice;
+   the run ends once the order is ORDER_EXTRACTED. If it is still at "Order Split" a minute after
+   that, the run ends anyway and says extraction is still pending: wait a few minutes, then check
+   it in the backoffice. Without a backoffice account, the run ends on the "Thank you for your
+   order" page: Completed, with a note that the order awaits approval. The launcher shows
+   Completed with the order number, No change, or Failed. You can start the next run straight
+   away.
 5. If something needs your decision before Checkout (a product out of stock, not found or not
    addable, a product the delivery can't take, an error), the run pauses and asks you in a card
    above Live browser. Click one of its buttons (for example Skip product and continue, Replace
@@ -80,7 +81,7 @@ have one) under Accounts and run. You enter them once: the server remembers them
 sign-in, locked with your sign-in password (untick Remember if you'd rather not). They are used
 only for your runs and never shown to anyone else. Without a backoffice account, your orders stop at
 "Thank you for your order" and wait for someone to approve them. You watch and can use the run's
-browser in "Live browser"; click "Close browser" when you are done with the last page.
+browser in "Live browser"; the run ends by itself when it is done.
 Logs / History shows everyone's runs.
 
 

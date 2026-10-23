@@ -16,8 +16,9 @@
 //            the add of PLU 5555 fails once ("Add to bag"). The run waits for answer-<id>.json.
 //   PLU 555: a real browser for the hosted server's live view (with WATSONS_LIVE_VIEW_PORT and
 //            FAKE_PLAYWRIGHT_MODULE, the path of Playwright): headless Edge with that DevTools port,
-//            showing a page that logs clicks and typing ("fake page: …"). At the end it keeps the
-//            page open (WATSONS_HOLD_LAST_PAGE) until the browser is closed.
+//            showing a page that logs clicks and typing ("fake page: …"). Its last step lasts until
+//            the page was clicked (and then left alone for 2 s); then the run ends, browser too.
+//   Approving order 22222222, or an order with PLU 2222: ends at "Order Split", extraction pending.
 // It prints only fingerprints of the accounts it received (first 8 hex digits of a SHA-256), never them.
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
@@ -55,9 +56,9 @@ const steps = approving
 const approvesNewOrder = placeOrder && Boolean(process.env.WATSONS_BACKOFFICE_USERNAME);
 if (placeOrder) steps.push('Checkout', 'Pay', 'OTP', 'Order confirmation');
 if (approvesNewOrder) steps.push('Backoffice login', 'Find order in backoffice', 'Approve order', 'Order extracted');
-// Like the real tests: with the browser shown (--headed), or when asked to (WATSONS_HOLD_LAST_PAGE:
-// the live view shows it), they keep the last page open at the end until the browser is closed.
-const holdsLastPage = (placeOrder || approving) && (process.argv.includes('--headed') || process.env.WATSONS_HOLD_LAST_PAGE === 'yes');
+// Approved, but at "Order Split" a minute later, extraction still pending (2026-10-23): approving
+// order 22222222, or an order with PLU 2222 (and a backoffice account).
+const extractionPending = (approving && orderNumberToApprove === '22222222') || (approvesNewOrder && products.some((line) => line.plu === '2222'));
 
 // PLU 555: a real headless Edge with the live view's DevTools port, opened right away.
 const liveBrowser =
@@ -74,6 +75,28 @@ async function openLiveBrowser() {
       '<button id="b" onclick="console.log(\'clicked\')">Click</button><input id="i" oninput="console.log(\'typed \' + this.value)">',
   );
   return { browser, page };
+}
+
+/** PLU 555: until the page was clicked and then left alone for 2 seconds (the person is done), at most a minute. */
+function untilUsed(page) {
+  return new Promise((resolve) => {
+    let clicked = false;
+    let quiet;
+    const done = () => {
+      clearTimeout(quiet);
+      clearTimeout(limit);
+      page.off('console', seen);
+      resolve();
+    };
+    const seen = (message) => {
+      if (message.text() === 'clicked') clicked = true;
+      if (!clicked) return;
+      clearTimeout(quiet);
+      quiet = setTimeout(done, 2_000);
+    };
+    const limit = setTimeout(done, 60_000);
+    page.on('console', seen);
+  });
 }
 
 console.log(
@@ -251,6 +274,8 @@ function next() {
     const approved = approving && orderNumberToApprove !== '11111111';
     const orderNumber = approving ? orderNumberToApprove : placeOrder ? '12345678' : undefined;
     const usesBackoffice = approving || approvesNewOrder;
+    const finalStatus = extractionPending ? 'Order Split' : 'ORDER_EXTRACTED';
+    const pending = extractionPending ? '; extraction still pending' : '';
     const finish = () => {
       const shot = placeOrder || approving ? screenshot(usesBackoffice ? 'screenshot-1-backoffice-order.png' : 'screenshot-1-order-confirmation.png') : null;
       writeResult({
@@ -258,32 +283,25 @@ function next() {
         outcome: approving ? (approved ? 'approved' : 'no_change') : placeOrder ? (approvesNewOrder ? 'order_placed' : 'order_placed_unapproved') : 'ready_to_check_out',
         orderNumber,
         completedStep: steps.at(-1),
-        backoffice: usesBackoffice ? { approved: !approving || approved, statuses: ['ORDER_EXTRACTED'], finalStatus: 'ORDER_EXTRACTED' } : undefined,
+        backoffice: usesBackoffice ? { approved: !approving || approved, statuses: [finalStatus], finalStatus, ...(extractionPending ? { extractionPending: true } : {}) } : undefined,
         artifacts: { folder: path.join('reports', process.env.WATSONS_RUN_ID), screenshots: shot ? [shot] : [] },
       });
       console.log('fake runner: passed');
+      // Like the real tests since 2026-10-23: the run ends as soon as it is done, its browser too.
+      liveBrowser?.then(({ browser }) => browser.close()).catch(() => {});
     };
     if (!placeOrder && !approving) return finish();
-    if (approving && approved) console.log(`[12:00:00] [PASS] Order approved successfully. Order number: ${orderNumber} (backoffice: ORDER_EXTRACTED)`);
-    else if (approving) console.log(`[12:00:00] [PASS] No change needed. Order number: ${orderNumber} (backoffice: already ORDER_EXTRACTED)`);
-    else if (approvesNewOrder) console.log('[12:00:00] [PASS] Order test completed successfully. Order number: 12345678 (backoffice: ORDER_EXTRACTED)');
-    else console.log('[12:00:00] [PASS] Order placed (not approved yet: no backoffice account for this run). Order number: 12345678');
-    // The live view (PLU 555): the page stays open until the browser is closed.
-    if (liveBrowser && holdsLastPage) {
-      console.log('[12:00:00] [INFO] The order confirmation page stays open. Close the browser to finish (it closes by itself after 5 minutes).');
-      liveBrowser
-        .then(({ page }) => page.waitForEvent('close', { timeout: 60_000 }))
-        .catch(() => {})
-        .then(finish)
-        // Not closed in time: close it, so this process ends.
-        .then(() => liveBrowser.then(({ browser }) => browser.close()))
-        .catch(() => {});
-      return;
-    }
-    if (!holdsLastPage) return finish();
-    console.log('[12:00:00] [INFO] The backoffice order stays open. Close the browser window to finish.');
-    setTimeout(finish, 1500); // the person looks at the page, then closes the window
-    return;
+    const pass = () => {
+      if (approving && approved) console.log(`[12:00:00] [PASS] Order approved successfully. Order number: ${orderNumber} (backoffice: ${finalStatus}${pending})`);
+      else if (approving) console.log(`[12:00:00] [PASS] No change needed. Order number: ${orderNumber} (backoffice: already ${finalStatus}${pending})`);
+      else if (approvesNewOrder) console.log(`[12:00:00] [PASS] Order test completed successfully. Order number: 12345678 (backoffice: ${finalStatus}${pending})`);
+      else console.log('[12:00:00] [PASS] Order placed (not approved yet: no backoffice account for this run). Order number: 12345678');
+      if (extractionPending) console.log(`[12:00:00] [WARN] WTCSG${orderNumber} is at Order Split: extraction to ORDER_EXTRACTED is still pending. Wait a few minutes, then check it in the backoffice.`);
+      finish();
+    };
+    // The live view (PLU 555): the last step lasts until the person has used the page.
+    if (liveBrowser) return liveBrowser.then(({ page }) => untilUsed(page)).catch(() => {}).then(pass);
+    return pass();
   }
   const step = steps[index++];
   console.log(`[12:00:00] [INFO] Step: ${step}`);

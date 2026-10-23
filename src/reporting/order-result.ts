@@ -31,7 +31,7 @@ export interface OrderTestResult {
   delivery: { method?: string; mode?: string };
   products: { ordered: OrderLine[]; soldOut: string[]; excludedNotEligible: string[]; freeGiftRemoved: string | null };
   /** The backoffice approval (runs that place or approve an order): approved here or not, and the statuses seen. */
-  backoffice?: { approved: boolean; statuses: string[]; finalStatus?: string };
+  backoffice?: { approved: boolean; statuses: string[]; finalStatus?: string; extractionPending?: boolean };
   /** The questions the run asked the person, their answers and what came of them (2026-10-22). */
   decisions: Decision[];
   consoleErrors: string[];
@@ -123,7 +123,7 @@ export function formatResultBox(result: OrderTestResult): string {
   const rows: string[] = [];
   if (result.status === 'passed') {
     if (result.orderNumber) rows.push(`Order Number: ${result.orderNumber}`);
-    if (result.backoffice?.finalStatus) rows.push(`Backoffice: ${result.backoffice.finalStatus}`);
+    if (result.backoffice?.finalStatus) rows.push(`Backoffice: ${result.backoffice.finalStatus}${result.backoffice.extractionPending ? ' (extraction pending)' : ''}`);
     if (result.outcome === 'order_placed_unapproved') rows.push('Backoffice: not approved yet');
     if (!approving) {
       rows.push(`Delivery: ${result.delivery.mode ?? '?'} (${result.delivery.method ?? '?'})`);

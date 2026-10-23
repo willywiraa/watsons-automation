@@ -24,8 +24,9 @@ import { log } from '../src/utils/log';
 //                     Creates a real STAGING order. The launcher always runs it this way. With a
 //                     backoffice account it then approves the order; without one (2026-10-14) it
 //                     stops at the confirmation page and the order waits for approval.
-// With the browser shown (--headed, as the launcher does), the run ends by leaving the order
-// confirmation page open until the person closes the browser window (at most 5 minutes).
+// A placed order's run ends as soon as it is done (user's request 2026-10-23): on the "Thank you
+// for your order" page without a backoffice account, else once the order is ORDER_EXTRACTED, or
+// at "Order Split" a minute later with extraction still pending. No waiting for the browser to close.
 // Each run's evidence goes to reports/<run id>/ (src/reporting/result-reporter.ts).
 // Before Checkout, a run started from the launcher asks the person when something needs a decision
 // (src/utils/ask.ts, user's request 2026-10-22): a product out of stock, not found or refused, a
@@ -34,7 +35,7 @@ import { log } from '../src/utils/log';
 
 const plus = (lines: OrderLine[]) => lines.map((line) => (line.quantity > 1 ? `${line.plu} x${line.quantity}` : line.plu)).join(', ') || 'none';
 
-test('order flow from the order file', async ({ page, stagingUrl, settings, orderRun, headless }) => {
+test('order flow from the order file', async ({ page, stagingUrl, settings, orderRun }) => {
   const order = loadOrder(settings.orderFile ?? DEFAULT_ORDER_FILE);
   const unitCount = order.products.reduce((sum, line) => sum + line.quantity, 0);
   // Per unit added: the seconds between adds (fixed at 5 since 2026-10-21) plus 35 s for the add
@@ -196,22 +197,13 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
   const orderNumber = await orderRun.step('Order confirmation', () => confirmation.orderNumber());
   orderRun.data.orderNumber = orderNumber;
   await test.info().attach('order confirmation', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
-  // With the browser shown (the desktop launcher), or watched in the hosted server's live view
-  // (WATSONS_HOLD_LAST_PAGE), the last pages stay open until the browser is closed, at most 5 minutes.
-  const holdLastPage = !headless || settings.holdLastPage;
-
   // No backoffice account for this run (user's decision 2026-10-14): the order is placed and waits
   // for approval. Someone with a backoffice account approves it later ("Approve existing order",
-  // also from Logs / History). The run ends on the "Thank you for your order" page.
+  // also from Logs / History). The run ends on the "Thank you for your order" page, at once.
   if (!settings.backoffice) {
     // The launcher reads this line (launcher/launcher.cjs, PASS_LINES).
     log(`Order placed (not approved yet: no backoffice account for this run). Order number: ${orderNumber}`, 'PASS');
-    if (holdLastPage) {
-      log('The order confirmation page stays open. Close the browser to finish (it closes by itself after 5 minutes).');
-      test.setTimeout(test.info().timeout + 6 * 60_000);
-      // Either way the test has passed, so a timeout here is not an error.
-      await page.waitForEvent('close', { timeout: 5 * 60_000 }).catch(() => {});
-    }
+    log(`Order ${orderNumber} is awaiting approval: someone with a backoffice account must approve it (Logs / History → Approve).`);
     return;
   }
 
@@ -224,19 +216,12 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
   const statusBefore = await orderRun.step('Find order in backoffice', () => backoffice.open(orderNumber));
   const approved = await orderRun.step('Approve order', () => backoffice.approve(orderNumber, statusBefore));
   orderRun.data.backoffice = { approved, statuses: [] };
-  orderRun.data.backoffice.statuses = await orderRun.step('Order extracted', () => backoffice.waitUntilExtracted(orderNumber));
+  const extraction = await orderRun.step('Order extracted', () => backoffice.waitUntilExtracted(orderNumber));
+  Object.assign(orderRun.data.backoffice, { statuses: extraction.statuses, extractionPending: !extraction.extracted });
   await backoffice.showStatus(orderNumber);
   await test.info().attach('backoffice order', { body: await backofficeTab.screenshot(), contentType: 'image/png' });
-  log(`Order test completed successfully. Order number: ${orderNumber} (backoffice: ${orderRun.data.backoffice.statuses.at(-1)})`, 'PASS');
-
-  // The run ends on the backoffice order; the shop's confirmation page stays in the first tab
-  // (user's choice 2026-10-06). Leave both open until the person closes the browser, at most 5
-  // minutes.
-  if (holdLastPage) {
-    log('The backoffice order and the order confirmation page stay open. Close the browser to finish (it closes by itself after 5 minutes).');
-    test.setTimeout(test.info().timeout + 6 * 60_000);
-    await backofficeTab.bringToFront();
-    // Either way the test has passed, so a timeout here is not an error.
-    await Promise.all([page, backofficeTab].map((tab) => tab.waitForEvent('close', { timeout: 5 * 60_000 }).catch(() => {})));
-  }
+  const finalStatus = extraction.statuses.at(-1);
+  log(`Order test completed successfully. Order number: ${orderNumber} (backoffice: ${finalStatus}${extraction.extracted ? '' : '; extraction still pending'})`, 'PASS');
+  if (!extraction.extracted) log(`WTCSG${orderNumber} is at ${finalStatus}: extraction to ORDER_EXTRACTED is still pending. Wait a few minutes, then check it in the backoffice.`, 'WARN');
+  // The run ends here: no waiting for its browser to be closed (user's request 2026-10-23).
 });

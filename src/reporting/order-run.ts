@@ -30,8 +30,11 @@ export interface OrderRunSnapshot {
   excluded: string[];
   freeGiftRemoved: string | null;
   orderNumber?: string;
-  /** The backoffice approval: whether this run clicked Approve Order, and the statuses seen after. */
-  backoffice?: { approved: boolean; statuses: string[] };
+  /**
+   * The backoffice approval: whether this run clicked Approve Order, and the statuses seen after.
+   * extractionPending: it ended at "Order Split", ORDER_EXTRACTED still to come (2026-10-23).
+   */
+  backoffice?: { approved: boolean; statuses: string[]; extractionPending?: boolean };
   /** What the person decided when the run asked them (src/utils/ask.ts, 2026-10-22). Older runs: none. */
   decisions?: Decision[];
   consoleErrors: string[];
