@@ -6,7 +6,8 @@ import { enterPrivateTextZk, withRecordingPaused } from '../utils/secrets';
 
 // Signing in to the staging backoffice with the Customer Support account (WATSONS_BACKOFFICE_*),
 // to approve the new order (Phase 13). The backoffice is built with ZK: element ids change on
-// every visit, so none are used. See docs/staging-notes.md, "Backoffice".
+// every visit, so none are used. See docs/staging-notes.md, "Backoffice". One attempt; what to do
+// when the backoffice sends it back to its sign-in page is BackofficeSession's.
 
 const LOGIN_URL = `https://${STAGING_BACKOFFICE_HOST}/backoffice/login.zul`;
 
@@ -32,35 +33,14 @@ export class BackofficeLoginPage {
   }
 
   /**
-   * Signs in with the Customer Support Manager role. The account never appears in reports or recordings.
-   *
-   * When the same backoffice account is open in another browser (e.g. the tester's own), the
-   * backoffice can send this sign-in back to its sign-in page instead of the role choice (seen
-   * 2026-10-16). Then this backoffice session is closed (its cookies cleared) and a fresh one signs
-   * in once more (user's request 2026-10-16); if that is sent back too, the run stops and says why.
+   * Opens the sign-in page, signs in and chooses the Customer Support Manager role. The account
+   * never appears in reports or recordings. Returns "signed-in", or "sign-in" when the backoffice
+   * sent this tab back to its sign-in page instead (the same account is open in another tab or
+   * browser): before the role choice (seen 2026-10-16) or right after it. `step`: the run's step
+   * it signs in for (a later one when signing in again).
    */
-  async signIn(account: { username: string; password: string }): Promise<void> {
-    for (let attempt = 1; ; attempt++) {
-      if ((await this.signInOnce(account)) === 'roles') break;
-      if (attempt === 2) {
-        throw new StepError(
-          'BACKOFFICE_LOGIN_FAILED',
-          'Backoffice login',
-          'The backoffice went back to its sign-in page after signing in, twice: this backoffice account seems to be open in another browser.',
-          ['the same backoffice account is open in another browser (e.g. your own): close that backoffice tab or sign out there, then run again'],
-        );
-      }
-      log('The backoffice went back to its sign-in page after signing in (the account may be open in another browser). Closing this backoffice session and signing in again.', 'WARN');
-      await this.page.context().clearCookies({ domain: new RegExp(`(^|\\.)${STAGING_BACKOFFICE_HOST.replace(/\./g, '\\.')}$`) });
-      await this.page.waitForTimeout(5_000);
-    }
-    await this.chooseRole();
-  }
-
-  /** Opens the sign-in page and signs in. Returns where the backoffice went: the role choice, or its sign-in page again. */
-  private async signInOnce(account: { username: string; password: string }): Promise<'roles' | 'sign-in'> {
-    const failed = (reason: string, error: unknown, causes: string[] = []) =>
-      new StepError('BACKOFFICE_LOGIN_FAILED', 'Backoffice login', reason, causes, error);
+  async signInOnce(account: { username: string; password: string }, step = 'Backoffice login'): Promise<'signed-in' | 'sign-in'> {
+    const failed = (reason: string, error: unknown, causes: string[] = []) => new StepError('BACKOFFICE_LOGIN_FAILED', step, reason, causes, error);
 
     try {
       await this.page.goto(LOGIN_URL);
@@ -99,28 +79,31 @@ export class BackofficeLoginPage {
         'the backoffice is slow',
       ]);
     }
-    if (await this.customerSupportRole.isVisible()) return 'roles';
     // The sign-in form for good, not just the old page on its way out.
-    const roles = await this.customerSupportRole.waitFor({ state: 'visible', timeout: 3_000 }).then(() => true, () => false);
-    return roles ? 'roles' : 'sign-in';
+    const roles = (await this.customerSupportRole.isVisible()) || (await this.customerSupportRole.waitFor({ state: 'visible', timeout: 3_000 }).then(() => true, () => false));
+    return roles ? this.chooseRole(step) : 'sign-in';
   }
 
-  private async chooseRole(): Promise<void> {
-    const failed = (reason: string, error: unknown, causes: string[] = []) =>
-      new StepError('BACKOFFICE_LOGIN_FAILED', 'Backoffice login', reason, causes, error);
+  /** Chooses the role. Returns "sign-in" when the backoffice then shows its sign-in page instead of its main screen. */
+  private async chooseRole(step: string): Promise<'signed-in' | 'sign-in'> {
+    const failed = (reason: string, error: unknown, causes: string[] = []) => new StepError('BACKOFFICE_LOGIN_FAILED', step, reason, causes, error);
     try {
       await expect(this.customerSupportRole).toBeVisible({ timeout: 60_000 });
       await this.customerSupportRole.click();
       await expect(this.customerSupportRole).toHaveAttribute('aria-selected', 'true');
       await this.proceedButton.click();
       await expect(this.proceedButton).toBeHidden({ timeout: 60_000 });
-      await expect(this.ordersMenu).toBeVisible({ timeout: 60_000 });
+      await expect(this.ordersMenu.or(this.userBox)).toBeVisible({ timeout: 60_000 });
     } catch (error) {
       throw failed('Could not choose the "WTCSG Customer Support Manager Role".', error, [
         'the backoffice account does not have that role',
         'the backoffice is slow',
       ]);
     }
+    // The main screen, or the sign-in page for good (not just the role choice on its way out).
+    const home = (await this.ordersMenu.isVisible()) || (await this.ordersMenu.waitFor({ state: 'visible', timeout: 3_000 }).then(() => true, () => false));
+    if (!home) return 'sign-in';
     log('Backoffice: signed in as Customer Support Manager');
+    return 'signed-in';
   }
 }

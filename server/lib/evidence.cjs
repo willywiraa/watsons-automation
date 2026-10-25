@@ -3,9 +3,7 @@
 // 2026-10-08), as the test writes it (src/reporting/result-reporter.ts) plus the launcher's files.
 
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-const { execFile } = require('node:child_process');
 const { RUN_ID } = require('../../launcher/launcher.cjs');
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -110,15 +108,6 @@ function removeSecrets(folder, secrets) {
   return changed;
 }
 
-/** The run's evidence as one zip file (Windows' own tar.exe makes it), in a temporary folder. */
-function zipFolder(folder) {
-  const target = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'watsons-evidence-')), `${path.basename(folder)}.zip`);
-  const tar = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
-  return new Promise((resolve, reject) => {
-    execFile(tar, ['-a', '-c', '-f', target, '-C', folder, '.'], { windowsHide: true }, (error) => (error ? reject(error) : resolve(target)));
-  });
-}
-
 /** The day folders older than the given day (yyyy-mm-dd), with their runs: for retention. */
 function daysBefore(evidenceDir, day) {
   let names;
@@ -136,4 +125,4 @@ function daysBefore(evidenceDir, day) {
     });
 }
 
-module.exports = { TYPES, typeOf, kindOf, runFolder, fileInside, listFiles, removeSecrets, zipFolder, daysBefore };
+module.exports = { TYPES, typeOf, kindOf, runFolder, fileInside, listFiles, removeSecrets, daysBefore };

@@ -145,10 +145,21 @@ A run ends as soon as it is done (since 2026-10-23; before, its last page stayed
 The result then shows **Completed** with
 the order number (**Copy** copies it), the backoffice status and what is still pending, if
 anything; **No change**, or **Failed at** a step with its error report (below); then
-the products, the evidence (screenshots, the report, the evidence folder), and the steps and
-log. **New order** (or **Edit order**) goes back to the form; **Run again** asks to run the same
-again. **Approve Order is clicked at most once**: if the result is unclear, the run stops with
-`ORDER_APPROVAL_UNKNOWN` and asks you to check the order in the backoffice by hand.
+the products, the screenshots (click one to enlarge it), and the steps and log. **New order**
+(or **Edit order**) goes back to the form; **Run again** asks to run the same again. (Since
+2026-10-25 there is no **error-report.txt**, **Open report** or **Evidence folder** / **Evidence
+(.zip)** button: the files stay in the run's evidence folder.) **Approve Order is clicked at
+most once**: if the result is unclear, the run stops with `ORDER_APPROVAL_UNKNOWN` and asks you
+to check the order in the backoffice by hand.
+
+**Signed out by the backoffice** (since 2026-10-25): when the same backoffice account is open in
+another tab or browser (e.g. your own, not signed out), the backoffice can send the run's tab
+back to its sign-in page, while signing in or later. The run then closes that backoffice tab,
+ends its session, signs in again in a new tab and carries on from the same step, at once instead
+of waiting for the Orders list. It does this up to 3 times; then it stops with
+`BACKOFFICE_LOGIN_FAILED` ("seems to be open in another tab or browser"). Approve Order is still
+clicked only once: signed out just before it, the run opens the order again and checks its status
+first.
 
 **Stop** stops the test and its browser (once it is checking out, paying or approving, it asks
 first, because the order or its approval may then already exist); the result is then **Stopped
@@ -217,7 +228,8 @@ button: it fills in an "Approve existing order" run for that order number; the h
 these orders. Once that approval completes (or finds the order already extracted), the order
 shows **Completed**, "approved later by …". Search by order number, PLU, error code or operator,
 filter by status or automation, and click a run for its details (what happened, the run's
-facts, its screenshots and evidence). The first 40 runs show; **Load 100 more** shows more.
+facts and its screenshots; **Copy error report** for a failed run). The first 40 runs show;
+**Load 100 more** shows more.
 **Export CSV** saves every run that matches the search and filters as
 `reports/history-<date_time>.csv` and opens it (order numbers as backoffice codes, so Excel
 keeps their zeros). Runs from before the history show what their evidence folder holds, without
@@ -295,7 +307,7 @@ on the server, headless, and everyone sees **one shared Logs / History**.
 | Testing and backoffice accounts | Each person enters their own under **Accounts**, once: the staging shop account (to place orders) and the staging backoffice account (to approve them; approving an existing order needs only this one). The backoffice account is **optional for new orders**: without it, the order stops at "Thank you for your order", the run shows **Completed** with **Awaiting approval** under it in Logs / History until someone with a backoffice account approves it there (**Approve**). The server **remembers them** for the person's next sign-in (unless they untick Remember), **sealed with a key made from their own portal password**, so only their sign-in opens them. They are used only for their runs, and never logged or shown to anyone else. |
 | Live browser | While a run goes on, its owner sees the server's browser in the page (**Live browser**, about 3 pictures a second) and can use it: click, scroll, type, and switch between its tabs. Nobody else sees it. The run ends as soon as it is done (since 2026-10-23), so the next one can start straight away. |
 | Parallel runs | One run per person, and per testing account, at a time; up to `WATSONS_MAX_PARALLEL_RUNS` runs at once, then a waiting line. |
-| Logs / History | Everyone's runs, from a database on the server (SQLite), with a **Mine / All** filter. Evidence is downloaded (zip, error report) or shown in the browser (screenshots, Playwright report). |
+| Logs / History | Everyone's runs, from a database on the server (SQLite), with a **Mine / All** filter. Screenshots are shown in the browser (**Download** saves one); the error report is copied from the page. The rest of the evidence stays on the server (no zip, report or error-report.txt downloads since 2026-10-25). |
 
 - **Code:** `server/` (Node.js 24 with express, express-rate-limit and bcryptjs; the database is
   Node's built-in SQLite). It reuses the launcher's code (`launcher/launcher.cjs`) and page
@@ -460,10 +472,11 @@ The `reports/` folder is never saved in Git. Delete old run folders whenever you
 - **"Missing settings in .env: …"**: open `.env`, fill in the settings named in the message, save, and run again.
 - **"❌ LOGIN_FAILED"**: the message names the step and likely causes. Check the username and
   password in `.env`, and the failure screenshot in the report (`npm run report`).
-- **"❌ BACKOFFICE_LOGIN_FAILED … seems to be open in another browser"**: the backoffice sent
-  the sign-in back to its sign-in page twice. The test already starts a fresh backoffice session
-  once by itself. This happens when the same backoffice account is open elsewhere, e.g. in your
-  own browser: close that backoffice tab or sign out there, then run again.
+- **"❌ BACKOFFICE_LOGIN_FAILED … seems to be open in another tab or browser"**: the backoffice
+  kept signing the run out. The test already closes its backoffice tab and signs in again in a
+  new one by itself, up to 3 times. This happens when the same backoffice account is open
+  elsewhere, e.g. in your own browser: sign out there or close that backoffice tab, then run again
+  (for a new order that is already placed: **Approve existing order** with its number).
 - **"❌ SAFETY CHECK FAILED"**: `WATSONS_STAGING_URL` in `.env` isn't the approved staging address, or
   the site tried to send the browser somewhere else. Check the address; don't change the safety lock.
 - **"running scripts is disabled on this system"** when typing `npm` commands in PowerShell: run

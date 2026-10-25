@@ -310,7 +310,7 @@ async function startServer(overrides = {}) {
     const live = runs.liveRows();
     const liveIds = new Set(live.map((row) => row.runId));
     return [...live, ...store.listRuns(limit).filter((row) => !liveIds.has(row.runId))]
-      .map((row) => (row.evidenceState === 'deleted' ? { ...row, screenshots: [], hasReport: false, hasErrorReport: false } : row))
+      .map((row) => (row.evidenceState === 'deleted' ? { ...row, screenshots: [] } : row))
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.runId.localeCompare(a.runId));
   };
   app.post('/api/history', ...changes, (req, res) => res.json({ rows: allRows(500), me: req.session.username }));
@@ -331,42 +331,8 @@ async function startServer(overrides = {}) {
     if (!file) return res.status(404).json({ error: 'No such screenshot.' });
     sendFile(res, file, req.query.download === '1' ? `${runId}-${name}` : null);
   });
-  // Any file of a run's evidence (error report, trace, logs): downloaded.
-  app.get('/api/runs/:runId/files/*file', signedIn, (req, res) => {
-    const file = evidence.fileInside(runDir(req.params.runId), req.params.file);
-    if (!file) return res.status(404).json({ error: 'No such file.' });
-    const image = evidence.typeOf(file).startsWith('image/');
-    sendFile(res, file, image ? null : `${req.params.runId}-${path.basename(file)}`);
-  });
-  // The run's Playwright report, viewed in the browser. Relative, so it also works under IIS's
-  // path (http://<VM>/automation/…, server/iis/web.config).
-  app.get('/api/runs/:runId/report', signedIn, (req, res) => res.redirect('report/index.html'));
-  app.get('/api/runs/:runId/report/*file', signedIn, (req, res) => {
-    const folder = runDir(req.params.runId);
-    const file = folder ? evidence.fileInside(path.join(folder, 'html-report'), req.params.file) : null;
-    if (!file) return res.status(404).json({ error: 'This run has no report (or it was removed after the retention period).' });
-    // The report is a page of its own (Playwright's), with its own inline scripts: no framing, nothing else.
-    res.set('Content-Security-Policy', "frame-ancestors 'none'");
-    sendFile(res, file, null);
-  });
-  // All of a run's evidence in one zip file.
-  app.get('/api/runs/:runId/evidence.zip', signedIn, async (req, res) => {
-    const folder = runDir(req.params.runId);
-    if (!folder || !fs.existsSync(folder)) return res.status(404).json({ error: 'This run has no evidence (any more).' });
-    let zip;
-    try {
-      zip = await evidence.zipFolder(folder);
-    } catch (error) {
-      log(`Could not zip ${req.params.runId}: ${error.message}`);
-      return res.status(500).json({ error: 'Could not make the zip file.' });
-    }
-    audit(req, 'evidence-download', { runId: req.params.runId });
-    res.set('Content-Type', 'application/zip');
-    res.attachment(`${req.params.runId}-evidence.zip`);
-    fs.createReadStream(zip)
-      .on('close', () => fs.rm(path.dirname(zip), { recursive: true, force: true }, () => {}))
-      .pipe(res);
-  });
+  // (A run's other files, its Playwright report and its evidence as a zip are no longer offered:
+  // the page lost those buttons, user's request 2026-10-25. They stay in the evidence folder.)
   app.post('/api/export', ...changes, (req, res) => {
     const wanted = Array.isArray(req.body?.runIds) ? new Set(req.body.runIds.map(String)) : null;
     const rows = allRows(100_000).filter((row) => !wanted || wanted.has(row.runId));

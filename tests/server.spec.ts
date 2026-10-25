@@ -224,8 +224,6 @@ test.describe('hosted server', () => {
       ['POST', '/api/live/input'],
       ['GET', '/api/events'],
       ['GET', '/api/screenshot?run=2026-10-08_10-00-00&name=screenshot-1.png'],
-      ['GET', '/api/runs/2026-10-08_10-00-00/files/log.txt'],
-      ['GET', '/api/runs/2026-10-08_10-00-00/evidence.zip'],
     ]) {
       expect((await alice.call(method, path, method === 'POST' ? {} : undefined)).status, path).toBe(401);
     }
@@ -583,20 +581,20 @@ test.describe('hosted server', () => {
     expect(shot.headers.get('content-type')).toBe('image/png');
     expect((await client(setup.app).call('GET', screenshot)).status).toBe(401);
 
-    const report = await bob.call('GET', `/api/runs/${failedRun}/files/error-report.txt`);
-    expect(report.status).toBe(200);
-    expect(report.headers.get('content-disposition')).toContain('attachment');
-    expect(String(report.data)).toContain('Code:        PRODUCT_NOT_FOUND');
-    expect(String(report.data)).toContain('Operator:    Alice');
-    for (const path of [`/api/runs/${failedRun}/files/..%2F..%2F..%2Fconfig%2Fusers.json`, `/api/runs/${failedRun}/files/order.exe`, '/api/runs/not-a-run/files/log.txt']) {
+    // No error-report.txt, Playwright report or Evidence (.zip) downloads any more (user's request
+    // 2026-10-25): the error report is copied in the page. Its file stays in the run's evidence.
+    for (const path of [
+      `/api/runs/${failedRun}/files/error-report.txt`,
+      `/api/runs/${failedRun}/files/..%2F..%2F..%2Fconfig%2Fusers.json`,
+      `/api/runs/${okRun}/report`,
+      `/api/runs/${okRun}/report/index.html`,
+      `/api/runs/${okRun}/evidence.zip`,
+    ]) {
       expect((await bob.call('GET', path)).status, path).toBe(404);
     }
-    const html = await bob.call('GET', `/api/runs/${okRun}/report/index.html`);
-    expect(html.status).toBe(200);
-    expect(String(html.data)).toContain('Fake Playwright report');
-    const zip = await bob.call('GET', `/api/runs/${okRun}/evidence.zip`);
-    expect(zip.status).toBe(200);
-    expect((zip.data as Buffer).subarray(0, 2).toString()).toBe('PK');
+    const errorReport = readFileSync(join(runFolder(setup, failedRun), 'error-report.txt'), 'utf8');
+    expect(errorReport).toContain('Code:        PRODUCT_NOT_FOUND');
+    expect(errorReport).toContain('Operator:    Alice');
     const csv = await bob.call('POST', '/api/export', { runIds: [okRun, failedRun] });
     expect(csv.headers.get('content-type')).toContain('text/csv');
     expect(String(csv.data).trimEnd().split('\r\n')).toHaveLength(3);
@@ -657,7 +655,7 @@ test.describe('hosted server', () => {
     const later = new Date(Date.now() + 200 * 86_400_000);
     await setup.app.maintenance(later);
     expect(existsSync(runFolder(setup, runId))).toBe(false);
-    expect((await alice.history()).data.rows[0]).toMatchObject({ runId, status: 'completed', evidenceState: 'deleted', screenshots: [], hasReport: false });
+    expect((await alice.history()).data.rows[0]).toMatchObject({ runId, status: 'completed', evidenceState: 'deleted', screenshots: [] });
     const pad = (n: number) => String(n).padStart(2, '0');
     const backups = readdirSync(join(setup.dataDir, 'backups'));
     expect(backups).toEqual([`automation-${later.getFullYear()}-${pad(later.getMonth() + 1)}-${pad(later.getDate())}.db`]);
@@ -776,7 +774,9 @@ test.describe('hosted server', () => {
     await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
     await expect(page.locator('#result .verdict')).toHaveText('Completed', { timeout: 15_000 });
     await expect(page.locator('#result .order-number')).toHaveText('12345678');
-    await expect(page.locator('#result')).toContainText('Evidence (.zip)');
+    // Its screenshots, and no Evidence (.zip) or Open report (user's request 2026-10-25).
+    await expect(page.locator('#result .wa-thumb')).not.toHaveCount(0);
+    for (const name of ['Evidence (.zip)', 'Open report', 'Report', 'error-report.txt']) await expect(page.locator('#result').getByRole('button', { name, exact: true })).toHaveCount(0);
 
     // The shared history: her run and Bob's, with Bob's screenshot.
     await page.getByRole('tab', { name: /Logs \/ History/ }).click();

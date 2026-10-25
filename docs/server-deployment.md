@@ -29,7 +29,7 @@ Laptop (Edge, LAN/VPN) ──HTTPS 443──▶ IIS (company certificate; empty 
 | Each person's **testing account** (the staging shop) and **backoffice account**, while they are signed in | **Service memory**, for that person's session (until sign-out, 2 hours idle, 10 hours at most, or a service restart) | Nobody else |
 | The same accounts, **remembered** for the person's next sign-in (unless they untick Remember) | `automation.db`, **sealed** (AES-256-GCM) with a key made from that person's portal password (scrypt), at sign-in | Only that person's sign-in opens them: not administrators, not a copy of the database. After their portal password is reset, they can't be opened: they are dropped at the next sign-in and entered once again |
 | Shared history, audit trail, each person's last order | `D:\WatsonsAutomation\data\automation.db` (+ nightly copies in `data\backups\`) | Service account and administrators; people see the history in the app |
-| Evidence of each run (screenshots, logs, report, error report) | `D:\WatsonsAutomation\evidence\<yyyy-mm-dd>\<run id>\` | Service account and administrators; signed-in people through the app |
+| Evidence of each run (screenshots, logs, report, error report) | `D:\WatsonsAutomation\evidence\<yyyy-mm-dd>\<run id>\` | Service account and administrators; signed-in people see the screenshots in the app (since 2026-10-25 it offers no other evidence files: the error report is copied from the page) |
 | Service log | `D:\WatsonsAutomation\logs\service.log` | Administrators |
 | Live browser pictures, and what people type into it | **Not kept**: passed between the run's browser and its owner's page while the run goes on | The run's owner only |
 
@@ -216,7 +216,7 @@ it couldn't follow to the end shows as **Interrupted** in the history.
   - sign-outs
   - testing account set or cleared
   - run start, stop and end, and each answer to a run's question (who chose what, 2026-10-22)
-  - exports, downloads and deletions
+  - exports and deletions
 - **Updating the app:** `app` is a Git copy of the project's private repository (since
   2026-10-14). Push the changes from a development PC, then, in an administrator PowerShell on
   the VM, run:

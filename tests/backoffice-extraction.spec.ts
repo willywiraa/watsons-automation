@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { BackofficeOrderPage } from '../src/pages/BackofficeOrderPage';
+import { BackofficeSession } from '../src/pages/BackofficeSession';
 import { StepError } from '../src/utils/errors';
+import { STAND_IN_ACCOUNT } from './helpers/stand-in-backoffice';
 
 // Offline checks of the wait after "Approve Order" (user's request 2026-10-23): ORDER_EXTRACTED
 // ends it at once; once the order is "Order Split" it gets at most one more minute (shortened
@@ -8,7 +10,7 @@ import { StepError } from '../src/utils/errors';
 
 /** A backoffice whose order shows these statuses, one per look (the last one stays). */
 function backofficeShowing(page: Page, statuses: string[]): BackofficeOrderPage {
-  const orders = new BackofficeOrderPage(page);
+  const orders = new BackofficeOrderPage(new BackofficeSession(page, STAND_IN_ACCOUNT));
   let look = 0;
   orders.status = async () => statuses[Math.min(look++, statuses.length - 1)];
   return orders;
@@ -44,6 +46,6 @@ test.describe('waiting for extraction after Approve Order', () => {
   });
 
   test('an order already at "Order Split" was approved before: Approve Order is not clicked', async ({ page }) => {
-    expect(await new BackofficeOrderPage(page).approve('07131022', 'Order Split')).toBe(false);
+    expect(await new BackofficeOrderPage(new BackofficeSession(page, STAND_IN_ACCOUNT)).approve('07131022', 'Order Split')).toBe(false);
   });
 });

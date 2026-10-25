@@ -889,8 +889,15 @@ test.describe('launcher window', () => {
     await page.locator('#viewer-open').click();
     await expect.poll(() => opened.at(-1)).toMatch(/screenshot-1-failure\.png$/);
     await page.locator('#viewer-close').click();
-    await details.getByRole('button', { name: 'Evidence folder' }).click();
-    await expect.poll(() => opened.at(-1)).toMatch(/reports[\\/]\d{4}-\d{2}-\d{2}_[\d_-]+$/);
+    // No Evidence folder, Playwright report or error-report.txt (user's request 2026-10-25): the
+    // error report is copied, and the window opens nothing but a screenshot.
+    for (const name of ['Evidence folder', 'Playwright report', 'error-report.txt']) await expect(page.getByRole('button', { name })).toHaveCount(0);
+    await expect(details.getByRole('button', { name: 'Copy error report' })).toBeVisible();
+    const key = new URL(app.url).searchParams.get('token')!;
+    const runId = (await details.locator('.p-x__facts dt:has-text("Run") + dd').textContent())!.trim();
+    for (const what of ['folder', 'report', 'error-report']) {
+      expect(await postJson(app.url, '/api/open', { runId, what }, key)).toMatchObject({ status: 400, body: { error: 'Only screenshots can be opened.' } });
+    }
 
     // Export: the runs shown, as a CSV file for Excel.
     await page.getByRole('button', { name: 'Export CSV' }).click();

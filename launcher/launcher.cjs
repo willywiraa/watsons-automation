@@ -705,7 +705,6 @@ class TestRunner {
     if (row?.errorReport) {
       try {
         fs.writeFileSync(path.join(run.dir, ERROR_REPORT_FILE), row.errorReport.replace(/\n/g, '\r\n')); // Windows line ends
-        row.hasErrorReport = true;
         this.addLine(run, `[launcher] Error report: ${path.join(run.folder, ERROR_REPORT_FILE)}`);
       } catch {
         // The evidence folder was deleted; the window still shows the error.
@@ -872,8 +871,6 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
     error: null,
     warning: null,
     screenshots,
-    hasReport: fs.existsSync(path.join(folderPath, 'html-report', 'index.html')),
-    hasErrorReport: files.includes(ERROR_REPORT_FILE),
     errorReport: null,
   };
   if (row.durationMs === null && record?.finishedAt) row.durationMs = Date.parse(record.finishedAt) - Date.parse(row.startedAt);
@@ -1184,21 +1181,14 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
         openFile(file);
         return json(res, 200, { file: path.relative(root, file), rows: rows.length });
       }
+      // A screenshot from the viewer's "Open file", opened with Windows. (The report, the error
+      // report and the evidence folder can't be opened from the window any more: user's request
+      // 2026-10-25.)
       if (url.pathname === '/api/open') {
         if (typeof body.runId !== 'string' || !RUN_ID.test(body.runId)) return json(res, 404, { error: 'No such run.' });
-        const folder = path.join(root, 'reports', body.runId);
-        if (!fs.existsSync(folder)) return json(res, 404, { error: 'The evidence folder no longer exists.' });
-        let target = folder;
-        if (body.what === 'report') {
-          const report = path.join(folder, 'html-report', 'index.html');
-          if (fs.existsSync(report)) target = report;
-        } else if (body.what === 'error-report') {
-          const report = path.join(folder, ERROR_REPORT_FILE);
-          if (fs.existsSync(report)) target = report;
-        } else if (body.what === 'screenshot') {
-          target = evidenceFile(root, body.runId, body.name);
-          if (!target) return json(res, 404, { error: 'No such screenshot.' });
-        }
+        if (body.what !== 'screenshot') return json(res, 400, { error: 'Only screenshots can be opened.' });
+        const target = evidenceFile(root, body.runId, body.name);
+        if (!target) return json(res, 404, { error: 'No such screenshot.' });
         openFile(target);
         return json(res, 200, { opened: path.relative(root, target) });
       }

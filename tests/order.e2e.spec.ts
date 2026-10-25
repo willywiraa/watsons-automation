@@ -5,8 +5,8 @@ import { errorQuestion, METHOD_NAMES, methodEligibilityQuestion, otherMethods, r
 import { OrderProducts } from '../src/flows/order-products';
 import { test, expect } from '../src/fixtures/staging';
 import { BagPage } from '../src/pages/BagPage';
-import { BackofficeLoginPage } from '../src/pages/BackofficeLoginPage';
 import { BackofficeOrderPage } from '../src/pages/BackofficeOrderPage';
+import { BackofficeSession } from '../src/pages/BackofficeSession';
 import { CheckoutPage, MODE_NAMES } from '../src/pages/CheckoutPage';
 import { LoginPage } from '../src/pages/LoginPage';
 import { OrderConfirmationPage } from '../src/pages/OrderConfirmationPage';
@@ -209,17 +209,19 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
 
   // Approve ("validate") the new order in the staging backoffice with the Customer Support role,
   // so it is extracted (user's request 2026-10-06). In a second tab: the confirmation page stays
-  // in the first one. Approve Order is clicked at most once.
-  const backofficeTab = await page.context().newPage();
-  const backoffice = new BackofficeOrderPage(backofficeTab);
-  await orderRun.step('Backoffice login', () => new BackofficeLoginPage(backofficeTab).signIn(settings.backoffice!));
+  // in the first one. Approve Order is clicked at most once. If the backoffice signs the run out
+  // (its account open in another tab or browser), that tab is closed and a new one signs in again
+  // (src/pages/BackofficeSession.ts, user's request 2026-10-25).
+  const session = new BackofficeSession(await page.context().newPage(), settings.backoffice!);
+  const backoffice = new BackofficeOrderPage(session);
+  await orderRun.step('Backoffice login', () => session.signIn());
   const statusBefore = await orderRun.step('Find order in backoffice', () => backoffice.open(orderNumber));
   const approved = await orderRun.step('Approve order', () => backoffice.approve(orderNumber, statusBefore));
   orderRun.data.backoffice = { approved, statuses: [] };
   const extraction = await orderRun.step('Order extracted', () => backoffice.waitUntilExtracted(orderNumber));
   Object.assign(orderRun.data.backoffice, { statuses: extraction.statuses, extractionPending: !extraction.extracted });
   await backoffice.showStatus(orderNumber);
-  await test.info().attach('backoffice order', { body: await backofficeTab.screenshot(), contentType: 'image/png' });
+  await test.info().attach('backoffice order', { body: await session.page.screenshot(), contentType: 'image/png' });
   const finalStatus = extraction.statuses.at(-1);
   log(`Order test completed successfully. Order number: ${orderNumber} (backoffice: ${finalStatus}${extraction.extracted ? '' : '; extraction still pending'})`, 'PASS');
   if (!extraction.extracted) log(`WTCSG${orderNumber} is at ${finalStatus}: extraction to ORDER_EXTRACTED is still pending. Wait a few minutes, then check it in the backoffice.`, 'WARN');

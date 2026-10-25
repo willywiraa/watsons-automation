@@ -1,6 +1,6 @@
 import { test } from '../src/fixtures/staging';
-import { BackofficeLoginPage } from '../src/pages/BackofficeLoginPage';
 import { backofficeCode, BackofficeOrderPage } from '../src/pages/BackofficeOrderPage';
+import { BackofficeSession } from '../src/pages/BackofficeSession';
 import { log } from '../src/utils/log';
 
 // Approves an order that ALREADY EXISTS, in the staging backoffice (user's request 2026-10-07):
@@ -28,15 +28,18 @@ test('approve an existing order in the backoffice', async ({ page, settings, ord
   const code = backofficeCode(orderNumber);
   log(`Starting approval of existing order ${code} in the Watsons STAGING backoffice (no new order is created)`);
 
-  const backoffice = new BackofficeOrderPage(page);
-  await orderRun.step('Backoffice login', () => new BackofficeLoginPage(page).signIn(settings.backoffice!));
+  // Signed out by the backoffice (its account open in another tab or browser): this tab is closed
+  // and a new one signs in again (src/pages/BackofficeSession.ts, user's request 2026-10-25).
+  const session = new BackofficeSession(page, settings.backoffice!);
+  const backoffice = new BackofficeOrderPage(session);
+  await orderRun.step('Backoffice login', () => session.signIn());
   const statusBefore = await orderRun.step('Find order in backoffice', () => backoffice.open(orderNumber));
   const approved = await orderRun.step('Approve order', () => backoffice.approve(orderNumber, statusBefore));
   orderRun.data.backoffice = { approved, statuses: [] };
   const extraction = await orderRun.step('Order extracted', () => backoffice.waitUntilExtracted(orderNumber));
   Object.assign(orderRun.data.backoffice, { statuses: extraction.statuses, extractionPending: !extraction.extracted });
   await backoffice.showStatus(orderNumber);
-  await test.info().attach('backoffice order', { body: await page.screenshot(), contentType: 'image/png' });
+  await test.info().attach('backoffice order', { body: await session.page.screenshot(), contentType: 'image/png' });
   const finalStatus = extraction.statuses.at(-1);
   const pending = extraction.extracted ? '' : '; extraction still pending';
   // The launcher reads these lines (launcher/launcher.cjs, PASS_LINES).
