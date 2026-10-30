@@ -8,6 +8,7 @@ test.describe('order file', () => {
     expect(order).toEqual({
       deliveryMethod: 'click_collect',
       deliveryMode: 'express',
+      pickupStore: 'auto',
       products: [
         { plu: '10117', quantity: 1 },
         { plu: '10321', quantity: 2 },
@@ -27,6 +28,13 @@ test.describe('order file', () => {
     expect(parseOrder('delivery: Home Delivery\n1').deliveryMode).toBe('express');
     expect(parseOrder('delivery: Home Delivery\nmode: Standard\n1').deliveryMode).toBe('standard');
     expect(() => parseOrder('delivery: Home Delivery\nmode: Rocket\n1')).toThrow(/Line 2: unknown mode "Rocket"/);
+  });
+
+  test('Shell Station: how its pickup store is chosen, the run choosing when not given (2026-10-30)', () => {
+    expect(parseOrder('delivery: Shell Station\n1').pickupStore).toBe('auto');
+    expect(parseOrder('delivery: Shell Station\npickup store: Let me choose\n1').pickupStore).toBe('ask');
+    expect(parseOrder('delivery: Shell Station\npickup store: choose for me\n1').pickupStore).toBe('auto');
+    expect(() => parseOrder('delivery: Shell Station\npickup store: Bukit Batok\n1')).toThrow(/Line 2: unknown pickup store choice "Bukit Batok"/);
   });
 
   test('lists every problem with its line number', () => {

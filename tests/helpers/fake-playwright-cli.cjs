@@ -19,6 +19,9 @@
 //            showing a page that logs clicks and typing ("fake page: …"). Its last step lasts until
 //            the page was clicked (and then left alone for 2 s); then the run ends, browser too.
 //   Approving order 22222222, or an order with PLU 2222: ends at "Order Split", extraction pending.
+//   Shell Station (2026-10-30): no mode; its step is "Pickup Store Selection". "pickup store: Let me
+//            choose" asks which of PICKUP_STORES (a "choose" question, interactive runs); otherwise
+//            the first one is used. The result names the store.
 // It prints only fingerprints of the accounts it received (first 8 hex digits of a SHA-256), never them.
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
@@ -46,12 +49,22 @@ const methods = { 'Home Delivery': 'home_delivery', 'Click & Collect': 'click_co
 let method = methods[orderText.match(/^delivery: (.+)$/m)?.[1]];
 let mode = /^mode: standard\s*$/im.test(orderText) ? 'standard' : 'express';
 let modeName = mode === 'standard' ? 'Standard' : 'Express';
+// Shell Station (2026-10-30): no mode; its pickup store, chosen for the person or by them.
+const PICKUP_STORE_STEP = 'Pickup Store Selection';
+const PICKUP_STORES = [
+  { value: 'FUEL435', label: 'SHELL BUKIT BATOK ROAD', detail: '11 Bukit Batok West Avenue 3, 659166' },
+  { value: 'FUEL101', label: 'SHELL ANG MO KIO', detail: '2 Ang Mo Kio Avenue 6, 569827' },
+  { value: 'FUEL202', label: 'SHELL CLEMENTI', detail: '1 Clementi Road, 129737' },
+];
+const pickupStoreChoice = /^pickup store: let me choose\s*$/im.test(orderText) ? 'ask' : 'auto';
+let store = null;
+const deliveryStep = () => (method === 'shell_station' ? PICKUP_STORE_STEP : `${modeName} Delivery Selection`);
 let excluded = products.filter((line) => line.plu === '46465');
 let ordered = products.filter((line) => line.plu !== '46465');
 const soldOut = [];
 const steps = approving
   ? ['Backoffice login', 'Find order in backoffice', 'Approve order', 'Order extracted']
-  : ['Login', 'Empty bag', 'Product Search', 'Add to bag', 'Cart validation', `${modeName} Delivery Selection`];
+  : ['Login', 'Empty bag', 'Product Search', 'Add to bag', 'Cart validation', deliveryStep()];
 // Like tests/order.e2e.spec.ts: a new order is approved only with a backoffice account (2026-10-14).
 const approvesNewOrder = placeOrder && Boolean(process.env.WATSONS_BACKOFFICE_USERNAME);
 if (placeOrder) steps.push('Checkout', 'Pay', 'OTP', 'Order confirmation');
@@ -137,7 +150,7 @@ function writeResult(result) {
     startedAt: new Date(Date.now() - 1000).toISOString(),
     finishedAt: new Date().toISOString(),
     placeOrder,
-    delivery: approving ? {} : { method, mode },
+    delivery: approving ? {} : method === 'shell_station' ? { method, ...(store ? { store } : {}) } : { method, mode },
     products: { ordered: approving ? [] : ordered, soldOut, excludedNotEligible: excluded.map((line) => line.plu), freeGiftRemoved: null },
     decisions,
     consoleErrors: [],
@@ -174,9 +187,20 @@ function ask(question, then) {
     clearInterval(poll);
     const answer = JSON.parse(fs.readFileSync(file, 'utf8'));
     const option = question.options.find((candidate) => candidate.action === answer.action && candidate.mode === answer.mode && candidate.method === answer.method);
-    decisions.push({ at: new Date().toISOString(), step: question.step, kind: question.kind, plus: question.plus, message: question.message, action: answer.action, label: option.label, ...(answer.plu ? { plu: answer.plu } : {}) });
-    console.log(`[12:00:00] [INFO] Decision: ${option.label}${answer.plu ? ` (PLU ${answer.plu})` : ''}`);
-    then(answer);
+    const choice = answer.action === 'choose' ? question.choices.find((candidate) => candidate.value === answer.value) : null;
+    decisions.push({
+      at: new Date().toISOString(),
+      step: question.step,
+      kind: question.kind,
+      plus: question.plus,
+      message: question.message,
+      action: answer.action,
+      label: option.label,
+      ...(answer.plu ? { plu: answer.plu } : {}),
+      ...(choice ? { choice: choice.label } : {}),
+    });
+    console.log(`[12:00:00] [INFO] Decision: ${option.label}${answer.plu ? ` (PLU ${answer.plu})` : ''}${choice ? ` (${choice.label})` : ''}`);
+    then(answer, choice);
   }, 50);
 }
 function decided(outcome) {
@@ -247,7 +271,7 @@ function question(step) {
         decided('Delivery mode: Standard');
       } else if (answer.action === 'switch_method') {
         method = answer.method;
-        steps.splice(index, 0, 'Cart validation', step); // back to the bag, then the checkout page again (Shell Station takes it)
+        steps.splice(index, 0, 'Cart validation', deliveryStep()); // back to the bag, then the checkout page again (Shell Station takes it)
         decided(`Delivery method: ${METHOD_LABELS[method]}`);
       } else if (answer.action === 'skip') {
         // Out of the order; Cart validation takes it out of the bag, then the checkout page again.
@@ -261,6 +285,17 @@ function question(step) {
         steps.splice(index, 0, 'Add to bag', 'Cart validation', step);
         decided(`PLU 4444 removed; PLU ${added.join(', ')} added instead`);
       }
+      next();
+    });
+    return true;
+  }
+  // Shell Station, "Let me choose" (2026-10-30): the stores to pick one from.
+  if (step === PICKUP_STORE_STEP && pickupStoreChoice === 'ask' && !store) {
+    const options = [{ action: 'choose', label: 'Use this store' }, { action: 'stop', label: 'Stop automation' }];
+    const message = 'Which Shell Station should the order be picked up from?';
+    ask({ kind: 'choose_store', step, plus: [], message, choices: PICKUP_STORES, options }, (answer, choice) => {
+      store = choice.label;
+      console.log(`[12:00:00] [INFO] Pickup store chosen: ${choice.label} (${choice.value})`);
       next();
     });
     return true;
@@ -312,8 +347,13 @@ function next() {
   if (step === 'Find order in backoffice' && orderNumberToApprove === '00000404') {
     return fail(step, 'ORDER_NOT_FOUND_IN_BACKOFFICE', "WTCSG00000404 is not in the backoffice's Orders list.", 'https://backoffice.example.test/backoffice/', orderNumberToApprove);
   }
-  if (step === `${modeName} Delivery Selection` && excluded.length > 0) {
-    console.log(`[12:00:00] [WARN] Not available for ${modeName}, left out of this order: PLU ${excluded.map((line) => line.plu).join(', ')}`);
+  if (step === PICKUP_STORE_STEP && !store) {
+    store = PICKUP_STORES[0].label;
+    console.log(`[12:00:00] [INFO] Pickup store chosen: ${store} (${PICKUP_STORES[0].value}), the first in staging's list`);
+  }
+  if (step === deliveryStep() && excluded.length > 0) {
+    const where = method === 'shell_station' ? `at ${store}` : `for ${modeName}`;
+    console.log(`[12:00:00] [WARN] Not available ${where}, left out of this order: PLU ${excluded.map((line) => line.plu).join(', ')}`);
   }
   if (step === (placeOrder ? 'Pay' : 'Login') && products.some((line) => line.plu === '99')) {
     const browser = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });

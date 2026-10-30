@@ -54,11 +54,14 @@ export class CheckoutPage {
   // with a Confirm button. Click & Collect shows an estimated pickup date instead.
   readonly deliveryDateDialog: Locator;
   readonly availableItemsDialog: Locator;
+  // Every option's "View N item(s)" button.
+  readonly itemsButtons: Locator;
   // Verified 2026-10-05: <button class="next-btn"> Checkout </button>, exactly one.
   readonly checkoutButton: Locator;
 
   constructor(private readonly page: Page) {
     const itemsButton = (label: Locator) => label.getByRole('button', { name: /^View \d+ item\(s\)$/ });
+    this.itemsButtons = page.getByRole('button', { name: /^View \d+ item\(s\)$/ });
     this.deliveryOptions = page.locator('input[type="radio"][name="deliveryMethod"]');
     this.expressLabel = page.locator('label').filter({ hasText: 'Fastest' });
     this.expressOption = this.expressLabel.getByRole('radio');
@@ -80,14 +83,20 @@ export class CheckoutPage {
       : { label: this.standardLabel, radio: this.standardOption, itemsButton: this.standardItemsButton };
   }
 
-  async waitUntilLoaded(): Promise<void> {
+  /**
+   * Waits for the page and its delivery options. `orShown`: what else counts as loaded, e.g. Shell
+   * Station's "Add Shell Station Pick up location", shown instead of any option until a pickup
+   * store is chosen (2026-10-30).
+   */
+  async waitUntilLoaded(orShown?: Locator): Promise<void> {
     try {
       await this.page.waitForURL(/\/checkout\/single\/summary/, { timeout: 60_000 });
       await expect(this.checkoutButton).toBeVisible({ timeout: 60_000 });
       // The page first shows grey placeholders; wait for the real delivery options (seen
       // 2026-10-05): a radio, hidden or not, or else an option's "View N item(s)". Not Express or
       // Standard in particular: the page may offer just one of them (2026-10-14).
-      const optionShown = this.deliveryOptions.or(this.page.getByRole('button', { name: /^View \d+ item\(s\)$/ }));
+      let optionShown = this.deliveryOptions.or(this.itemsButtons);
+      if (orShown) optionShown = optionShown.or(orShown);
       await expect(optionShown.first()).toBeAttached({ timeout: 60_000 });
     } catch (error) {
       await throwIfServerErrorShown(this.page, 'Checkout summary', error);
@@ -168,14 +177,23 @@ export class CheckoutPage {
    * the product names from the bag page. Returns the PLUs marked "Not available".
    */
   async unavailableFor(mode: DeliveryMode, namesByPlu: Record<string, string>): Promise<string[]> {
-    const name = MODE_NAMES[mode];
     await this.expectOneOption(mode);
+    const fail = (reason: string, error?: unknown) => this.optionNotFound(mode, reason, error);
+    return this.unavailableIn(this.option(mode).itemsButton, MODE_NAMES[mode], namesByPlu, fail);
+  }
+
+  /**
+   * The products an option's "Available items" list (opened with `itemsButton`) marks "Not
+   * available". `what` names the option in messages ("Express", "the pickup store"); `fail` makes
+   * the error when the list doesn't open or lacks a product.
+   */
+  async unavailableIn(itemsButton: Locator, what: string, namesByPlu: Record<string, string>, fail: (reason: string, error?: unknown) => StepError): Promise<string[]> {
     await closeChatPanelIfShown(this.page);
-    await this.option(mode).itemsButton.click();
+    await itemsButton.click();
     try {
       await expect(this.availableItemsDialog).toBeVisible();
     } catch (error) {
-      throw this.optionNotFound(mode, `The ${name} option's "View N item(s)" button did not open the "Available items" list.`, error);
+      throw fail(`The "View N item(s)" button of ${what} did not open the "Available items" list.`, error);
     }
     const lines = (await this.availableItemsDialog.innerText()).split('\n').map(normalize).filter(Boolean);
 
@@ -184,7 +202,7 @@ export class CheckoutPage {
       const at = lines.indexOf(normalize(productName));
       const status = at < 0 ? undefined : lines.slice(at + 1).find((line) => line === 'in stock' || line === 'not available');
       if (!status) {
-        throw this.optionNotFound(mode, `PLU ${plu} ("${productName}") is not in the ${name} "Available items" list, so its ${name} availability is unknown.`);
+        throw fail(`PLU ${plu} ("${productName}") is not in the "Available items" list of ${what}, so its availability is unknown.`);
       }
       if (status === 'not available') unavailable.push(plu);
     }

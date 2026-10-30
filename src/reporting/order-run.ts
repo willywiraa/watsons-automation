@@ -24,7 +24,10 @@ export interface OrderRunSnapshot {
   automation?: Automation;
   placeOrder: boolean;
   deliveryMethod?: DeliveryMethod;
+  /** None for Shell Station: it has no modes, only a pickup store (2026-10-30). */
   deliveryMode?: DeliveryMode;
+  /** Shell Station: the store the order is picked up from, as staging names it. */
+  pickupStore?: string;
   ordered: OrderLine[];
   soldOut: string[];
   excluded: string[];

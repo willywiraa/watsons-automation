@@ -476,6 +476,37 @@ test.describe('hosted server', () => {
     expect(runLog(setup, runId)).toContain('[launcher] Alice chose: Skip product and continue');
   });
 
+  test('Shell Station: no mode; the person picks the pickup store, and their next page keeps the choice (2026-10-30)', async () => {
+    const alice = client(setup.app);
+    await alice.login('alice');
+    await alice.useAccounts('alice');
+    const state = (await alice.call('POST', '/api/state', {})).data;
+    expect(state.pickupStores).toMatchObject({ auto: { label: 'Choose for me' }, ask: { label: 'Let me choose' } });
+    expect(state.steps.shellStation).toContain('Pickup Store Selection');
+    expect(state.steps.shellStation).not.toContain('Express Delivery Selection');
+    const runId = (await alice.run({ products: '10117', deliveryMethod: 'shell_station', pickupStore: 'ask', confirmed: true })).data.runId as string;
+    await expect.poll(() => runLog(setup, runId)).toContain('[ASK] Which Shell Station should the order be picked up from?');
+    const { id } = JSON.parse(readFileSync(join(runFolder(setup, runId), 'ask.json'), 'utf8'));
+    expect((await alice.call('POST', '/api/state', {})).data.current.question).toMatchObject({
+      id,
+      kind: 'choose_store',
+      step: 'Pickup Store Selection',
+      choices: [{ value: 'FUEL435' }, { value: 'FUEL101' }, { value: 'FUEL202' }],
+    });
+    expect(await alice.call('POST', '/api/answer', { id, action: 'choose', value: 'FUEL999' })).toMatchObject({ status: 409, data: { error: 'Choose one from the list.' } });
+    expect(await alice.call('POST', '/api/answer', { id, action: 'choose', value: 'FUEL101' })).toMatchObject({ status: 200, data: { ok: true } });
+    await ended(setup, runId);
+    const row = ((await alice.history()).data.rows as { runId: string }[]).find((candidate) => candidate.runId === runId);
+    expect(row).toMatchObject({
+      status: 'completed',
+      delivery: { method: 'shell_station', mode: null, store: 'SHELL ANG MO KIO', label: 'Shell Station · SHELL ANG MO KIO' },
+      decisions: [{ action: 'choose', choice: 'SHELL ANG MO KIO', by: 'Alice' }],
+    });
+    expect(setup.app.store.auditEvents().some((event) => event.action === 'run-answer' && String(event.detail).includes('FUEL101'))).toBe(true);
+    // Her next page starts with Shell Station and "Let me choose".
+    expect((await alice.call('POST', '/api/state', {})).data.defaults).toMatchObject({ deliveryMethod: 'shell_station', pickupStore: 'ask', source: 'your last run' });
+  });
+
   test('shows a run’s browser live to its owner only, passes clicks and typing on; the run ends by itself once done', async () => {
     const alice = client(setup.app);
     const bob = client(setup.app);

@@ -10,6 +10,13 @@ export type DeliveryMethod = 'home_delivery' | 'click_collect' | 'shell_station'
 /** How fast: Express ("Fastest" on the checkout summary) or Standard (since 2026-10-13). */
 export type DeliveryMode = 'express' | 'standard';
 
+/**
+ * Shell Station's pickup store (user's request 2026-10-30): "auto", the run chooses (the store the
+ * checkout page already shows, else the first in staging's list), or "ask", the person picks one
+ * from staging's list while the run waits. Shell Station has no Express or Standard.
+ */
+export type PickupStoreChoice = 'auto' | 'ask';
+
 export interface OrderLine {
   plu: string;
   quantity: number;
@@ -17,7 +24,10 @@ export interface OrderLine {
 
 export interface Order {
   deliveryMethod: DeliveryMethod;
+  /** Home Delivery and Click & Collect only: Shell Station has one way to deliver (2026-10-30). */
   deliveryMode: DeliveryMode;
+  /** Shell Station only. */
+  pickupStore: PickupStoreChoice;
   products: OrderLine[];
 }
 
@@ -38,6 +48,14 @@ const DELIVERY_NAMES: Record<string, DeliveryMethod> = {
   shell_station: 'shell_station',
 };
 
+// The pickup store line's values (the launcher writes the first ones).
+const PICKUP_STORE_NAMES: Record<string, PickupStoreChoice> = {
+  'choose for me': 'auto',
+  auto: 'auto',
+  'let me choose': 'ask',
+  ask: 'ask',
+};
+
 // "10321", "10321 2", "10321,2", "10321 x2"
 const PRODUCT_LINE = /^(\S+?)(?:(?:\s*[,x×]\s*|\s+)(\S+))?$/i;
 
@@ -45,6 +63,7 @@ export function parseOrder(text: string): Order {
   const problems: string[] = [];
   let deliveryMethod: DeliveryMethod | undefined;
   let deliveryMode: DeliveryMode = 'express';
+  let pickupStore: PickupStoreChoice = 'auto';
   const products: OrderLine[] = [];
   const firstLineOf = new Map<string, number>();
 
@@ -58,6 +77,14 @@ export function parseOrder(text: string): Order {
       const value = mode[1].trim().toLowerCase();
       if (value === 'express' || value === 'standard') deliveryMode = value;
       else problems.push(`Line ${lineNumber}: unknown mode "${mode[1].trim()}" (use Express or Standard).`);
+      return;
+    }
+
+    const store = line.match(/^pickup store\s*:\s*(.*)$/i);
+    if (store) {
+      const choice = PICKUP_STORE_NAMES[store[1].trim().toLowerCase()];
+      if (choice) pickupStore = choice;
+      else problems.push(`Line ${lineNumber}: unknown pickup store choice "${store[1].trim()}" (use Choose for me or Let me choose).`);
       return;
     }
 
@@ -95,7 +122,7 @@ export function parseOrder(text: string): Order {
   if (problems.length > 0) {
     throw new OrderFileError(`The order file has problems:\n- ${problems.join('\n- ')}`);
   }
-  return { deliveryMethod: deliveryMethod!, deliveryMode, products };
+  return { deliveryMethod: deliveryMethod!, deliveryMode, pickupStore, products };
 }
 
 /**

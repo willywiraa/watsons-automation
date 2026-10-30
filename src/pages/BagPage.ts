@@ -21,6 +21,8 @@ export class BagPage {
   readonly nextButton: Locator;
   // Verified on staging 2026-10-05 (2 runs): the trash button asks for confirmation in a dialog;
   // its "Remove" button is named "positiveButton" (a generic name, so the dialog is picked by its text).
+  // A product that brings a promotion's free item asks "ARE YOU CONFIRM TO DELETE" instead ("related
+  // promotion free item(s) will be remove as well", seen 2026-10-30), with the same Remove button.
   readonly confirmRemoveButton: Locator;
 
   constructor(private readonly page: Page) {
@@ -29,7 +31,7 @@ export class BagPage {
     this.nextButton = page.getByRole('button', { name: /^\W*Next$/ });
     this.confirmRemoveButton = page
       .getByRole('dialog')
-      .filter({ hasText: 'Are you sure you want to remove this item?' })
+      .filter({ hasText: /Are you sure you want to remove this item\?|Are you confirm to delete/i })
       .getByRole('button', { name: 'positiveButton' });
   }
 

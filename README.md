@@ -8,7 +8,8 @@ Automated end-to-end order test for the **Watsons STAGING** website, built with
 > UI/UX design: [UI-UX-PRD.md](UI-UX-PRD.md); the launcher page follows its refined prototype (2026-10-21).
 
 **Status:** all PRD phases (1–12) built. Open **WatsonsTester.exe** (or `npm run launcher`),
-paste the PLUs, and click **Place test order**, with Express or Standard delivery (Standard since 2026-10-13). The
+paste the PLUs, and click **Place test order**, with Express or Standard delivery (Standard since 2026-10-13; Shell Station
+with its pickup store instead, since 2026-10-30). The
 launcher can also approve an order that already exists, and keeps a history of every run.
 
 ## What you need
@@ -73,6 +74,9 @@ mode: Express
 - `mode:` is `Express` (the default) or `Standard`. From the command line, products that the
   mode can't deliver right now are left out of the order and listed in the result; a run from
   the launcher window asks first ("When a run needs your decision", below).
+- **Shell Station** has no mode (since 2026-10-30): instead, `pickup store:` is `Choose for me`
+  (the default) or `Let me choose` ("Shell Station pickup store", below). A `mode:` line is
+  ignored for it.
 - One PLU per line (paste freely; blank lines are fine). Add a quantity after a PLU for more
   than one unit (`10321 2`). Lines starting with `#` are ignored.
 - From the command line, sold-out products are skipped and listed, and a PLU that isn't found
@@ -117,6 +121,8 @@ On the left, the **workflow**; on the right, the **Ready** bar with the run butt
   page) or **Standard** (the regular delivery or pickup date). When the mode or method can't
   take some products, the run asks you what to do (below). The test waits 5 seconds from one
   "add to bag" click to the next (fixed since 2026-10-21; not a setting).
+  **Shell Station** has only one way to deliver, so **Mode** is hidden for it and **Pickup
+  store** shows instead (since 2026-10-30): **Choose for me** or **Let me choose** (below).
 - **Order** (approving): its number (`07091012` or `WTCSG07091012`); beside it, its backoffice
   code, and below it who placed that order, if it is in the history.
 - **Accounts**: where the accounts come from (`.env` on this PC; never shown).
@@ -179,6 +185,8 @@ needed"). It shows only the choices that make sense then:
 | Staging won't add it (Add to bag): its "not available for checkout" pop-up, or its "add to bag" only opens the product's page | "Product 57893 can't be added to the bag. …" | the same |
 | The delivery mode can't take some products (checkout page) | "Products 17971 and 21684 are not eligible for Express delivery with Home Delivery." | Remove them and continue · Remove them and add other PLUs (one product: Replace with another PLU) · Use Standard instead (when Standard takes them) · Try another delivery method · Stop automation |
 | The delivery method can't take some products (bag page) | "Products 45614 and 24264 are not eligible for Click & Collect." | Remove them and continue · Remove them and add other PLUs (one product: Replace with another PLU) · Try another delivery method · Stop automation |
+| Shell Station with **Let me choose** (checkout page, since 2026-10-30) | "Which Shell Station should the order be picked up from?", with staging's list of stations (name, address, stock; the one chosen now is selected; a search box when the list is long) | Use this store · Stop automation |
+| The Shell station lacks some products (checkout page) | "Product 43808 is not available at SHELL BUKIT BATOK ROAD." | Remove it and continue · Replace with another PLU · Try another delivery method · Stop automation |
 | Anything else before Checkout | "Something went wrong at Add to bag (PLU 5555). How would you like to proceed?", with the reason | Retry · Skip that product (when there is one) · Try another delivery method (at the bag) · Stop automation |
 
 - **Skip** is offered only when other products are left to order.
@@ -200,7 +208,7 @@ needed"). It shows only the choices that make sense then:
   **Decisions**, in Logs / History (and its CSV export), and in `result.json` (`decisions`).
 - Runs from the command line (`npm run order`) are never asked. They do what they always did:
   skip sold-out products, stop on a PLU that isn't found, and leave out products the mode can't
-  deliver.
+  deliver; for Shell Station they choose the pickup store themselves.
 
 On the hosted version, only the person whose run it is can answer, and every answer is in the
 audit trail.
@@ -271,6 +279,35 @@ page that doesn't load, or whose Checkout button stays unavailable, stops the ru
 ("Recent Pickup Store"), and with one, Click & Collect runs reach Checkout (2026-10-14). Without
 one, the bag's **Next** stays locked (seen 2026-10-13); the test doesn't choose a store itself
 yet. Home Delivery works with both modes.
+
+### Shell Station pickup store (since 2026-10-30)
+
+Shell Station has **no Express or Standard**: its one way is a pickup at a Shell station, so the
+window hides **Mode** for it and asks how to choose the **pickup store** instead. Its checkout
+step is **Pickup Store Selection** (instead of "Express Delivery Selection"). Before, a Shell
+Station run waited at "Express Delivery Selection" for options that never come, and failed.
+
+On the checkout page, the "Pickup at Shell Station" card shows either the chosen store with
+**Change pickup store** (staging remembers the account's last one, "Recent Pickup Store"), or
+**Add Shell Station Pick up location** when there is none. Either opens staging's store list
+(the recipient's name and mobile number, filled in from the account; Region and City filters;
+the stations, numbered, 10 to a page, each saying whether it has the products, e.g. "All
+Available"; **Select this store**). On 2026-10-30 staging had 12 Shell stations.
+
+- **Choose for me** (the default): the store already chosen stays; with none yet, the run takes
+  the first station in the list that has every product ("All Available"), else the first one.
+- **Let me choose**: the run opens the list, shows every station (all regions, all pages) in the
+  window, and waits for your pick (**Use this store**); then it selects it there. A run from the
+  command line can't ask: it chooses for itself.
+- Then it opens the option's **View N item(s)** list. Products the station marks "Not available":
+  a run from the window asks (remove them, replace them, another method, or stop); from the
+  command line they are left out and listed, as with Express.
+- The station chosen is in the log, the result (**Delivery**: "Shell Station · SHELL BUKIT BATOK
+  ROAD"), Logs / History and `result.json` (`delivery.store`).
+- If the list has no name or mobile number for the recipient, or a station can't be chosen, the
+  run stops before Checkout with `PICKUP_STORE_NOT_SELECTED`.
+
+Code: `src/pages/ShellStationPickup.ts` (the card and the store list), `src/flows/shell-station.ts`.
 
 **Products a delivery method can't take** (seen 2026-10-22): with Click & Collect or Shell
 Station, the bag page lists them in a box above the others ("Sorry, your order includes item(s)
@@ -477,6 +514,13 @@ The `reports/` folder is never saved in Git. Delete old run folders whenever you
   new one by itself, up to 3 times. This happens when the same backoffice account is open
   elsewhere, e.g. in your own browser: sign out there or close that backoffice tab, then run again
   (for a new order that is already placed: **Approve existing order** with its number).
+- **"❌ PICKUP_STORE_NOT_SELECTED"** (Shell Station): no pickup store could be chosen. If it says
+  the recipient's name or mobile number is missing, add them to the testing account on staging
+  (My Account), or choose a Shell station once by hand; otherwise staging was slow or its store
+  list changed: run again, and look at the failure screenshot.
+- **"Empty bag" stuck on removing a product** (before 2026-10-30): a product that brings a
+  promotion's free item asks "ARE YOU CONFIRM TO DELETE" instead of the usual "Are you sure you
+  want to remove this item?". The test now takes both.
 - **"❌ SAFETY CHECK FAILED"**: `WATSONS_STAGING_URL` in `.env` isn't the approved staging address, or
   the site tried to send the browser somewhere else. Check the address; don't change the safety lock.
 - **"running scripts is disabled on this system"** when typing `npm` commands in PowerShell: run

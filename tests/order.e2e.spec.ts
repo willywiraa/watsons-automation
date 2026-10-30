@@ -3,6 +3,7 @@ import { ADD_DELAY_SECONDS } from '../src/config/settings';
 import { chooseDelivery } from '../src/flows/delivery-modes';
 import { errorQuestion, METHOD_NAMES, methodEligibilityQuestion, otherMethods, retryOrAsk, stopped } from '../src/flows/order-issues';
 import { OrderProducts } from '../src/flows/order-products';
+import { choosePickupStore, PICKUP_STORE_STEP } from '../src/flows/shell-station';
 import { test, expect } from '../src/fixtures/staging';
 import { BagPage } from '../src/pages/BagPage';
 import { BackofficeOrderPage } from '../src/pages/BackofficeOrderPage';
@@ -12,12 +13,14 @@ import { LoginPage } from '../src/pages/LoginPage';
 import { OrderConfirmationPage } from '../src/pages/OrderConfirmationPage';
 import { PaymentPage } from '../src/pages/PaymentPage';
 import { ProductSearch } from '../src/pages/ProductSearch';
+import { ShellStationPickup } from '../src/pages/ShellStationPickup';
 import { ask, decided, pluList } from '../src/utils/ask';
 import { StepError } from '../src/utils/errors';
 import { log } from '../src/utils/log';
 
-// The whole order flow (PRD §9), with the products, delivery method and mode (Express for now)
-// from test-data/order.txt (or the file in WATSONS_ORDER_FILE, which the launcher sets).
+// The whole order flow (PRD §9), with the products, delivery method and mode (Express or Standard;
+// for Shell Station its pickup store instead, 2026-10-30) from test-data/order.txt (or the file in
+// WATSONS_ORDER_FILE, which the launcher sets).
 // - npm run test:e2e  stops at the Checkout button: no order is created.
 // - npm run order     also checks out, pays with the staging OTP and verifies the order number
 //                     on the confirmation page (sets WATSONS_PLACE_ORDER=yes for that run only).
@@ -45,15 +48,18 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
   let method = order.deliveryMethod;
   let mode = order.deliveryMode;
   const decisions = orderRun.data.decisions;
-  Object.assign(orderRun.data, { placeOrder: settings.placeOrder, deliveryMethod: method, deliveryMode: mode });
-  log(
-    `Starting Watsons STAGING order test (${order.deliveryMode}, ${order.deliveryMethod}, ${order.products.length} PLU(s), ${ADD_DELAY_SECONDS} s between adds)`,
-  );
+  // Shell Station has no Express or Standard, only a pickup store (user's request 2026-10-30).
+  const isShell = () => method === 'shell_station';
+  const deliveryNow = () => ({ deliveryMethod: method, deliveryMode: isShell() ? undefined : mode });
+  Object.assign(orderRun.data, { placeOrder: settings.placeOrder, ...deliveryNow() });
+  const how = isShell() ? `pickup store: ${order.pickupStore === 'ask' ? 'let me choose' : 'choose for me'}` : order.deliveryMode;
+  log(`Starting Watsons STAGING order test (${how}, ${order.deliveryMethod}, ${order.products.length} PLU(s), ${ADD_DELAY_SECONDS} s between adds)`);
 
   const loginPage = new LoginPage(page, stagingUrl);
   const search = new ProductSearch(page);
   const bag = new BagPage(page);
   const checkout = new CheckoutPage(page);
+  const pickup = new ShellStationPickup(page);
   const products = new OrderProducts(page, search, bag, decisions, order.products);
   orderRun.data.soldOut = products.soldOut;
 
@@ -81,7 +87,7 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
   const useMethod = (next: DeliveryMethod) => {
     triedMethods.push(method);
     method = next;
-    orderRun.data.deliveryMethod = method;
+    Object.assign(orderRun.data, deliveryNow());
     decided(decisions, `Delivery method: ${METHOD_NAMES[method]}`);
   };
 
@@ -144,13 +150,17 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
     }
   };
 
-  // Cart validation, then the checkout page's delivery mode; again when the person changes the
-  // delivery method or a product there (the mode alone changes on the checkout page itself).
+  // Cart validation, then the checkout page's delivery mode (Shell Station: its pickup store); again
+  // when the person changes the delivery method or a product there (the mode alone changes on the
+  // checkout page itself).
   let namesByPlu = await cartToCheckout();
   for (;;) {
-    const next = await orderRun.step(`${MODE_NAMES[mode]} Delivery Selection`, async () => {
-      await checkout.waitUntilLoaded();
-      const chosen = await chooseDelivery({ checkout, mode, method, lines: products.lines, namesByPlu, decisions, triedMethods });
+    const shell = isShell();
+    const next = await orderRun.step(shell ? PICKUP_STORE_STEP : `${MODE_NAMES[mode]} Delivery Selection`, async () => {
+      await checkout.waitUntilLoaded(shell ? pickup.storeShown : undefined);
+      const chosen = shell
+        ? await choosePickupStore({ checkout, pickup, choice: order.pickupStore, lines: products.lines, namesByPlu, decisions, triedMethods })
+        : await chooseDelivery({ checkout, mode, method, lines: products.lines, namesByPlu, decisions, triedMethods });
       if (chosen.kind === 'ready') {
         await expect(checkout.checkoutButton).toHaveCount(1);
         await expect(checkout.checkoutButton).toBeVisible();
@@ -160,6 +170,7 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
     if (next.kind === 'ready') {
       orderRun.data.ordered = next.kept;
       orderRun.data.excluded = next.excluded.map((line) => line.plu);
+      if (shell) orderRun.data.pickupStore = next.store;
       break;
     }
     if (next.kind === 'mode') {
@@ -178,7 +189,8 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
     namesByPlu = await cartToCheckout();
   }
   log(`In the order: ${plus(orderRun.data.ordered)}`);
-  if (orderRun.data.excluded.length > 0) log(`Left out, not ${mode}-eligible: ${orderRun.data.excluded.join(', ')}`, 'WARN');
+  const leftOut = isShell() ? `not available at ${orderRun.data.pickupStore ?? 'the pickup store'}` : `not ${mode}-eligible`;
+  if (orderRun.data.excluded.length > 0) log(`Left out, ${leftOut}: ${orderRun.data.excluded.join(', ')}`, 'WARN');
   await test.info().attach('checkout summary', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
 
   if (!settings.placeOrder) {
@@ -188,7 +200,7 @@ test('order flow from the order file', async ({ page, stagingUrl, settings, orde
 
   // Place the order (switched on for this run). Pay and SUBMIT are clicked once each; nothing is
   // ever retried (PRD §41–42).
-  log(`Placing a test order on Watsons STAGING: ${plus(orderRun.data.ordered)} (${mode}, ${method})`, 'WARN');
+  log(`Placing a test order on Watsons STAGING: ${plus(orderRun.data.ordered)} (${isShell() ? `pickup at ${orderRun.data.pickupStore}` : mode}, ${method})`, 'WARN');
   const payment = new PaymentPage(page);
   const confirmation = new OrderConfirmationPage(page, stagingUrl);
   await orderRun.step('Checkout', () => checkout.checkout(settings.placeOrder));

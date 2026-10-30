@@ -84,6 +84,7 @@ class RunManager {
       products: order.productLines.join('\n'),
       deliveryMethod: order.deliveryMethod ?? fallback.deliveryMethod,
       mode: launcher.MODES[order.mode]?.available ? order.mode : 'express',
+      pickupStore: order.pickupStore ?? 'auto',
       source: 'your last run',
     };
   }
@@ -277,7 +278,9 @@ class RunManager {
     const problem = own.runner.answer(body, own.displayName);
     if (problem) return problem;
     const plu = typeof body?.plu === 'string' && /^\d{1,12}$/.test(body.plu.trim()) ? body.plu.trim() : undefined;
-    this.store.audit({ username: session.username, ip, action: 'run-answer', runId: own.runId, detail: { action: String(body?.action), plu } });
+    // A choice from a list: e.g. the pickup store's code (2026-10-30).
+    const value = body?.action === 'choose' && typeof body.value === 'string' ? body.value.slice(0, 40) : undefined;
+    this.store.audit({ username: session.username, ip, action: 'run-answer', runId: own.runId, detail: { action: String(body?.action), plu, value } });
     return null;
   }
 

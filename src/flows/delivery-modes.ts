@@ -13,6 +13,8 @@ export interface ModeResult {
   kept: OrderLine[];
   /** The products this mode can't deliver: left out of the order, and reported. */
   excluded: OrderLine[];
+  /** Shell Station: the pickup store chosen (src/flows/shell-station.ts, 2026-10-30). */
+  store?: string;
 }
 
 /** What the checkout page was already seen to offer, so it isn't looked up twice (2026-10-22). */

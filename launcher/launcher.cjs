@@ -49,6 +49,18 @@ const MODES = {
   standard: { label: 'Standard', available: true, note: 'The regular delivery or pickup date. Products that Standard cannot deliver are left out and listed.' },
 };
 
+/**
+ * Shell Station has no modes, only a pickup store (user's request 2026-10-30): the window asks how
+ * to choose it instead of the mode. The order file's "pickup store:" line (src/config/order.ts).
+ */
+const PICKUP_STORES = {
+  auto: { label: 'Choose for me', note: 'Keeps the store already chosen at checkout; if none, the first Shell station that has all the products.' },
+  ask: { label: 'Let me choose', note: 'The run shows staging’s Shell stations and waits for you to pick one.' },
+};
+/** A Shell Station order's checkout step, instead of "<Mode> Delivery Selection" (tests/order.e2e.spec.ts). */
+const PICKUP_STORE_STEP = 'Pickup Store Selection';
+const SHELL_STATION = 'shell_station';
+
 /** What the launcher runs: a Playwright project (playwright.config.ts) and its test file. */
 const AUTOMATIONS = {
   order: { label: 'Place new order', runLabel: 'Place test order', project: 'e2e', spec: 'order.e2e' },
@@ -62,10 +74,23 @@ const ORDER_STEPS = ['Checkout', 'Pay', 'OTP', 'Order confirmation', 'Backoffice
 /** tests/approve.e2e.spec.ts: the backoffice steps of the order flow, on an order that exists. */
 const APPROVE_STEPS = ['Backoffice login', 'Find order in backoffice', 'Approve order', 'Order extracted'];
 
-/** The steps of a run in order (tests/order.e2e.spec.ts names its delivery step after the mode). */
-function stepsFor(automation, mode) {
+/**
+ * The steps of a run in order (tests/order.e2e.spec.ts names its delivery step after the mode;
+ * Shell Station's is choosing the pickup store).
+ */
+function stepsFor(automation, mode, method = null) {
   if (automation === 'approve') return APPROVE_STEPS;
-  return [...STEPS, `${MODES[mode]?.label ?? MODES.express.label} Delivery Selection`, ...ORDER_STEPS];
+  const delivery = method === SHELL_STATION ? PICKUP_STORE_STEP : `${MODES[mode]?.label ?? MODES.express.label} Delivery Selection`;
+  return [...STEPS, delivery, ...ORDER_STEPS];
+}
+
+/** The progress steps the window shows: approving, an order per mode, and a Shell Station order. */
+function windowSteps() {
+  return {
+    approve: APPROVE_STEPS,
+    order: Object.fromEntries(Object.keys(MODES).map((mode) => [mode, stepsFor('order', mode)])),
+    shellStation: stepsFor('order', null, SHELL_STATION),
+  };
 }
 
 /** From these steps on, stopping a run can leave things unknown; what to check then. */
@@ -171,7 +196,7 @@ function parseProducts(text) {
       const lineNumber = index + 1;
       const line = rawLine.trim();
       if (line === '' || line.startsWith('#')) return;
-      if (/^(delivery|mode)\s*:/i.test(line)) {
+      if (/^(delivery|mode|pickup store)\s*:/i.test(line)) {
         problems.push(`Line ${lineNumber}: choose the delivery method and mode with the buttons below, not in the list.`);
         return;
       }
@@ -203,27 +228,32 @@ function normalizeOrderNumber(text) {
   return String(text ?? '').replace(/\s+/g, '').match(/^(?:WTCSG)?(\d{8})$/i)?.[1] ?? null;
 }
 
-/** The order file the test reads (format: README, "The test order"). */
+/**
+ * The order file the test reads (format: README, "The test order"). Shell Station: the pickup
+ * store choice instead of a mode (2026-10-30).
+ */
 function orderFileText(order) {
   return [
     '# Written by the WatsonsTester launcher.',
     `delivery: ${DELIVERY_METHODS[order.deliveryMethod]}`,
-    `mode: ${MODES[order.mode].label}`,
+    order.deliveryMethod === SHELL_STATION ? `pickup store: ${PICKUP_STORES[order.pickupStore ?? 'auto'].label}` : `mode: ${MODES[order.mode].label}`,
     '',
     ...order.products.map((line) => (line.quantity > 1 ? `${line.plu} ${line.quantity}` : line.plu)),
     '',
   ].join('\n');
 }
 
-/** Reads an order file: its product lines, delivery method and mode (null when not given). */
+/** Reads an order file: its product lines, delivery method, mode and pickup store choice (null when not given). */
 function parseOrderText(text) {
   const productLines = [];
   let deliveryMethod = null;
   let mode = null;
+  let pickupStore = null;
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     const delivery = line.match(/^delivery\s*:\s*(.*)$/i);
     const modeLine = line.match(/^mode\s*:\s*(.*)$/i);
+    const storeLine = line.match(/^pickup store\s*:\s*(.*)$/i);
     if (delivery) {
       const name = delivery[1].trim().toLowerCase();
       const key = Object.keys(DELIVERY_METHODS).find((method) => method === name || DELIVERY_METHODS[method].toLowerCase() === name);
@@ -231,11 +261,14 @@ function parseOrderText(text) {
     } else if (modeLine) {
       const name = modeLine[1].trim().toLowerCase();
       if (has(MODES, name)) mode = name;
+    } else if (storeLine) {
+      const name = storeLine[1].trim().toLowerCase();
+      pickupStore = Object.keys(PICKUP_STORES).find((choice) => choice === name || PICKUP_STORES[choice].label.toLowerCase() === name) ?? pickupStore;
     } else if (line && !line.startsWith('#')) {
       productLines.push(line);
     }
   }
-  return { productLines, deliveryMethod, mode };
+  return { productLines, deliveryMethod, mode, pickupStore };
 }
 
 /** What the window starts with: the last order run from the launcher, else test-data/order.txt. */
@@ -250,10 +283,11 @@ function readDefaults(root) {
       deliveryMethod: order.deliveryMethod ?? 'home_delivery',
       // A mode that isn't available (yet) is not chosen for the person.
       mode: MODES[order.mode]?.available ? order.mode : 'express',
+      pickupStore: order.pickupStore ?? 'auto',
       source: path.relative(root, file),
     };
   }
-  return { products: '', deliveryMethod: 'home_delivery', mode: 'express', source: null };
+  return { products: '', deliveryMethod: 'home_delivery', mode: 'express', pickupStore: 'auto', source: null };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -349,13 +383,18 @@ function checkRunRequest(body, setup) {
   problems.push(...lineProblems);
   if (products.length === 0 && lineProblems.length === 0) problems.push('Add at least one PLU.');
   if (!has(DELIVERY_METHODS, body?.deliveryMethod)) problems.push('Choose a delivery method.');
-  if (!has(MODES, body?.mode)) problems.push('Choose the delivery mode.');
+  // Shell Station has no modes, only a pickup store (2026-10-30); without a choice, the run chooses.
+  const shell = body?.deliveryMethod === SHELL_STATION;
+  if (shell) {
+    if (body?.pickupStore !== undefined && !has(PICKUP_STORES, body.pickupStore)) problems.push('Choose how the pickup store is chosen.');
+  } else if (!has(MODES, body?.mode)) problems.push('Choose the delivery mode.');
   else if (!MODES[body.mode].available) problems.push(`${MODES[body.mode].label} delivery is not available yet (planned for a later phase). Choose Express.`);
   // Every run places an order, so the window asks first (PRD §38); without that answer, no run.
   if (body?.confirmed !== true) problems.push('Placing an order needs your confirmation first.');
   if (problems.length > 0) return { problems };
   // The time between adds is fixed (2026-10-21): a value sent along is ignored.
-  return { problems, order: { automation, products, deliveryMethod: body.deliveryMethod, mode: body.mode, addDelaySeconds: ADD_DELAY_SECONDS } };
+  const delivery = shell ? { mode: null, pickupStore: body.pickupStore ?? 'auto' } : { mode: body.mode };
+  return { problems, order: { automation, products, deliveryMethod: body.deliveryMethod, ...delivery, addDelaySeconds: ADD_DELAY_SECONDS } };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -385,7 +424,7 @@ function newRunId(root, reportsDir = null) {
 /** The settings that hold passwords: on the hosted server, each run gets its own (TestRunner option "env"). */
 const SECRET_SETTINGS = ['WATSONS_USERNAME', 'WATSONS_PASSWORD', 'WATSONS_BACKOFFICE_USERNAME', 'WATSONS_BACKOFFICE_PASSWORD'];
 
-const ASK_ACTIONS = new Set(['skip', 'replace', 'retry', 'switch_mode', 'switch_method', 'stop']);
+const ASK_ACTIONS = new Set(['skip', 'replace', 'retry', 'switch_mode', 'switch_method', 'choose', 'stop']);
 
 /**
  * The question a run asks (ask.json, written by src/utils/ask.ts), checked: only its known fields,
@@ -395,8 +434,19 @@ function readQuestion(dir) {
   const raw = readJson(path.join(dir, 'ask.json'));
   if (!raw || !Number.isInteger(raw.id) || !Array.isArray(raw.options)) return null;
   const text = (value, max = 300) => (typeof value === 'string' ? value.slice(0, max) : '');
+  // A list to choose one from, e.g. Shell Station's pickup stores (2026-10-30): each one's value
+  // (a store code) and what the window shows of it.
+  const choices = (Array.isArray(raw.choices) ? raw.choices : [])
+    .filter((choice) => typeof choice?.value === 'string' && /^[\w-]{1,40}$/.test(choice.value))
+    .slice(0, 300)
+    .map((choice) => ({
+      value: choice.value,
+      label: text(choice.label, 120) || choice.value,
+      ...(text(choice.detail, 200) ? { detail: text(choice.detail, 200) } : {}),
+      ...(choice.selected === true ? { selected: true } : {}),
+    }));
   const options = raw.options
-    .filter((option) => ASK_ACTIONS.has(option?.action))
+    .filter((option) => ASK_ACTIONS.has(option?.action) && (option.action !== 'choose' || choices.length > 0))
     .slice(0, 8)
     .map((option) => ({
       action: option.action,
@@ -415,6 +465,7 @@ function readQuestion(dir) {
     message: text(raw.message),
     detail: text(raw.detail),
     options,
+    ...(choices.length > 0 ? { choices } : {}),
     askedAt: text(raw.askedAt, 40),
   };
 }
@@ -431,6 +482,7 @@ function writeRecord(run, state) {
     orderNumber: run.orderNumber,
     deliveryMethod: run.deliveryMethod,
     mode: run.mode,
+    pickupStore: run.pickupStore,
     products: run.products,
     addDelaySeconds: run.addDelaySeconds,
     step: run.step,
@@ -545,7 +597,9 @@ class TestRunner {
       logFile: path.join(folder, 'launcher-log.txt'),
       operator: this.operator(),
       deliveryMethod: request.deliveryMethod ?? null,
+      // Shell Station: no mode, a pickup store choice instead (2026-10-30).
       mode: request.mode ?? null,
+      pickupStore: request.pickupStore ?? null,
       products: request.products ?? [],
       addDelaySeconds: request.addDelaySeconds ?? null,
       startedAt: new Date().toISOString(),
@@ -606,8 +660,9 @@ class TestRunner {
         run.extractionPending = /extraction still pending/.test(line);
       }
     }
-    // src/flows/delivery-modes.ts logs the products the mode can't deliver.
-    const excluded = line.match(/Not available for \w+, left out of this order: PLU (.+)$/)?.[1];
+    // src/flows/delivery-modes.ts logs the products the mode can't deliver ("Not available for
+    // Express, …"); src/flows/shell-station.ts the ones the pickup store can't ("… at <store>, …").
+    const excluded = line.match(/Not available (?:for|at) [^,]+, left out of this order: PLU (.+)$/)?.[1];
     if (excluded) run.excluded = excluded.split(/,\s*/);
     // The test waits for the person's answer: its question is in ask.json (src/utils/ask.ts).
     if (/\[ASK\] /.test(line)) run.question = readQuestion(run.dir);
@@ -629,9 +684,9 @@ class TestRunner {
   }
 
   /**
-   * The person's answer to the question the run is waiting on: { id, action, plu, mode, method }.
-   * `by`: who answered. Writes answer-<id>.json for the test; "Stop automation" stops the run, as
-   * Stop does. Returns what's wrong, or null.
+   * The person's answer to the question the run is waiting on: { id, action, plu, value, mode,
+   * method }. `by`: who answered. Writes answer-<id>.json for the test; "Stop automation" stops the
+   * run, as Stop does. Returns what's wrong, or null.
    */
   answer(answer, by) {
     const run = this.current;
@@ -654,6 +709,12 @@ class TestRunner {
       if (list.some((item) => question.plus.includes(item))) return 'Enter a different PLU.';
       plu = [...new Set(list)].join(' ');
     }
+    // Choose: one of the question's choices, e.g. a pickup store (2026-10-30).
+    let choice = null;
+    if (option.action === 'choose') {
+      choice = question.choices?.find((candidate) => candidate.value === answer.value) ?? null;
+      if (!choice) return 'Choose one from the list.';
+    }
     run.question = null;
     run.decisions.push({
       at: new Date().toISOString(),
@@ -664,19 +725,34 @@ class TestRunner {
       action: option.action,
       label: option.label,
       ...(plu ? { plu } : {}),
+      ...(choice ? { choice: choice.label } : {}),
       ...(by ? { by } : {}),
     });
-    // Another delivery mode or method: the window's steps follow it (the line below tells it).
+    // Another delivery mode or method: the window's steps follow it (the line below tells it). The
+    // order file said nothing about the new method's mode or pickup store: the test's defaults.
     if (option.action === 'switch_mode') run.mode = option.mode;
-    if (option.action === 'switch_method') run.deliveryMethod = option.method;
-    this.addLine(run, `[launcher] ${by ? `${by} chose` : 'Chosen'}: ${option.label}${plu ? ` (PLU ${plu.replace(/ /g, ', ')})` : ''}`);
+    if (option.action === 'switch_method') {
+      run.deliveryMethod = option.method;
+      if (option.method === SHELL_STATION) run.pickupStore ??= 'auto';
+      else run.mode ??= 'express';
+    }
+    this.addLine(run, `[launcher] ${by ? `${by} chose` : 'Chosen'}: ${option.label}${plu ? ` (PLU ${plu.replace(/ /g, ', ')})` : ''}${choice ? ` (${choice.label})` : ''}`);
     if (option.action === 'stop') {
       this.stop();
       return null;
     }
     writeRecord(run, 'running');
     const file = path.join(run.dir, `answer-${question.id}.json`);
-    fs.writeFileSync(`${file}.tmp`, JSON.stringify({ action: option.action, ...(plu ? { plu } : {}), ...(option.mode ? { mode: option.mode } : {}), ...(option.method ? { method: option.method } : {}) }));
+    fs.writeFileSync(
+      `${file}.tmp`,
+      JSON.stringify({
+        action: option.action,
+        ...(plu ? { plu } : {}),
+        ...(choice ? { value: choice.value } : {}),
+        ...(option.mode ? { mode: option.mode } : {}),
+        ...(option.method ? { method: option.method } : {}),
+      }),
+    );
     fs.renameSync(`${file}.tmp`, file); // whole, or not there yet: the test never reads half of it
     return null;
   }
@@ -840,7 +916,10 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
 
   const screenshots = files.filter((name) => SCREENSHOT_NAME.test(name)).sort((a, b) => screenshotNumber(a) - screenshotNumber(b));
   const method = result?.delivery?.method ?? record?.deliveryMethod ?? fromFile?.deliveryMethod ?? null;
-  const mode = result?.delivery?.mode ?? record?.mode ?? fromFile?.mode ?? null;
+  // Shell Station has no mode (2026-10-30; older runs saved one): its pickup store instead, once chosen.
+  const shell = method === SHELL_STATION;
+  const mode = shell ? null : (result?.delivery?.mode ?? record?.mode ?? fromFile?.mode ?? null);
+  const store = shell && typeof result?.delivery?.store === 'string' ? result.delivery.store : null;
   const row = {
     runId,
     folder,
@@ -856,7 +935,9 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
     orderNumber: result?.orderNumber ?? record?.orderNumber ?? null,
     delivery:
       automation === 'order' && (method || mode)
-        ? { method, mode, label: `${MODES[mode]?.label ?? mode ?? '?'} · ${DELIVERY_METHODS[method] ?? method ?? '?'}` }
+        ? shell
+          ? { method, mode, store, label: [DELIVERY_METHODS[method], store].filter(Boolean).join(' · ') }
+          : { method, mode, label: `${MODES[mode]?.label ?? mode ?? '?'} · ${DELIVERY_METHODS[method] ?? method ?? '?'}` }
         : null,
     products: {
       requested: record?.products ?? (fromFile ? parseProducts(fromFile.productLines.join('\n')).products : []),
@@ -901,7 +982,11 @@ function decisionsOf(result, record) {
 /** One line per decision, for the CSV export. */
 const decisionsText = (decisions) =>
   decisions
-    .map((decision) => `${decision.step}: ${decision.message} → ${decision.label}${decision.plu ? ` (PLU ${decision.plu})` : ''}${decision.outcome ? `: ${decision.outcome}` : ''}${decision.by ? ` [${decision.by}]` : ''}`)
+    .map(
+      (decision) =>
+        `${decision.step}: ${decision.message} → ${decision.label}${decision.plu ? ` (PLU ${decision.plu})` : ''}${decision.choice ? ` (${decision.choice})` : ''}` +
+        `${decision.outcome ? `: ${decision.outcome}` : ''}${decision.by ? ` [${decision.by}]` : ''}`,
+    )
     .join(' | ');
 
 /** Every run in reports/, newest first. */
@@ -1080,7 +1165,8 @@ async function startLauncher({ root, openWindow = true, quiet = false, onIdle, o
     automations: AUTOMATIONS,
     deliveryMethods: DELIVERY_METHODS,
     modes: MODES,
-    steps: { approve: APPROVE_STEPS, order: Object.fromEntries(Object.keys(MODES).map((mode) => [mode, stepsFor('order', mode)])) },
+    pickupStores: PICKUP_STORES,
+    steps: windowSteps(),
     statuses: STATUSES,
     liveView: Boolean(LiveView),
     riskWarnings: Object.fromEntries(Object.entries(RISKS).map(([automation, risk]) => [automation, risk.warning])),
@@ -1320,6 +1406,8 @@ module.exports = {
   STAGING_HOST,
   DELIVERY_METHODS,
   MODES,
+  PICKUP_STORES,
+  PICKUP_STORE_STEP,
   AUTOMATIONS,
   ADD_DELAY_SECONDS,
   // Also used by the hosted server (server/), which runs the same tests for signed-in people.
@@ -1332,6 +1420,7 @@ module.exports = {
   SCREENSHOT_NAME,
   ERROR_REPORT_FILE,
   stepsFor,
+  windowSteps,
   parseProducts,
   normalizeOrderNumber,
   orderFileText,

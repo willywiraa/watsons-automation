@@ -14,6 +14,8 @@ export type StepErrorCode =
   | 'EXPRESS_OPTION_NOT_FOUND'
   | 'STANDARD_OPTION_NOT_FOUND'
   | 'DELIVERY_DATE_NOT_AVAILABLE'
+  // Shell Station's pickup store could not be chosen (2026-10-30).
+  | 'PICKUP_STORE_NOT_SELECTED'
   | 'CHECKOUT_FAILED'
   | 'PAYMENT_FAILED'
   | 'OTP_INPUT_NOT_FOUND'

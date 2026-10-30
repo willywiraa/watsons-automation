@@ -42,6 +42,15 @@ test.describe('order result', () => {
     expect(box).toContain('Backoffice: not approved yet');
   });
 
+  test('a Shell Station order names its pickup store, and no mode (2026-10-30)', () => {
+    const shell = { ...run, deliveryMethod: 'shell_station' as const, deliveryMode: undefined, pickupStore: 'SHELL BUKIT BATOK ROAD' };
+    const result = buildOrderResult({ runId: 'x', run: shell, passed: true, durationMs: 1_000, artifacts });
+    expect(result.delivery).toEqual({ method: 'shell_station', mode: undefined, store: 'SHELL BUKIT BATOK ROAD' });
+    expect(formatResultBox(result)).toContain('Delivery: shell_station');
+    expect(formatResultBox(result)).toContain('Pickup store: SHELL BUKIT BATOK ROAD');
+    expect(buildOrderResult({ runId: 'x', run, passed: true, durationMs: 1_000, artifacts }).delivery).toEqual({ method: 'home_delivery', mode: 'express' });
+  });
+
   test('a run with ordering switched off is "ready to check out"', () => {
     const dryRun = { ...run, placeOrder: false, orderNumber: undefined, completedStep: 'Express Delivery Selection' };
     const result = buildOrderResult({ runId: 'x', run: dryRun, passed: true, durationMs: 1_000, artifacts });

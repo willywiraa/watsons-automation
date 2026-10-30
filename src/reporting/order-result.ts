@@ -28,7 +28,8 @@ export interface OrderTestResult {
    */
   error?: { code?: string; step: string; message: string; at: string; pages: string[]; screenshots: string[] };
   placeOrder: boolean;
-  delivery: { method?: string; mode?: string };
+  /** Shell Station: no mode, the pickup store instead (2026-10-30). */
+  delivery: { method?: string; mode?: string; store?: string };
   products: { ordered: OrderLine[]; soldOut: string[]; excludedNotEligible: string[]; freeGiftRemoved: string | null };
   /** The backoffice approval (runs that place or approve an order): approved here or not, and the statuses seen. */
   backoffice?: { approved: boolean; statuses: string[]; finalStatus?: string; extractionPending?: boolean };
@@ -85,7 +86,7 @@ export function buildOrderResult(input: ResultInput): OrderTestResult {
         }
       : undefined,
     placeOrder: run.placeOrder,
-    delivery: { method: run.deliveryMethod, mode: run.deliveryMode },
+    delivery: { method: run.deliveryMethod, mode: run.deliveryMode, ...(run.pickupStore ? { store: run.pickupStore } : {}) },
     products: {
       ordered: run.ordered,
       soldOut: run.soldOut,
@@ -126,7 +127,9 @@ export function formatResultBox(result: OrderTestResult): string {
     if (result.backoffice?.finalStatus) rows.push(`Backoffice: ${result.backoffice.finalStatus}${result.backoffice.extractionPending ? ' (extraction pending)' : ''}`);
     if (result.outcome === 'order_placed_unapproved') rows.push('Backoffice: not approved yet');
     if (!approving) {
-      rows.push(`Delivery: ${result.delivery.mode ?? '?'} (${result.delivery.method ?? '?'})`);
+      // Shell Station: its pickup store instead of a mode (2026-10-30).
+      if (result.delivery.method === 'shell_station') rows.push('Delivery: shell_station', `Pickup store: ${result.delivery.store ?? '?'}`);
+      else rows.push(`Delivery: ${result.delivery.mode ?? '?'} (${result.delivery.method ?? '?'})`);
       rows.push(`Products: ${result.products.ordered.length}`);
       if (result.products.excludedNotEligible.length) rows.push(`Left out (not eligible): ${result.products.excludedNotEligible.join(', ')}`);
       if (result.products.soldOut.length) rows.push(`Skipped (sold out): ${result.products.soldOut.join(', ')}`);

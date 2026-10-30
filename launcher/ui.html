@@ -353,6 +353,19 @@ body{background:var(--canvas);min-width:1024px}
 .p-ask__replace{display:grid;gap:var(--space-2);padding-left:32px}
 .p-ask__row{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
 .p-ask__row .wa-input{width:160px}
+/* A list to choose one from (e.g. Shell Station's pickup stores, 2026-10-30). */
+.p-ask__choices{display:grid;gap:var(--space-2);padding-left:32px;max-width:640px}
+.p-ask__filter{width:100%}
+.p-ask__list{display:grid;max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-panel);background:var(--surface)}
+.p-choice{display:grid;grid-template-columns:16px minmax(0,1fr);gap:var(--space-3);align-items:start;padding:10px 12px;cursor:pointer;border-top:1px solid var(--border)}
+.p-choice:first-child{border-top:0}
+.p-choice:hover{background:var(--hover-row)}
+.p-choice:has(input:checked){background:var(--tint-accent);box-shadow:inset 3px 0 0 var(--accent)}
+.p-choice:has(input:focus-visible){outline:2px solid var(--focus-ring);outline-offset:-2px}
+.p-choice input{width:16px;height:16px;margin:2px 0 0;accent-color:var(--accent)}
+.p-choice__text{display:grid;min-width:0}
+.p-choice__label{font-weight:var(--weight-semibold);overflow-wrap:anywhere}
+.p-choice__detail{color:var(--text-2);font-size:var(--text-small);line-height:var(--lh-small);overflow-wrap:anywhere}
 .p-decisions{margin:0;padding:0;list-style:none;display:grid;gap:var(--space-3)}
 .p-decision{display:grid;gap:2px}
 .p-decision__answer{font-weight:var(--weight-semibold)}
@@ -652,7 +665,9 @@ dialog::backdrop{background:var(--scrim)}
               <div class="wa-card__head"><div class="wa-card__titles"><h2 class="wa-card__title" id="delivery-title">Delivery</h2><p class="wa-card__sub">Changes between runs</p></div></div>
               <div class="wa-card__body">
                 <div class="p-field p-field--stack"><span class="wa-label" id="method-label">Method</span><div class="wa-seg" id="delivery-methods" role="radiogroup" aria-labelledby="method-label"></div></div>
-                <div class="p-field p-field--stack"><span class="wa-label" id="mode-label">Mode</span><div class="wa-seg" id="modes" role="radiogroup" aria-labelledby="mode-label"></div><span class="wa-field__hint" id="mode-note"></span></div>
+                <div class="p-field p-field--stack" id="mode-field"><span class="wa-label" id="mode-label">Mode</span><div class="wa-seg" id="modes" role="radiogroup" aria-labelledby="mode-label"></div><span class="wa-field__hint" id="mode-note"></span></div>
+                <!-- Shell Station has no modes: how its pickup store is chosen instead (user's request 2026-10-30). -->
+                <div class="p-field p-field--stack" id="pickup-field" hidden><span class="wa-label" id="pickup-label">Pickup store</span><div class="wa-seg" id="pickup-stores" role="radiogroup" aria-labelledby="pickup-label"></div><span class="wa-field__hint" id="pickup-note"></span></div>
               </div>
             </section>
 
@@ -736,6 +751,12 @@ dialog::backdrop{background:var(--scrim)}
                 <p class="p-ask__message" id="ask-message" role="alert"></p>
                 <p class="p-ask__detail" id="ask-detail" hidden></p>
               </div>
+            </div>
+            <!-- A list to choose one from, e.g. Shell Station's pickup stores (2026-10-30). -->
+            <div class="p-ask__choices" id="ask-choices" hidden>
+              <input class="wa-input p-ask__filter" id="ask-filter" type="search" placeholder="Search by name or address" aria-label="Search the list" autocomplete="off" spellcheck="false">
+              <div class="p-ask__list" id="ask-list" role="radiogroup" aria-labelledby="ask-message"></div>
+              <p class="wa-meta" id="ask-list-empty" hidden>Nothing matches. Try other words.</p>
             </div>
             <div class="p-ask__actions" id="ask-actions"></div>
             <form class="p-ask__replace" id="ask-replace" autocomplete="off" hidden>
@@ -1051,6 +1072,17 @@ function fillForm(defaults) {
       ),
     ),
   );
+  // Shell Station: how its pickup store is chosen, instead of the mode (2026-10-30).
+  $('pickup-stores').replaceChildren(
+    ...Object.entries(info.pickupStores ?? {}).map(([key, choice]) =>
+      el(
+        'label',
+        { className: 'wa-seg__opt p-segopt' },
+        el('input', { type: 'radio', name: 'pickup-store', value: key, checked: key === (defaults.pickupStore ?? 'auto') }),
+        el('span', { textContent: choice.label }),
+      ),
+    ),
+  );
   formFilled = true;
   sizeProducts();
   checkProducts();
@@ -1066,6 +1098,7 @@ function formValues() {
     products: $('products').value,
     deliveryMethod: document.querySelector('input[name=delivery]:checked')?.value,
     mode: document.querySelector('input[name=mode]:checked')?.value,
+    pickupStore: document.querySelector('input[name=pickup-store]:checked')?.value,
     orderNumber: $('order-number').value,
   };
 }
@@ -1280,8 +1313,13 @@ function renderSetup(kind) {
   $('setup-text').replaceChildren(...problems.map((check) => el('div', { textContent: check.help ? `${check.label}: no. ${check.help}` : `${check.label}: no.` })));
 }
 
+/** Shell Station has one way to deliver: no Mode, its pickup store instead (user's request 2026-10-30). */
 function renderDelivery(values) {
+  const shell = isShellStation(values.deliveryMethod);
+  $('mode-field').hidden = shell;
+  $('pickup-field').hidden = !shell;
   $('mode-note').textContent = info.modes[values.mode]?.note ?? '';
+  $('pickup-note').textContent = info.pickupStores?.[values.pickupStore]?.note ?? '';
 }
 
 /** Approving: the backoffice code for the number typed, and who placed that order. */
@@ -1363,7 +1401,7 @@ function runStatus() {
   const details =
     run.automation === 'approve'
       ? `WTCSG${run.orderNumber}`
-      : [plural(run.products?.length ?? 0, 'product'), methodLabel(run.deliveryMethod), modeLabel(run.mode)].join(' · ');
+      : [plural(run.products?.length ?? 0, 'product'), deliveryText(run.deliveryMethod, run.mode)].join(' · ');
   // Passed: the run ends by itself in a moment (2026-10-23: no keeping the last page open).
   const extraction = run.extractionPending ? ': it is at Order Split, extraction still pending' : ' and extracted';
   if (run.passed === 'order_placed_unapproved') {
@@ -1421,7 +1459,7 @@ function renderRun(view, queued) {
   $('stop').textContent = queued ? 'Leave queue' : 'Stop';
   const excluded = current?.excluded ?? [];
   $('live-excluded').hidden = excluded.length === 0;
-  $('live-excluded-text').textContent = `Not available for ${modeLabel(current?.mode)}, left out of this order: PLU ${excluded.join(', ')}`;
+  $('live-excluded-text').textContent = `Not available ${leftOutFor(current?.deliveryMethod, current?.mode)}, left out of this order: PLU ${excluded.join(', ')}`;
   $('run-grid').classList.toggle('p-run-grid--desktop', !liveAvailable());
   $('log-sub').hidden = liveAvailable();
   $('elapsed').textContent = current ? formatClock(elapsedSeconds()) : '';
@@ -1430,14 +1468,48 @@ function renderRun(view, queued) {
 
 // ---- The run's question (2026-10-22): only the choices that are valid then ---------------------
 
-const ask = { id: null, replacing: false, many: false, sending: false, error: '' };
+const ask = { id: null, replacing: false, many: false, sending: false, error: '', choice: null };
 const ASK_TITLES = {
   out_of_stock: 'Out of stock',
   not_found: 'Product not found',
   not_available: 'Can’t be added to the bag',
   not_eligible: 'Delivery not possible',
+  choose_store: 'Choose the pickup store',
   error: 'Something went wrong',
 };
+
+/** The question's list (e.g. pickup stores): one radio per choice, the one already in use chosen. */
+function renderAskChoices(choices) {
+  $('ask-choices').hidden = choices.length === 0;
+  $('ask-filter').value = '';
+  $('ask-filter').hidden = choices.length <= 6;
+  $('ask-list-empty').hidden = true;
+  $('ask-list').replaceChildren(
+    ...choices.map((choice) =>
+      el(
+        'label',
+        { className: 'p-choice', attrs: { 'data-search': `${choice.label} ${choice.detail ?? ''}`.toLowerCase() } },
+        el('input', { type: 'radio', name: 'ask-choice', value: choice.value, checked: Boolean(choice.selected) }),
+        el('span', { className: 'p-choice__text' }, el('span', { className: 'p-choice__label', textContent: choice.label }), choice.detail ? el('span', { className: 'p-choice__detail', textContent: choice.detail }) : null),
+      ),
+    ),
+  );
+  ask.choice = choices.find((choice) => choice.selected)?.value ?? null;
+}
+
+$('ask-list').addEventListener('change', (event) => {
+  ask.choice = event.target.value;
+  render();
+});
+$('ask-filter').addEventListener('input', () => {
+  const words = $('ask-filter').value.toLowerCase().split(/\s+/).filter(Boolean);
+  let shown = 0;
+  for (const row of $('ask-list').children) {
+    row.hidden = !words.every((word) => row.dataset.search.includes(word));
+    if (!row.hidden) shown++;
+  }
+  $('ask-list-empty').hidden = shown > 0;
+});
 
 function renderAsk() {
   const question = current && !current.cancelled ? current.question : null;
@@ -1453,12 +1525,14 @@ function renderAsk() {
     $('ask-message').textContent = question.message;
     $('ask-detail').textContent = question.detail ? `Details: ${question.detail}` : '';
     $('ask-detail').hidden = !question.detail;
+    renderAskChoices(question.choices ?? []);
     $('ask-actions').replaceChildren(
       ...question.options.map((option, index) =>
         el('button', {
           type: 'button',
           className: `wa-btn ${option.action === 'stop' ? 'wa-btn--danger' : index === 0 ? 'wa-btn--primary' : 'wa-btn--secondary'}`,
           textContent: option.label,
+          attrs: { 'data-action': option.action },
           onclick: () => chooseAnswer(option),
         }),
       ),
@@ -1467,11 +1541,14 @@ function renderAsk() {
   $('ask-actions').hidden = ask.replacing;
   $('ask-replace').hidden = !ask.replacing;
   for (const control of $('ask').querySelectorAll('button, input')) control.disabled = ask.sending;
+  // "Use this store" once one is chosen.
+  for (const control of $('ask-actions').querySelectorAll('[data-action="choose"]')) control.disabled = ask.sending || !ask.choice;
   $('ask-error').textContent = ask.error;
   $('ask-error').hidden = !ask.error;
 }
 
 function chooseAnswer(option) {
+  if (option.action === 'choose') return ask.choice ? sendAnswer({ action: 'choose', value: ask.choice }) : undefined;
   if (option.action !== 'replace') return sendAnswer({ action: option.action, mode: option.mode, method: option.method });
   // One PLU, or several where the choice allows them (2026-10-22).
   Object.assign(ask, { replacing: true, many: Boolean(option.many), error: '' });
@@ -1498,9 +1575,27 @@ async function sendAnswer(answer) {
 
 const modeLabel = (mode) => info?.modes[mode]?.label ?? 'Express';
 const methodLabel = (method) => info?.deliveryMethods[method] ?? method ?? '?';
+/** Shell Station has no Express or Standard, only a pickup store (user's request 2026-10-30). */
+const isShellStation = (method) => method === 'shell_station';
+/** "Home Delivery · Express"; "Shell Station · SHELL BUKIT BATOK ROAD" (its store, once known). */
+const deliveryText = (method, mode, store) =>
+  isShellStation(method) ? [methodLabel(method), store].filter(Boolean).join(' · ') : `${methodLabel(method)} · ${modeLabel(mode)}`;
+/** What products were left out for: the mode, or the pickup store. */
+const leftOutFor = (method, mode) => (isShellStation(method) ? 'at the pickup store' : `for ${modeLabel(mode)}`);
+/** Logs / History's Delivery cell: the mode over the method; Shell Station over its pickup store. */
+function historyDelivery(delivery) {
+  const shell = isShellStation(delivery.method);
+  return el(
+    'span',
+    { className: 'p-l2' },
+    el('span', { textContent: shell ? methodLabel(delivery.method) : modeLabel(delivery.mode) }),
+    el('span', { className: 'p-l2__sub', textContent: shell ? (delivery.store ?? 'Pickup') : methodLabel(delivery.method) }),
+  );
+}
 
 function stepsOf(run) {
   if (run.automation === 'approve') return info.steps.approve;
+  if (isShellStation(run.deliveryMethod)) return info.steps.shellStation;
   return info.steps.order[run.mode] ?? info.steps.order.express;
 }
 
@@ -1543,10 +1638,13 @@ function renderSteps(view, queued) {
   if (view === 'compose') return;
   const run = view === 'run' ? current : last;
   const row = view === 'result' ? last.row : null;
-  const key = JSON.stringify([view, queued, run?.runId, run?.step, run?.mode, run?.passed, run?.cancelled, row, view === 'result' ? resultOpen.message : null, automation(), formValues().mode]);
+  const values = formValues();
+  const key = JSON.stringify([
+    view, queued, run?.runId, run?.step, run?.mode, run?.deliveryMethod, run?.passed, run?.cancelled, row, view === 'result' ? resultOpen.message : null, automation(), values.mode, values.deliveryMethod,
+  ]);
   if (key === stepsKey) return;
   stepsKey = key;
-  const steps = stepsOf(run ?? { automation: automation(), mode: formValues().mode });
+  const steps = stepsOf(run ?? { automation: automation(), mode: values.mode, deliveryMethod: values.deliveryMethod });
   const succeeded = view === 'run' ? Boolean(run?.passed) : ['completed', 'no_change', 'awaiting_approval'].includes(row.status);
   // Placed without a backoffice account (2026-10-14): the approval steps didn't run in this run.
   const unapproved = view === 'run' ? run?.passed === 'order_placed_unapproved' : row.outcome === 'order_placed_unapproved';
@@ -1844,7 +1942,7 @@ function sentenceOf(row, step = null) {
     return `Stopped${at ? ` during ${at}` : ''}. ${row.warning ? riskText(row.automation) : row.automation === 'approve' ? 'Nothing was approved.' : 'No order was placed.'}`;
   }
   if (row.status === 'interrupted') return `The run ended without a result${at ? ` during ${at}` : ''}. Check the order before running again.`;
-  return [row.automationLabel, row.delivery ? `${methodLabel(row.delivery.method)} · ${modeLabel(row.delivery.mode)}` : null, row.operator].filter(Boolean).join(' · ');
+  return [row.automationLabel, row.delivery ? deliveryText(row.delivery.method, row.delivery.mode, row.delivery.store) : null, row.operator].filter(Boolean).join(' · ');
 }
 
 /** What is still to come for a completed run's order (2026-10-23), or null. */
@@ -2047,7 +2145,7 @@ function productRows(row) {
   }
   return lines.map(({ plu, quantity, instead }) => {
     const ordered = row.products.ordered.find((line) => line.plu === plu);
-    if (row.products.excluded.includes(plu)) return { plu, quantity, status: `Left out: not available for ${modeLabel(row.delivery?.mode)}`, warn: true };
+    if (row.products.excluded.includes(plu)) return { plu, quantity, status: `Left out: not available ${leftOutFor(row.delivery?.method, row.delivery?.mode)}`, warn: true };
     if (chosen.has(plu) && !ordered) return { plu, quantity, status: chosen.get(plu), warn: true };
     if (row.products.soldOut.includes(plu)) return { plu, quantity, status: 'Skipped: sold out', warn: true };
     if (instead && !ordered && !halted) return { plu, quantity, status: `Instead of PLU ${instead}` };
@@ -2090,7 +2188,11 @@ function decisionItems(row) {
       'li',
       { className: 'p-decision' },
       el('span', { textContent: decision.message }),
-      el('span', { className: 'p-decision__answer', textContent: `→ ${decision.label}${decision.plu ? ` (PLU ${decision.plu.split(/\s+/).join(', ')})` : ''}${decision.outcome ? `: ${decision.outcome}` : ''}` }),
+      el('span', {
+        className: 'p-decision__answer',
+        // A choice from a list, e.g. the pickup store (2026-10-30), in brackets like the PLUs.
+        textContent: `→ ${decision.label}${decision.plu ? ` (PLU ${decision.plu.split(/\s+/).join(', ')})` : ''}${decision.choice ? ` (${decision.choice})` : ''}${decision.outcome ? `: ${decision.outcome}` : ''}`,
+      }),
       el('span', { className: 'wa-meta', textContent: [decision.step, decision.by, formatTime(decision.at)].filter(Boolean).join(' · ') }),
     ),
   );
@@ -2275,7 +2377,7 @@ function historyRowNodes(row) {
     el('td', {}, el('span', { className: 'p-l2' }, el('span', { className: 'wa-num', textContent: formatDate(row.startedAt) }), el('span', { className: 'p-l2__sub wa-num', textContent: formatHm(row.startedAt) }))),
     el('td', {}, el('span', { className: 'p-auto' }, iconNode(row.automation === 'approve' ? 'circle-check' : 'shopping-bag'), el('span', { textContent: row.automationLabel }))),
     el('td', {}, orderCell(row)),
-    el('td', {}, row.delivery ? el('span', { className: 'p-l2' }, el('span', { textContent: modeLabel(row.delivery.mode) }), el('span', { className: 'p-l2__sub', textContent: methodLabel(row.delivery.method) })) : el('span', { className: 'wa-muted', textContent: '—' })),
+    el('td', {}, row.delivery ? historyDelivery(row.delivery) : el('span', { className: 'wa-muted', textContent: '—' })),
     el('td', {}, productsCell(row)),
     el('td', {}, statusCell(row)),
     el('td', {}, errorCell(row)),
@@ -2379,7 +2481,7 @@ function backofficeText(row) {
 
 /** The expanded row: what happened, the run's facts, and its evidence. */
 function runDetails(row) {
-  const steps = stepsOf({ automation: row.automation, mode: row.delivery?.mode });
+  const steps = stepsOf({ automation: row.automation, mode: row.delivery?.mode, deliveryMethod: row.delivery?.method });
   const halted = row.error?.step ?? stoppedAt(row);
   const stepsText =
     halted && steps.includes(halted)
@@ -2415,7 +2517,7 @@ function runDetails(row) {
   const facts = factsList([
     ['Order', row.orderNumber ? el('span', { className: 'wa-mono', textContent: `WTCSG${row.orderNumber}` }) : 'No order number'],
     ['Products', products && products.childElementCount > 0 ? products : null],
-    ['Delivery', row.delivery ? `${methodLabel(row.delivery.method)} · ${modeLabel(row.delivery.mode)}` : null],
+    ['Delivery', row.delivery ? deliveryText(row.delivery.method, row.delivery.mode, row.delivery.store) : null],
     ['Decisions', row.decisions?.length ? el('ol', { className: 'p-decisions' }, ...decisionItems(row)) : null],
     ['Backoffice', backofficeText(row)],
     ['Steps', stepsText],
@@ -2615,7 +2717,10 @@ async function openConfirm() {
       ...facts([
         ['Products', `${plural(parsed.products.length, 'product')}, ${plural(units, 'item')}`],
         ['Delivery method', methodLabel(values.deliveryMethod)],
-        ['Delivery mode', modeLabel(values.mode)],
+        // Shell Station: no mode, how its pickup store is chosen (2026-10-30).
+        isShellStation(values.deliveryMethod)
+          ? ['Pickup store', info.pickupStores?.[values.pickupStore]?.label ?? info.pickupStores?.auto?.label]
+          : ['Delivery mode', modeLabel(values.mode)],
         ['Testing account', serverMode ? accountInfo('testing').masked : 'From .env on this PC'],
         ['Backoffice account', approvesNewOrders() ? (serverMode ? accountInfo('backoffice').masked : 'From .env on this PC') : 'None: the order waits for approval'],
         site,

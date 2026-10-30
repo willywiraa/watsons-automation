@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseOrder, parseOrderNumber, type OrderLine } from '../src/config/order';
 import { ADD_DELAY_SECONDS } from '../src/config/settings';
+import { PICKUP_STORE_STEP } from '../src/flows/shell-station';
 import { STAGING_HOST } from '../src/safety/staging-guard';
 
 // Offline checks of the launcher (launcher/launcher.cjs, PRD §32–38). The window tests use a
@@ -21,9 +22,9 @@ interface HistoryRow {
   status: string;
   orderNumber: string | null;
   operator: string | null;
-  delivery: { label: string; method: string; mode: string } | null;
+  delivery: { label: string; method: string; mode: string | null; store?: string | null } | null;
   products: { requested: OrderLine[]; ordered: OrderLine[]; excluded: string[] };
-  decisions: { step: string; plus: string[]; action: string; label: string; plu?: string; outcome?: string; by?: string }[];
+  decisions: { step: string; plus: string[]; action: string; label: string; plu?: string; choice?: string; outcome?: string; by?: string }[];
   error: { code: string | null; step: string | null; reason: string; screenshots: string[] } | null;
   warning: string | null;
   screenshots: string[];
@@ -32,9 +33,10 @@ interface HistoryRow {
 interface Launcher {
   STAGING_HOST: string;
   ADD_DELAY_SECONDS: number;
+  PICKUP_STORE_STEP: string;
   parseProducts(text: string): { products: OrderLine[]; problems: string[] };
   normalizeOrderNumber(text: string): string | null;
-  orderFileText(order: { products: OrderLine[]; deliveryMethod: string; mode: string }): string;
+  orderFileText(order: { products: OrderLine[]; deliveryMethod: string; mode: string | null; pickupStore?: string }): string;
   checkSetup(root: string, nodeFound: boolean): SetupResult;
   checkRunRequest(body: unknown, setup: SetupResult): { problems: string[]; order?: unknown };
   readHistory(root: string): HistoryRow[];
@@ -149,11 +151,19 @@ test.describe('launcher checks', () => {
 
   test('writes order files the test can read', () => {
     const products = [{ plu: '10117', quantity: 1 }, { plu: '10321', quantity: 2 }];
-    for (const deliveryMethod of ['home_delivery', 'click_collect', 'shell_station']) {
+    for (const deliveryMethod of ['home_delivery', 'click_collect']) {
       const order = parseOrder(launcher.orderFileText({ products, deliveryMethod, mode: 'express' }));
-      expect(order).toEqual({ deliveryMethod, deliveryMode: 'express', products });
+      expect(order).toEqual({ deliveryMethod, deliveryMode: 'express', pickupStore: 'auto', products });
     }
     expect(parseOrder(launcher.orderFileText({ products, deliveryMethod: 'home_delivery', mode: 'standard' })).deliveryMode).toBe('standard');
+    // Shell Station: no mode, how its pickup store is chosen instead (2026-10-30).
+    const shell = launcher.orderFileText({ products, deliveryMethod: 'shell_station', mode: null, pickupStore: 'ask' });
+    expect(shell).not.toMatch(/^mode:/m);
+    expect(shell).toContain('pickup store: Let me choose');
+    expect(parseOrder(shell)).toMatchObject({ deliveryMethod: 'shell_station', pickupStore: 'ask', products });
+    expect(parseOrder(launcher.orderFileText({ products, deliveryMethod: 'shell_station', mode: null })).pickupStore).toBe('auto');
+    // The window's step is the order test's.
+    expect(launcher.PICKUP_STORE_STEP).toBe(PICKUP_STORE_STEP);
   });
 
   test('names what is missing before a run (PRD §37)', async () => {
@@ -195,6 +205,16 @@ test.describe('launcher checks', () => {
     // The time between adds is fixed (user's decision 2026-10-21): a value sent along is ignored.
     expect(launcher.checkRunRequest({ ...good, addDelaySeconds: '20' }, ready).order).toMatchObject({ addDelaySeconds: 5 });
     expect(launcher.checkRunRequest({ ...good, addDelaySeconds: 'ten' }, ready).problems).toEqual([]);
+
+    // Shell Station has no mode, only a pickup store, which the run chooses unless told (2026-10-30).
+    const shell = { ...good, deliveryMethod: 'shell_station', mode: undefined };
+    expect(launcher.checkRunRequest(shell, ready)).toEqual({
+      problems: [],
+      order: { automation: 'order', products: [{ plu: '10321', quantity: 2 }], deliveryMethod: 'shell_station', mode: null, pickupStore: 'auto', addDelaySeconds: 5 },
+    });
+    expect(launcher.checkRunRequest({ ...shell, mode: 'standard', pickupStore: 'ask' }, ready).order).toMatchObject({ mode: null, pickupStore: 'ask' });
+    expect(launcher.checkRunRequest({ ...shell, pickupStore: 'toString' }, ready).problems).toEqual(['Choose how the pickup store is chosen.']);
+    expect(launcher.checkRunRequest({ ...good, pickupStore: 'ask' }, ready).order).not.toHaveProperty('pickupStore');
   });
 
   test('approves an existing order only with a valid number and confirmation', () => {
@@ -531,6 +551,60 @@ test.describe('launcher window', () => {
     await expect(page.locator('#log')).toContainText('by Test Operator: places a STAGING test order');
   });
 
+  test('Shell Station: no Mode, how its pickup store is chosen instead; the result names the store (2026-10-30)', async ({ page }) => {
+    await page.goto(app.url);
+    await expect(page.locator('#mode-field')).toBeVisible();
+    await expect(page.locator('#pickup-field')).toBeHidden();
+    await page.getByLabel('Shell Station').check();
+    await expect(page.locator('#mode-field')).toBeHidden();
+    await expect(page.locator('#pickup-field')).toBeVisible();
+    await expect(page.locator('#pickup-stores label')).toHaveText(['Choose for me', 'Let me choose']);
+    await expect(page.getByLabel('Choose for me')).toBeChecked();
+    await expect(page.locator('#pickup-note')).toHaveText('Keeps the store already chosen at checkout; if none, the first Shell station that has all the products.');
+    await page.getByLabel('Let me choose').check();
+    await expect(page.locator('#pickup-note')).toHaveText('The run shows staging’s Shell stations and waits for you to pick one.');
+    await page.getByLabel('Choose for me').check();
+    // Back to Home Delivery: Mode again.
+    await page.getByLabel('Home Delivery').check();
+    await expect(page.locator('#mode-field')).toBeVisible();
+    await expect(page.locator('#pickup-field')).toBeHidden();
+    await page.getByLabel('Shell Station').check();
+
+    await page.getByLabel('One PLU per line').fill('10117\n46465');
+    await page.locator('#run').click();
+    const dialog = page.locator('#confirm');
+    await expect(dialog).toContainText('Delivery methodShell Station');
+    await expect(dialog).toContainText('Pickup storeChoose for me');
+    await expect(dialog).not.toContainText('Delivery mode');
+    await dialog.getByRole('button', { name: 'Place test order' }).click();
+    await expect(page.locator('#run-details')).toHaveText('· 2 products · Shell Station');
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#steps')).toContainText(PICKUP_STORE_STEP);
+    await expect(page.locator('#steps')).not.toContainText('Delivery Selection');
+    await expect(page.locator('#result')).toContainText('46465×1Left out: not available at the pickup store');
+    // The order file the test read: the pickup store choice, no mode.
+    const [runId] = readdirSync(join(root, 'reports')).filter((name) => /^\d{4}-\d{2}-\d{2}_/.test(name));
+    const orderFile = readFileSync(join(root, 'reports', runId, 'order.txt'), 'utf8');
+    expect(orderFile).toContain('delivery: Shell Station\npickup store: Choose for me\n');
+    expect(orderFile).not.toMatch(/^mode:/m);
+    const [row] = launcher.readHistory(root);
+    expect(row.delivery).toEqual({ method: 'shell_station', mode: null, store: 'SHELL BUKIT BATOK ROAD', label: 'Shell Station · SHELL BUKIT BATOK ROAD' });
+    expect(row.products.excluded).toEqual(['46465']);
+    // Logs / History: Shell Station over its store, no mode.
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    const first = page.locator('tr.hrow').first();
+    await expect(first).toContainText('Shell StationSHELL BUKIT BATOK ROAD');
+    await expect(first).not.toContainText('Express');
+    await first.click();
+    await expect(page.locator('tr.hdetail')).toContainText('DeliveryShell Station · SHELL BUKIT BATOK ROAD');
+    // The next window starts with Shell Station and the same choice.
+    await page.reload();
+    await expect(page.getByLabel('Shell Station')).toBeChecked();
+    await expect(page.getByLabel('Choose for me')).toBeChecked();
+    await expect(page.locator('#mode-field')).toBeHidden();
+  });
+
   test('shows the run’s browser live, passes clicks on, and the run ends by itself once done (2026-10-23)', async ({ page }) => {
     // PLU 555: the stand-in opens a real (headless) Edge with the run's DevTools port; its last step
     // lasts until the page is clicked.
@@ -755,11 +829,51 @@ test.describe('launcher window', () => {
   test('another delivery method can be tried; the run goes back to the bag (2026-10-22)', async ({ page }) => {
     await startOrder(page, '10117\n4444');
     await page.locator('#ask').getByRole('button', { name: 'Try Shell Station' }).click();
+    // Shell Station has no mode: the steps follow it (2026-10-30).
+    await expect(page.locator('#run-details')).toHaveText('· 2 products · Shell Station');
     await runEnded(page, 0);
     await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#steps')).toContainText(PICKUP_STORE_STEP);
     const [row] = launcher.readHistory(root);
-    expect(row.delivery).toMatchObject({ method: 'shell_station', mode: 'express' });
-    expect(readFileSync(join(runFolder(), 'launcher-log.txt'), 'utf8')).toMatch(/Step: Express Delivery Selection[\s\S]*Step: Cart validation[\s\S]*Step: Express Delivery Selection/);
+    expect(row.delivery).toMatchObject({ method: 'shell_station', mode: null, store: 'SHELL BUKIT BATOK ROAD' });
+    expect(readFileSync(join(runFolder(), 'launcher-log.txt'), 'utf8')).toMatch(/Step: Express Delivery Selection[\s\S]*Step: Cart validation[\s\S]*Step: Pickup Store Selection/);
+  });
+
+  test('Shell Station, "Let me choose": the run lists the stores and goes on with the one picked (2026-10-30)', async ({ page }) => {
+    await page.goto(app.url);
+    await page.getByLabel('Shell Station').check();
+    await page.getByLabel('Let me choose').check();
+    await page.getByLabel('One PLU per line').fill('10117');
+    await page.locator('#run').click();
+    await expect(page.locator('#confirm')).toContainText('Pickup storeLet me choose');
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
+    const ask = page.locator('#ask');
+    await expect(ask).toContainText('Paused at Pickup Store Selection · Choose the pickup store');
+    await expect(ask).toContainText('Which Shell Station should the order be picked up from?');
+    await expect(ask.locator('.p-choice__label')).toHaveText(['SHELL BUKIT BATOK ROAD', 'SHELL ANG MO KIO', 'SHELL CLEMENTI']);
+    await expect(ask.locator('.p-choice').first()).toContainText('11 Bukit Batok West Avenue 3, 659166');
+    // Few stores: no search box. Nothing chosen yet: "Use this store" waits for one.
+    await expect(page.locator('#ask-filter')).toBeHidden();
+    const use = ask.getByRole('button', { name: 'Use this store' });
+    await expect(use).toBeDisabled();
+    await expect(ask.getByRole('button', { name: 'Stop automation' })).toBeEnabled();
+    // Only a store from the list is taken.
+    const { id } = JSON.parse(readFileSync(join(runFolder(), 'ask.json'), 'utf8'));
+    const key = new URL(app.url).searchParams.get('token')!;
+    expect(await postJson(app.url, '/api/answer', { id, action: 'choose', value: 'FUEL999' }, key)).toMatchObject({ status: 409, body: { error: 'Choose one from the list.' } });
+    await ask.getByText('SHELL CLEMENTI').click();
+    await expect(ask.getByRole('radio', { name: /SHELL CLEMENTI/ })).toBeChecked();
+    await use.click();
+    await expect(ask).toBeHidden();
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#result')).toContainText('→ Use this store (SHELL CLEMENTI)');
+    const log = readFileSync(join(runFolder(), 'launcher-log.txt'), 'utf8');
+    expect(log).toContain('[launcher] Test Operator chose: Use this store (SHELL CLEMENTI)');
+    expect(log).toContain('Pickup store chosen: SHELL CLEMENTI (FUEL202)');
+    const [row] = launcher.readHistory(root);
+    expect(row.delivery).toMatchObject({ method: 'shell_station', store: 'SHELL CLEMENTI', label: 'Shell Station · SHELL CLEMENTI' });
+    expect(row.decisions).toMatchObject([{ step: PICKUP_STORE_STEP, action: 'choose', label: 'Use this store', choice: 'SHELL CLEMENTI', by: 'Test Operator' }]);
   });
 
   test('an add that failed can be tried again (2026-10-22)', async ({ page }) => {

@@ -11,7 +11,7 @@ import { log } from '../utils/log';
 export const METHOD_NAMES: Record<DeliveryMethod, string> = { home_delivery: 'Home Delivery', click_collect: 'Click & Collect', shell_station: 'Shell Station' };
 const DELIVERY_METHODS = Object.keys(METHOD_NAMES) as DeliveryMethod[];
 
-const listOf = (plus: string[]) => (plus.length === 1 ? `Product ${plus[0]}` : `Products ${plus.slice(0, -1).join(', ')} and ${plus.at(-1)}`);
+export const listOf = (plus: string[]) => (plus.length === 1 ? `Product ${plus[0]}` : `Products ${plus.slice(0, -1).join(', ')} and ${plus.at(-1)}`);
 /** An error's reason in one line (a StepError's "Reason:", else its first line). */
 export const reasonOf = (error: unknown) => {
   const message = (error instanceof Error ? error.message : String(error)).replace(/\u001b\[[0-9;]*m/g, '');
@@ -49,7 +49,7 @@ export function otherMethods(current: DeliveryMethod, tried: DeliveryMethod[]): 
  * the bag and go on with the others, or take them out and add other PLUs instead; then the other
  * mode or methods, which keep them.
  */
-function removalOptions(plus: string[], othersLeft: number): AskOption[] {
+export function removalOptions(plus: string[], othersLeft: number): AskOption[] {
   const one = plus.length === 1;
   const options: AskOption[] = [];
   if (othersLeft > 0) options.push({ action: 'skip', label: one ? 'Remove it and continue' : 'Remove them and continue' });

@@ -3,8 +3,9 @@
 # Delivery method: Home Delivery, Click & Collect, or Shell Station
 delivery: Home Delivery
 
-# Mode: Express (products that can't go Express are left out and reported).
-# Standard is planned for a later phase.
+# Mode: Express (products that can't go Express are left out and reported) or Standard.
+# Shell Station has no mode: instead, "pickup store: Choose for me" (the default) or
+# "pickup store: Let me choose" (asked in the launcher window).
 mode: Express
 
 # Products: paste the PLUs below, one per line (blank lines are fine).

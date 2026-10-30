@@ -19,7 +19,8 @@ import { log } from './log';
 // the "[ASK]" log line (the launcher reads it when it sees that line), and answer-<id>.json, written
 // by the launcher. "Stop automation" never comes here: the launcher stops the run, as Stop does.
 
-export type AskAction = 'skip' | 'replace' | 'retry' | 'switch_mode' | 'switch_method' | 'stop';
+/** choose: one of the question's `choices`, e.g. Shell Station's pickup store (2026-10-30). */
+export type AskAction = 'skip' | 'replace' | 'retry' | 'switch_mode' | 'switch_method' | 'choose' | 'stop';
 
 export interface AskOption {
   action: AskAction;
@@ -32,6 +33,15 @@ export interface AskOption {
   many?: boolean;
 }
 
+/** One item of a list to choose from: its value (e.g. a store code) and what the person sees. */
+export interface Choice {
+  value: string;
+  label: string;
+  detail?: string;
+  /** The one in use now, chosen to begin with. */
+  selected?: boolean;
+}
+
 /** The PLUs in a replace answer ("45606 21679", "45606, 21679"); none when any isn't a PLU. */
 export function pluList(text: string | undefined): string[] {
   const items = (text ?? '').split(/[\s,]+/).filter(Boolean);
@@ -39,8 +49,11 @@ export function pluList(text: string | undefined): string[] {
 }
 
 export interface Question {
-  /** not_available: staging refused to add the product ("not available for checkout"). */
-  kind: 'out_of_stock' | 'not_found' | 'not_available' | 'not_eligible' | 'error';
+  /**
+   * not_available: staging refused to add the product ("not available for checkout");
+   * choose_store: which Shell Station to pick the order up from (2026-10-30).
+   */
+  kind: 'out_of_stock' | 'not_found' | 'not_available' | 'not_eligible' | 'choose_store' | 'error';
   /** The step it happened at, as the launcher shows it (e.g. "Product Search"). */
   step: string;
   /** The products concerned (none for a general error). */
@@ -50,12 +63,16 @@ export interface Question {
   /** More about it, e.g. the error's reason. */
   detail?: string;
   options: AskOption[];
+  /** For a "choose" option: the list to choose one from. */
+  choices?: Choice[];
 }
 
 export interface Answer {
   action: AskAction;
   /** replace: the PLU to use instead. */
   plu?: string;
+  /** choose: the value of the choice. */
+  value?: string;
   mode?: DeliveryMode;
   method?: DeliveryMethod;
 }
@@ -70,6 +87,8 @@ export interface Decision {
   action: AskAction;
   label: string;
   plu?: string;
+  /** choose: what was chosen, as the person saw it (e.g. "SHELL BUKIT BATOK ROAD"). */
+  choice?: string;
   outcome?: string;
 }
 
@@ -104,7 +123,12 @@ export async function ask(question: Question, fallback: Answer, decisions: Decis
   const answer = JSON.parse(readFileSync(answerFile, 'utf8')) as Answer;
   const option = question.options.find((candidate) => candidate.action === answer.action && candidate.mode === answer.mode && candidate.method === answer.method);
   const replacements = answer.action === 'replace' ? pluList(answer.plu) : [];
-  if (!option || (answer.action === 'replace' && (replacements.length === 0 || (!option.many && replacements.length > 1)))) {
+  const choice = answer.action === 'choose' ? question.choices?.find((candidate) => candidate.value === answer.value) : undefined;
+  if (
+    !option ||
+    (answer.action === 'replace' && (replacements.length === 0 || (!option.many && replacements.length > 1))) ||
+    (answer.action === 'choose' && !choice)
+  ) {
     throw new StepError('UNEXPECTED_PAGE', question.step, `The answer to "${question.message}" was not one of the choices offered.`);
   }
   decisions.push({
@@ -116,8 +140,9 @@ export async function ask(question: Question, fallback: Answer, decisions: Decis
     action: answer.action,
     label: option.label,
     ...(replacements.length > 0 ? { plu: replacements.join(' ') } : {}),
+    ...(choice ? { choice: choice.label } : {}),
   });
-  log(`Decision: ${option.label}${replacements.length > 0 ? ` (PLU ${replacements.join(', ')})` : ''}`);
+  log(`Decision: ${option.label}${replacements.length > 0 ? ` (PLU ${replacements.join(', ')})` : ''}${choice ? ` (${choice.label})` : ''}`);
   return answer;
 }
 
