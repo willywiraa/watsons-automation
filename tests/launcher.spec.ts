@@ -434,6 +434,9 @@ test.describe('launcher window', () => {
     await expect(page.locator('input[name=mode][value=standard]')).toBeEnabled();
     await expect(page.locator('#modes')).not.toContainText('Coming later');
     await expect(page.locator('#operator')).toHaveText('Test Operator');
+    // The walkthrough is the hosted app's only (user's decision 2026-10-31).
+    await expect(page.locator('#tour')).toBeHidden();
+    await expect(page.locator('#header-tour')).toBeHidden();
     const run = page.locator('#run');
     await expect(run).toHaveText('Place test order');
     await expect(run).toBeEnabled();

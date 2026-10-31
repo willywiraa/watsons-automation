@@ -1,0 +1,78 @@
+{
+  "recorded": "2026-10-31",
+  "duration": 54.6,
+  "steps": [
+    {
+      "title": "Open Logs / History",
+      "start": 0
+    },
+    {
+      "title": "Search and filter",
+      "start": 5.3
+    },
+    {
+      "title": "Open a run",
+      "start": 11.9
+    },
+    {
+      "title": "See its screenshots",
+      "start": 16.9
+    },
+    {
+      "title": "Know the statuses",
+      "start": 27.5
+    }
+  ],
+  "cues": [
+    {
+      "start": 0,
+      "step": 0,
+      "text": "Logs / History keeps every run, yours and your colleagues’, with its screenshots."
+    },
+    {
+      "start": 5.3,
+      "step": 1,
+      "text": "Search by order number, PLU, error code or operator. The filters narrow the list down, e.g. by status."
+    },
+    {
+      "start": 11.9,
+      "step": 2,
+      "text": "Click a run to open it: what happened, its products and steps, who ran it and when."
+    },
+    {
+      "start": 16.9,
+      "step": 3,
+      "text": "The screenshots are the run’s evidence. Click one to see it full size; the arrows show the others."
+    },
+    {
+      "start": 27.5,
+      "step": 4,
+      "text": "Each run ends with a status, shown in colour. The Status filter lists the runs of one status."
+    },
+    {
+      "start": 33.4,
+      "step": 4,
+      "text": "Completed: the run did all its steps. The order was placed and approved, or the approval was done."
+    },
+    {
+      "start": 38,
+      "step": 4,
+      "text": "Awaiting approval: the order is placed, and someone with a backoffice account still has to approve it."
+    },
+    {
+      "start": 42.5,
+      "step": 4,
+      "text": "Failed: the run hit a problem. The Error column shows its code; the run’s details show the step and a screenshot."
+    },
+    {
+      "start": 47.1,
+      "step": 4,
+      "text": "Stopped: someone pressed Stop before the run finished. “Check the order” means it may already have been placed."
+    },
+    {
+      "start": 51.6,
+      "step": 4,
+      "text": "That’s it. Open this walkthrough again any time with Walkthrough, at the top of the page."
+    }
+  ]
+}

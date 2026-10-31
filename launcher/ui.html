@@ -534,6 +534,36 @@ dialog::backdrop{background:var(--scrim)}
 .p-signin__brand img{width:32px;height:32px;border-radius:8px}
 .p-signin__foot{text-align:center}
 .p-signin .wa-input{width:100%}
+/* Walkthrough (hosted app, 2026-10-31): the video as large as the window allows, its caption, its
+   steps (click one to jump to it) and two actions. */
+dialog.p-tour{padding:0;width:min(1040px,calc(100vw - 32px),max(480px,calc((100vh - 260px) * 16 / 9)));width:min(1040px,calc(100vw - 32px),max(480px,calc((100dvh - 260px) * 16 / 9)));max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);overflow:auto;background:var(--surface);border-radius:var(--radius-dialog);box-shadow:var(--shadow-overlay);animation:wa-in var(--dur-in) var(--ease)}
+dialog.p-tour[open]{display:block}
+.p-tour__head{display:flex;align-items:center;gap:var(--space-4);padding:var(--space-4) var(--space-4) var(--space-3) var(--space-5)}
+.p-tour__title{flex:1;min-width:0;font-size:var(--text-title);line-height:var(--lh-title);font-weight:var(--weight-semibold)}
+.p-tour__close{width:var(--control-h);padding:0;color:var(--text-2)}
+.p-tour__media{aspect-ratio:16 / 9;background:var(--term-bg);border-block:1px solid var(--border)}
+.p-tour__media video{display:block;width:100%;height:100%;object-fit:contain}
+.p-tour__caption{padding:var(--space-3) var(--space-5) 0;min-height:calc(var(--lh-body) * 2 + var(--space-3))}
+.p-tour__foot{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3) var(--space-4);padding:var(--space-4) var(--space-5) var(--space-5)}
+.p-tour__steps{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:var(--space-2)}
+.p-tour__step{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 var(--space-3) 0 4px;border:1px solid var(--border);border-radius:var(--radius-pill);background:var(--surface);color:var(--text-2);font:inherit;font-size:var(--text-small);cursor:pointer;white-space:nowrap;transition:background-color var(--dur-hover) var(--ease),color var(--dur-hover) var(--ease),border-color var(--dur-hover) var(--ease)}
+.p-tour__step:hover{color:var(--text);background:var(--hover-row)}
+.p-tour__num{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--surface-sunken);font-size:var(--text-caption);font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums}
+.p-tour__step[aria-current="step"]{color:var(--accent);border-color:var(--accent);background:var(--tint-accent)}
+.p-tour__step[aria-current="step"] .p-tour__num{background:var(--accent);color:var(--on-accent)}
+.p-tour__actions{margin-left:auto;display:flex;gap:var(--space-2)}
+@media (max-width:640px){
+  .p-tour__head{padding:var(--space-3) var(--space-3) var(--space-2) var(--space-4)}
+  .p-tour__title{font-size:var(--text-heading);line-height:var(--lh-heading)}
+  .p-tour__caption{padding-inline:var(--space-4)}
+  .p-tour__foot{padding:var(--space-3) var(--space-4) var(--space-4)}
+  /* Numbers only, but the step shown keeps its name. */
+  .p-tour__step:not([aria-current="step"]){padding-right:4px}
+  .p-tour__step:not([aria-current="step"]) .p-tour__label{display:none}
+  .p-tour__actions{width:100%}
+  .p-tour__actions .wa-btn{flex:1}
+  .p-hdr-tour__label{display:none}
+}
 @media (max-width:1100px){
   .p-grid-compose,.p-grid-result,.p-run-grid,.p-run-grid--desktop,.p-x{grid-template-columns:minmax(0,1fr)}
   .p-main--run{height:auto}
@@ -551,6 +581,7 @@ dialog::backdrop{background:var(--scrim)}
   </nav>
   <div class="wa-header__end">
     <button type="button" class="wa-header__run" id="header-run" hidden><span class="wa-spinner" id="header-run-spin" aria-hidden="true"></span><span id="header-run-step"></span><span class="wa-num" id="header-run-time"></span></button>
+    <button type="button" class="wa-btn wa-btn--ghost" id="header-tour" title="Watch the walkthrough again" hidden><span data-icon="circle-play"></span><span class="p-hdr-tour__label">Walkthrough</span></button>
     <div class="wa-seg p-theme" role="radiogroup" aria-label="Theme" id="theme">
       <button type="button" class="wa-seg__opt" role="radio" data-theme-opt="light" aria-checked="false" aria-label="Light theme" title="Light theme"><span data-icon="sun"></span></button>
       <button type="button" class="wa-seg__opt" role="radio" data-theme-opt="dark" aria-checked="false" aria-label="Dark theme" title="Dark theme"><span data-icon="moon"></span></button>
@@ -900,6 +931,25 @@ dialog::backdrop{background:var(--scrim)}
   </div>
 </dialog>
 
+<!-- Hosted app only (2026-10-31): the walkthrough, a video of Logs / History recorded from this app
+     (server/scripts/record-walkthrough.cjs). It opens by itself the first time a browser lands on
+     the page; Walkthrough, in the header, opens it again. -->
+<dialog id="tour" class="p-tour" aria-labelledby="tour-title" aria-describedby="tour-caption">
+  <div class="p-tour__head">
+    <h2 class="p-tour__title" id="tour-title">Welcome to Watsons Automation</h2>
+    <button type="button" class="wa-btn wa-btn--ghost p-tour__close" id="tour-close" aria-label="Close"><span data-icon="x"></span></button>
+  </div>
+  <div class="p-tour__media"><video id="tour-video" muted playsinline controls preload="none" aria-label="Walkthrough of Logs / History, about a minute, without sound"></video></div>
+  <p class="p-tour__caption" id="tour-caption">A one-minute tour of Logs / History: find a run, open it, see its screenshots, and what its status means.</p>
+  <div class="p-tour__foot">
+    <ol class="p-tour__steps" id="tour-steps" aria-label="Steps of the walkthrough"></ol>
+    <div class="p-tour__actions">
+      <button type="button" class="wa-btn wa-btn--secondary" id="tour-replay"><span data-icon="rotate-ccw"></span>Watch again</button>
+      <button type="button" class="wa-btn wa-btn--primary" id="tour-start">Start using app</button>
+    </div>
+  </div>
+</dialog>
+
 <div class="wa-toast wa-toast--fixed" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script>
@@ -936,6 +986,8 @@ const ICONS = {
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
   moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  'circle-play': '<circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>',
+  'rotate-ccw': '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
 };
 const svg = (name, size = 16) =>
   `<svg class="wa-icon" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${36 / size}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] ?? ''}</svg>`;
@@ -2615,13 +2667,136 @@ $('viewer').addEventListener('keydown', (event) => {
   if (event.key === 'ArrowRight') $('viewer-next').click();
 });
 // A click on the dimmed page around a dialog closes it.
-for (const dialog of [$('viewer'), $('confirm'), $('stop-confirm')]) {
+for (const dialog of [$('viewer'), $('confirm'), $('stop-confirm'), $('tour')]) {
   dialog.addEventListener('click', (event) => {
     if (event.target !== dialog) return;
     const box = dialog.getBoundingClientRect();
     if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close();
   });
 }
+
+// ---- Walkthrough (hosted app, 2026-10-31) -----------------------------------------------------
+// A one-minute video of Logs / History, recorded from this app (server/scripts/record-walkthrough.cjs),
+// with its steps and captions (walkthrough.json). It opens by itself the first time a browser lands
+// on the page (after sign-in); closing it in any way marks it seen in that browser. Walkthrough, in
+// the header, opens it again. The video is only fetched when the walkthrough opens.
+
+const TOUR_SEEN = 'wa-walkthrough-seen';
+let tourGuide = null; // walkthrough.json: { steps: [{ title, start }], cues: [{ start, step, text }] }
+let tourOffered = false; // it opens by itself at most once per page load
+
+function tourSeen() {
+  try {
+    return localStorage.getItem(TOUR_SEEN) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** On landing: the walkthrough, unless this browser has seen it (or something else is open). */
+function offerTour() {
+  if (tourOffered || !info?.walkthrough) return;
+  tourOffered = true;
+  if (!tourSeen() && !document.querySelector('dialog[open]')) openTour(true);
+}
+
+function openTour(byItself = false) {
+  const video = $('tour-video');
+  if (!video.getAttribute('src')) {
+    video.poster = 'walkthrough/walkthrough.jpg';
+    video.src = 'walkthrough/walkthrough.webm';
+  }
+  if (!tourGuide) loadTourGuide();
+  if (!$('tour').open) {
+    placeTour(); // on the part seen first, so that its focus does not move the page
+    $('tour').showModal();
+  }
+  placeTour();
+  // From the start; by itself only when the person has not asked for less motion.
+  playTour(0, byItself && matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+
+// Phones: the page is laid out at least 1024px wide (body), wider than the screen, so a dialog
+// centred on the page can be off screen. There, the walkthrough goes in the middle of what is seen.
+function placeTour() {
+  const dialog = $('tour');
+  const view = window.visualViewport;
+  for (const name of ['inset', 'margin', 'left', 'top']) dialog.style.removeProperty(name);
+  if (!view || (view.offsetLeft === 0 && view.offsetTop === 0 && view.width >= innerWidth - 1 && view.height >= innerHeight - 1)) return;
+  // Not open yet: its size is unknown, so 16px from the top left (it is 32px narrower than the screen).
+  const box = dialog.open ? dialog.getBoundingClientRect() : { width: view.width - 32, height: view.height - 32 };
+  Object.assign(dialog.style, {
+    inset: 'auto',
+    margin: '0',
+    left: `${view.offsetLeft + Math.max(0, (view.width - box.width) / 2)}px`,
+    top: `${view.offsetTop + Math.max(0, (view.height - box.height) / 2)}px`,
+  });
+}
+const followView = () => $('tour').open && placeTour();
+window.visualViewport?.addEventListener('resize', followView);
+window.visualViewport?.addEventListener('scroll', followView);
+
+function playTour(at, paused = false) {
+  const video = $('tour-video');
+  video.currentTime = at;
+  showTourCue();
+  if (!paused) video.play().catch(() => {}); // e.g. not loaded yet: its own Play button then
+}
+
+async function loadTourGuide() {
+  try {
+    const response = await fetch('walkthrough/walkthrough.json', { cache: 'no-cache' });
+    if (!response.ok) return;
+    tourGuide = await response.json();
+  } catch {
+    return; // the video plays without its steps
+  }
+  $('tour-steps').replaceChildren(
+    ...tourGuide.steps.map((step, index) =>
+      el(
+        'li',
+        {},
+        el(
+          'button',
+          // Named in full also where only its number shows (phones).
+          { type: 'button', className: 'p-tour__step', attrs: { 'data-step': index, 'aria-label': `${index + 1} ${step.title}` }, onclick: () => playTour(step.start) },
+          el('span', { className: 'p-tour__num', textContent: String(index + 1) }),
+          el('span', { className: 'p-tour__label', textContent: step.title }),
+        ),
+      ),
+    ),
+  );
+  showTourCue();
+}
+
+/** The caption at the video's time, and its step marked. */
+function showTourCue() {
+  if (!tourGuide) return;
+  const time = $('tour-video').currentTime + 0.05;
+  const cue = tourGuide.cues.findLast((item) => item.start <= time) ?? tourGuide.cues[0];
+  if (!cue) return;
+  $('tour-caption').textContent = cue.text;
+  for (const button of $('tour-steps').querySelectorAll('.p-tour__step')) {
+    if (Number(button.dataset.step) === cue.step) button.setAttribute('aria-current', 'step');
+    else button.removeAttribute('aria-current');
+  }
+}
+
+$('header-tour').addEventListener('click', () => openTour());
+$('tour-replay').addEventListener('click', () => playTour(0));
+$('tour-start').addEventListener('click', () => $('tour').close());
+$('tour-close').addEventListener('click', () => $('tour').close());
+$('tour').addEventListener('close', () => {
+  $('tour-video').pause();
+  try {
+    localStorage.setItem(TOUR_SEEN, '1');
+  } catch {}
+});
+$('tour-video').addEventListener('timeupdate', showTourCue);
+$('tour-video').addEventListener('seeked', showTourCue);
+$('tour-video').addEventListener('error', () => {
+  $('tour-caption').textContent = 'The walkthrough video could not be loaded. Close this and try Walkthrough, at the top of the page, later.';
+});
 
 // ---- Messages --------------------------------------------------------------------------------
 
@@ -3006,6 +3181,7 @@ function connect() {
       $('user-name').textContent = name;
       $('user-avatar').textContent = initials(name);
       $('user-signed').textContent = `Signed in as ${name}`;
+      $('header-tour').hidden = !state.walkthrough;
     }
     if ($('history-status').options.length === 1) {
       $('history-status').append(...Object.entries(state.statuses).map(([key, label]) => el('option', { value: key, textContent: label })));
@@ -3015,6 +3191,7 @@ function connect() {
     showLines((current ?? last)?.lines ?? [], true);
     render();
     loadHistory();
+    if (serverMode) offerTour();
   });
   events.addEventListener('started', (event) => {
     current = JSON.parse(event.data);

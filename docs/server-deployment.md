@@ -192,6 +192,19 @@ it couldn't follow to the end shows as **Interrupted** in the history.
   - A reset portal password (`users.cjs reset`): their remembered accounts can't be opened any
     more, so they enter them once again.
   - Change a staging account's password if it was shared.
+- **Walkthrough (since 2026-10-31):** the page shows a one-minute video of Logs / History by
+  itself the first time a browser lands on it after sign-in; **Walkthrough** in the header shows
+  it again.
+  - Its files are in `server\walkthrough\` and come with the update: `walkthrough.webm` (about
+    3 MB, sent only when the walkthrough opens, to people signed in), its poster
+    `walkthrough.jpg`, and its steps and captions `walkthrough.json`. Without them, the page
+    offers no walkthrough.
+  - To record it again after the page has changed: on a PC with the project, VPN on, and
+    Playwright's ffmpeg (once: `npx playwright install ffmpeg`), run
+    `node server\scripts\record-walkthrough.cjs`. Edge opens on the app: sign in. The recording
+    then goes on by itself, headless, in about a minute, and only looks: anything that would
+    change something (a run, Stop, an account) is blocked. Commit the three files and update the
+    VM.
 - **Earlier desktop runs into the shared history:** copy a desktop project's `reports\` folder to
   the VM, then run:
 

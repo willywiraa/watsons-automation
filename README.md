@@ -345,6 +345,7 @@ on the server, headless, and everyone sees **one shared Logs / History**.
 | Live browser | While a run goes on, its owner sees the server's browser in the page (**Live browser**, about 3 pictures a second) and can use it: click, scroll, type, and switch between its tabs. Nobody else sees it. The run ends as soon as it is done (since 2026-10-23), so the next one can start straight away. |
 | Parallel runs | One run per person, and per testing account, at a time; up to `WATSONS_MAX_PARALLEL_RUNS` runs at once, then a waiting line. |
 | Logs / History | Everyone's runs, from a database on the server (SQLite), with a **Mine / All** filter. Screenshots are shown in the browser (**Download** saves one); the error report is copied from the page. The rest of the evidence stays on the server (no zip, report or error-report.txt downloads since 2026-10-25). |
+| Walkthrough (since 2026-10-31) | A one-minute video of Logs / History, recorded from the hosted app itself: search an order, filter by status, open a run, see its screenshots, and what Completed, Awaiting approval, Failed and Stopped mean. It opens by itself the first time a browser lands on the page after sign-in, with captions and steps to jump to; **Start using app**, **×** or Esc close it, and **Walkthrough** in the header shows it again. The video is only sent when it opens. The desktop window has none. To record it again after the page changes: `node server/scripts/record-walkthrough.cjs` ([docs/server-deployment.md](docs/server-deployment.md) §7). |
 
 - **Code:** `server/` (Node.js 24 with express, express-rate-limit and bcryptjs; the database is
   Node's built-in SQLite). It reuses the launcher's code (`launcher/launcher.cjs`) and page
@@ -494,7 +495,7 @@ The `reports/` folder is never saved in Git. Delete old run folders whenever you
 | `src/pages/` | One "page object" per staging page (login, search, bag, checkout, payment, confirmation) |
 | `src/reporting/` | The evidence folder per order run (`reports/`) and the PASS/FAIL box |
 | `launcher/` | The launcher window (`launcher.cjs` runs it and reads Logs / History from `reports/`; `ui.html` is the page, with the Watsons logo inside it); see `docs/launcher-decision.md` |
-| `server/` | The hosted version: `server.cjs` (the web app), `lib/` (sign-in, runs, database, evidence), `scripts/` (users, import of desktop reports), `iis/web.config`; setup in `docs/server-deployment.md` |
+| `server/` | The hosted version: `server.cjs` (the web app), `lib/` (sign-in, runs, database, evidence), `scripts/` (users, import of desktop reports, recording the walkthrough), `walkthrough/` (the walkthrough video, its poster and its captions), `iis/web.config`; setup in `docs/server-deployment.md` |
 | `scripts/build-exe.mjs` | Builds `WatsonsTester.exe` from `launcher/` |
 | `scripts/build-share.mjs` | Builds `WatsonsTester.zip` for other people (their guide: `launcher/START-HERE.txt`) |
 | `src/utils/secrets.ts` | Types the username and password so they never appear in reports or recordings |

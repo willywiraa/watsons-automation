@@ -24,6 +24,9 @@ const COOKIE = 'wt_session';
 // The page: its scripts and styles are inline; it loads nothing from other sites.
 const PAGE_CSP = "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'";
 const UI_FILE = path.join(__dirname, '..', 'launcher', 'ui.html');
+// The walkthrough the page shows people (2026-10-31): a video of Logs / History recorded from this
+// app (scripts/record-walkthrough.cjs), its poster, and its steps and captions.
+const WALKTHROUGH_FILES = ['walkthrough.webm', 'walkthrough.jpg', 'walkthrough.json'];
 
 const pad = (n) => String(n).padStart(2, '0');
 /** yyyy-mm-dd, this computer's date (as the run ids and day folders). */
@@ -34,6 +37,9 @@ async function startServer(overrides = {}) {
   const config = { ...readConfig(), ...overrides };
   const log = overrides.quiet ? () => {} : (line) => console.log(`[${new Date().toISOString()}] ${line}`);
   fs.mkdirSync(config.evidenceDir, { recursive: true });
+  const walkthroughDir = config.walkthroughDir ?? path.join(__dirname, 'walkthrough');
+  // The page offers the walkthrough only when its files are here (looked at once, as the page).
+  const hasWalkthrough = WALKTHROUGH_FILES.every((name) => fs.existsSync(path.join(walkthroughDir, name)));
 
   const users = new UserDirectory(path.join(config.configDir, 'users.json'));
   if (users.all().length === 0) log(`No users yet: add them with "node server/scripts/users.cjs add <name>" (${users.file}).`);
@@ -110,6 +116,7 @@ async function startServer(overrides = {}) {
     operator: session.displayName,
     user: publicUser(session),
     stagingHost: launcher.STAGING_HOST,
+    walkthrough: hasWalkthrough,
     testingAccount: accountState(session.testingAccount),
     backofficeAccount: accountState(session.backofficeAccount),
     overview: runs.overview(),
@@ -177,6 +184,16 @@ async function startServer(overrides = {}) {
   app.get('/', (req, res) => {
     res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': PAGE_CSP });
     res.send(page);
+  });
+
+  // The walkthrough's files, for people signed in (it shows the shared history). Kept by the
+  // browser, which asks again whether it changed (a new recording replaces it); the video in ranges.
+  app.get('/walkthrough/:name', signedIn, (req, res, next) => {
+    if (!WALKTHROUGH_FILES.includes(req.params.name)) return next();
+    res.set('Cache-Control', 'private, no-cache');
+    res.sendFile(req.params.name, { root: walkthroughDir, cacheControl: false }, (error) => {
+      if (error && !res.headersSent) res.status(404).type('text/plain').send('Not found.');
+    });
   });
 
   app.get('/api/health', (req, res) => {

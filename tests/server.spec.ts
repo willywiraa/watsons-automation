@@ -38,6 +38,12 @@ const hashPassword = (password: string): Promise<string> => require('../server/s
 // For the stand-in runner's real browser (PLU 555, the live view): where Playwright is.
 const PLAYWRIGHT_MODULE = require.resolve('@playwright/test');
 /* eslint-enable @typescript-eslint/no-require-imports */
+// The walkthrough recorded from the hosted app (server/scripts/record-walkthrough.cjs, 2026-10-31).
+const WALKTHROUGH_DIR = join(__dirname, '..', 'server', 'walkthrough');
+interface Walkthrough {
+  steps: { title: string; start: number }[];
+  cues: { start: number; step: number; text: string }[];
+}
 
 type Person = 'alice' | 'bob' | 'carol';
 type Account = { username: string; password: string };
@@ -115,6 +121,7 @@ async function makeServer(options: Record<string, unknown> = {}): Promise<Setup>
     cookieSecure: false, // http://127.0.0.1 in tests; HTTPS (IIS) on the VM
     loginLimitPerMinute: 1000,
     loginFailuresPerUser: 1000,
+    walkthroughDir: join(base, 'walkthrough'), // none, unless a test gives the recorded one
     ...options,
   };
   return { base, app: await startServer(allOptions), configDir, dataDir, evidenceDir, options: allOptions };
@@ -764,6 +771,9 @@ test.describe('hosted server', () => {
     await page.getByRole('button', { name: 'Sign in' }).click();
     await expect(page.locator('#login')).toBeHidden();
     await expect(page.locator('#user-button')).toContainText('Alice');
+    // No walkthrough on this server (its files are not there): neither shown nor offered.
+    await expect(page.locator('#tour')).toBeHidden();
+    await expect(page.locator('#header-tour')).toBeHidden();
 
     // Step 2: her own testing and backoffice accounts.
     const run = page.locator('#run');
@@ -882,6 +892,67 @@ test.describe('hosted server', () => {
       iis.closeAllConnections();
       await new Promise((resolve) => iis.close(resolve));
     }
+  });
+
+  test('the walkthrough: once per browser by itself, again from the header; its files only for people signed in (2026-10-31)', async ({ page }) => {
+    test.skip(!existsSync(join(WALKTHROUGH_DIR, 'walkthrough.webm')), 'No walkthrough recorded yet (server/scripts/record-walkthrough.cjs).');
+    await closeServer(setup);
+    setup = await makeServer({ walkthroughDir: WALKTHROUGH_DIR });
+    const guide = JSON.parse(readFileSync(join(WALKTHROUGH_DIR, 'walkthrough.json'), 'utf8')) as Walkthrough;
+    expect(guide.steps.map((step) => step.title)).toEqual(['Open Logs / History', 'Search and filter', 'Open a run', 'See its screenshots', 'Know the statuses']);
+
+    // Its files: for people signed in (it shows the shared history), the video in ranges, nothing else.
+    const someone = client(setup.app);
+    expect((await someone.call('GET', '/walkthrough/walkthrough.webm')).status).toBe(401);
+    await someone.login('alice');
+    const part = await someone.call('GET', '/walkthrough/walkthrough.webm', undefined, { Range: 'bytes=0-99' });
+    expect(part.status).toBe(206);
+    expect(part.headers.get('content-type')).toBe('video/webm');
+    expect(part.headers.get('content-range')).toBe(`bytes 0-99/${statSync(join(WALKTHROUGH_DIR, 'walkthrough.webm')).size}`);
+    expect((await someone.call('GET', '/walkthrough/walkthrough.json')).data).toEqual(guide);
+    expect((await someone.call('GET', '/walkthrough/walkthrough.jpg')).headers.get('content-type')).toBe('image/jpeg');
+    for (const path of ['/walkthrough/users.json', '/walkthrough/..%2Fserver.cjs', '/walkthrough/%2E%2E%2Fserver.cjs', '/walkthrough/']) {
+      expect((await someone.call('GET', path)).status, path).toBe(404);
+    }
+
+    // The page: it opens by itself after sign-in and plays, with its captions and steps.
+    await page.goto(setup.app.url);
+    await page.locator('#login-username').fill('alice');
+    await page.locator('#login-password').fill(PEOPLE.alice.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    const tour = page.locator('#tour');
+    const time = () => page.locator('#tour-video').evaluate((video: HTMLVideoElement) => video.currentTime);
+    await expect(tour).toBeVisible();
+    await expect(tour.getByRole('heading')).toHaveText('Welcome to Watsons Automation');
+    await expect(tour.locator('.p-tour__step')).toHaveText(guide.steps.map((step, index) => `${index + 1}${step.title}`));
+    await expect.poll(time).toBeGreaterThan(0.5);
+    await expect(page.locator('#tour-caption')).toHaveText(guide.cues[0].text);
+    // A step jumps to its part; Watch again starts over.
+    await tour.locator('.p-tour__step').nth(3).click();
+    await expect.poll(time).toBeGreaterThanOrEqual(guide.steps[3].start);
+    await expect(tour.locator('.p-tour__step[aria-current="step"]')).toContainText(guide.steps[3].title);
+    await expect(page.locator('#tour-caption')).toHaveText(guide.cues.find((cue) => cue.step === 3)!.text);
+    await tour.getByRole('button', { name: 'Watch again' }).click();
+    await expect.poll(time).toBeLessThan(guide.steps[1].start);
+    await expect(tour.locator('.p-tour__step[aria-current="step"]')).toContainText(guide.steps[0].title);
+
+    // Start using app: closed, the page usable, and not again by itself in this browser.
+    await tour.getByRole('button', { name: 'Start using app' }).click();
+    await expect(tour).toBeHidden();
+    await page.locator('#testing-username').fill(PEOPLE.alice.testing.username);
+    await page.reload();
+    await expect(page.locator('#header-tour')).toBeVisible(); // the page has its state
+    await expect(tour).toBeHidden();
+    // Walkthrough, in the header, opens it again from the start; Escape and × close it.
+    await page.locator('#header-tour').click();
+    await expect(tour).toBeVisible();
+    await expect.poll(time).toBeGreaterThan(0.2);
+    await page.keyboard.press('Escape');
+    await expect(tour).toBeHidden();
+    await page.locator('#header-tour').click();
+    await tour.getByRole('button', { name: 'Close' }).click();
+    await expect(tour).toBeHidden();
+    expect(await page.locator('#tour-video').evaluate((video: HTMLVideoElement) => video.paused)).toBe(true);
   });
 });
 
