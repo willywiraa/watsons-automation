@@ -24,8 +24,8 @@ const COOKIE = 'wt_session';
 // The page: its scripts and styles are inline; it loads nothing from other sites.
 const PAGE_CSP = "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'";
 const UI_FILE = path.join(__dirname, '..', 'launcher', 'ui.html');
-// The walkthrough the page shows people (2026-10-31): a video of Logs / History recorded from this
-// app (scripts/record-walkthrough.cjs), its poster, and its steps and captions.
+// The walkthrough the page shows people (2026-10-31): a video of the whole workflow recorded from
+// this app (scripts/record-walkthrough.cjs), its poster, and its steps and captions.
 const WALKTHROUGH_FILES = ['walkthrough.webm', 'walkthrough.jpg', 'walkthrough.json'];
 
 const pad = (n) => String(n).padStart(2, '0');

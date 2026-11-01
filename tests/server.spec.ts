@@ -41,6 +41,7 @@ const PLAYWRIGHT_MODULE = require.resolve('@playwright/test');
 // The walkthrough recorded from the hosted app (server/scripts/record-walkthrough.cjs, 2026-10-31).
 const WALKTHROUGH_DIR = join(__dirname, '..', 'server', 'walkthrough');
 interface Walkthrough {
+  duration: number;
   steps: { title: string; start: number }[];
   cues: { start: number; step: number; text: string }[];
 }
@@ -899,7 +900,9 @@ test.describe('hosted server', () => {
     await closeServer(setup);
     setup = await makeServer({ walkthroughDir: WALKTHROUGH_DIR });
     const guide = JSON.parse(readFileSync(join(WALKTHROUGH_DIR, 'walkthrough.json'), 'utf8')) as Walkthrough;
-    expect(guide.steps.map((step) => step.title)).toEqual(['Open Logs / History', 'Search and filter', 'Open a run', 'See its screenshots', 'Know the statuses']);
+    // The whole workflow since 2026-11-01 (user's request): the order to ORDER_EXTRACTED, then Logs / History.
+    expect(guide.steps.map((step) => step.title)).toEqual(['Order and delivery', 'Run and follow it', 'Backoffice approval', 'ORDER_EXTRACTED', 'Logs / History']);
+    expect(guide.duration).toBeLessThanOrEqual(30);
 
     // Its files: for people signed in (it shows the shared history), the video in ranges, nothing else.
     const someone = client(setup.app);
@@ -952,7 +955,8 @@ test.describe('hosted server', () => {
     await page.locator('#header-tour').click();
     await tour.getByRole('button', { name: 'Close' }).click();
     await expect(tour).toBeHidden();
-    expect(await page.locator('#tour-video').evaluate((video: HTMLVideoElement) => video.paused)).toBe(true);
+    // Paused by the dialog's close event, which comes just after it closes.
+    await expect.poll(() => page.locator('#tour-video').evaluate((video: HTMLVideoElement) => video.paused)).toBe(true);
   });
 });
 

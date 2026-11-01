@@ -1,78 +1,58 @@
 {
-  "recorded": "2026-10-31",
-  "duration": 54.6,
+  "recorded": "2026-11-01",
+  "duration": 26,
   "steps": [
     {
-      "title": "Open Logs / History",
+      "title": "Order and delivery",
       "start": 0
     },
     {
-      "title": "Search and filter",
-      "start": 5.3
+      "title": "Run and follow it",
+      "start": 5.6
     },
     {
-      "title": "Open a run",
-      "start": 11.9
+      "title": "Backoffice approval",
+      "start": 16.5
     },
     {
-      "title": "See its screenshots",
-      "start": 16.9
+      "title": "ORDER_EXTRACTED",
+      "start": 20
     },
     {
-      "title": "Know the statuses",
-      "start": 27.5
+      "title": "Logs / History",
+      "start": 22.6
     }
   ],
   "cues": [
     {
       "start": 0,
       "step": 0,
-      "text": "Logs / History keeps every run, yours and your colleagues’, with its screenshots."
+      "text": "Place new order: type the PLUs, one per line, then choose the delivery: Home Delivery, Express."
     },
     {
-      "start": 5.3,
+      "start": 5.6,
       "step": 1,
-      "text": "Search by order number, PLU, error code or operator. The filters narrow the list down, e.g. by status."
+      "text": "Place test order, check the summary and confirm: the run starts on the server."
     },
     {
-      "start": 11.9,
+      "start": 9.4,
+      "step": 1,
+      "text": "It runs by itself, in about 4 minutes (sped up here): the steps tick off, and Live browser shows the shop."
+    },
+    {
+      "start": 16.5,
       "step": 2,
-      "text": "Click a run to open it: what happened, its products and steps, who ran it and when."
+      "text": "Then it approves the order in the backoffice, with your backoffice account…"
     },
     {
-      "start": 16.9,
+      "start": 20,
       "step": 3,
-      "text": "The screenshots are the run’s evidence. Click one to see it full size; the arrows show the others."
+      "text": "…and waits until the order is ORDER_EXTRACTED: the run is Completed, with its order number."
     },
     {
-      "start": 27.5,
+      "start": 22.6,
       "step": 4,
-      "text": "Each run ends with a status, shown in colour. The Status filter lists the runs of one status."
-    },
-    {
-      "start": 33.4,
-      "step": 4,
-      "text": "Completed: the run did all its steps. The order was placed and approved, or the approval was done."
-    },
-    {
-      "start": 38,
-      "step": 4,
-      "text": "Awaiting approval: the order is placed, and someone with a backoffice account still has to approve it."
-    },
-    {
-      "start": 42.5,
-      "step": 4,
-      "text": "Failed: the run hit a problem. The Error column shows its code; the run’s details show the step and a screenshot."
-    },
-    {
-      "start": 47.1,
-      "step": 4,
-      "text": "Stopped: someone pressed Stop before the run finished. “Check the order” means it may already have been placed."
-    },
-    {
-      "start": 51.6,
-      "step": 4,
-      "text": "That’s it. Open this walkthrough again any time with Walkthrough, at the top of the page."
+      "text": "Every run is kept in Logs / History with its screenshots: yours and your colleagues’."
     }
   ]
 }

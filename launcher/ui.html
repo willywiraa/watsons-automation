@@ -931,7 +931,7 @@ dialog.p-tour[open]{display:block}
   </div>
 </dialog>
 
-<!-- Hosted app only (2026-10-31): the walkthrough, a video of Logs / History recorded from this app
+<!-- Hosted app only (2026-10-31): the walkthrough, a video of the whole workflow recorded from this app
      (server/scripts/record-walkthrough.cjs). It opens by itself the first time a browser lands on
      the page; Walkthrough, in the header, opens it again. -->
 <dialog id="tour" class="p-tour" aria-labelledby="tour-title" aria-describedby="tour-caption">
@@ -939,8 +939,8 @@ dialog.p-tour[open]{display:block}
     <h2 class="p-tour__title" id="tour-title">Welcome to Watsons Automation</h2>
     <button type="button" class="wa-btn wa-btn--ghost p-tour__close" id="tour-close" aria-label="Close"><span data-icon="x"></span></button>
   </div>
-  <div class="p-tour__media"><video id="tour-video" muted playsinline controls preload="none" aria-label="Walkthrough of Logs / History, about a minute, without sound"></video></div>
-  <p class="p-tour__caption" id="tour-caption">A one-minute tour of Logs / History: find a run, open it, see its screenshots, and what its status means.</p>
+  <div class="p-tour__media"><video id="tour-video" muted playsinline controls preload="none" aria-label="Walkthrough of a test order, from placing it to ORDER_EXTRACTED and Logs / History, about 30 seconds, without sound"></video></div>
+  <p class="p-tour__caption" id="tour-caption">A 30-second tour: place a test order, follow its run to ORDER_EXTRACTED, then find it in Logs / History.</p>
   <div class="p-tour__foot">
     <ol class="p-tour__steps" id="tour-steps" aria-label="Steps of the walkthrough"></ol>
     <div class="p-tour__actions">
@@ -2676,10 +2676,11 @@ for (const dialog of [$('viewer'), $('confirm'), $('stop-confirm'), $('tour')]) 
 }
 
 // ---- Walkthrough (hosted app, 2026-10-31) -----------------------------------------------------
-// A one-minute video of Logs / History, recorded from this app (server/scripts/record-walkthrough.cjs),
-// with its steps and captions (walkthrough.json). It opens by itself the first time a browser lands
-// on the page (after sign-in); closing it in any way marks it seen in that browser. Walkthrough, in
-// the header, opens it again. The video is only fetched when the walkthrough opens.
+// A 30-second video of the whole workflow (since 2026-11-01: a test order to ORDER_EXTRACTED, then
+// Logs / History), recorded from this app (server/scripts/record-walkthrough.cjs), with its steps
+// and captions (walkthrough.json). It opens by itself the first time a browser lands on the page
+// (after sign-in); closing it in any way marks it seen in that browser. Walkthrough, in the header,
+// opens it again. The video is only fetched when the walkthrough opens.
 
 const TOUR_SEEN = 'wa-walkthrough-seen';
 let tourGuide = null; // walkthrough.json: { steps: [{ title, start }], cues: [{ start, step, text }] }
