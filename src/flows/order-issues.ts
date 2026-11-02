@@ -1,5 +1,6 @@
 import type { DeliveryMethod, DeliveryMode, OrderLine } from '../config/order';
 import { MODE_NAMES } from '../pages/CheckoutPage';
+import type { ProductOffers } from '../pages/ProductPage';
 import { ask, type Answer, type AskOption, type Decision, type Question } from '../utils/ask';
 import { StepError } from '../utils/errors';
 import { log } from '../utils/log';
@@ -33,6 +34,29 @@ export function productQuestion(kind: keyof typeof PRODUCT_MESSAGES, plu: string
   if (othersLeft > 0) options.push({ action: 'skip', label: 'Skip product and continue' });
   options.push({ action: 'replace', label: 'Replace with another PLU' }, { action: 'stop', label: 'Stop automation' });
   return { kind, step: kind === 'not_available' ? 'Add to bag' : 'Product Search', plus: [plu], message: PRODUCT_MESSAGES[kind](plu), ...(detail ? { detail } : {}), options };
+}
+
+/**
+ * A product whose page offers "Buy 1" / "Buy 2" (user's request 2026-11-02): how many to buy. Buy 1
+ * at the normal price, or each "Buy N" the page offers; the page's prices are the details.
+ */
+export function buyQuestion(product: ProductOffers): Question {
+  const deals = product.offers.filter((offer) => offer.quantity > 1);
+  const names = deals.map((offer) => `Buy ${offer.quantity}`);
+  const offered = names.length === 1 ? `a ${names[0]} offer` : `${names.slice(0, -1).join(', ')} and ${names.at(-1)} offers`;
+  const prices = product.offers.map((offer) => `Buy ${offer.quantity}: ${offer.price}${offer.saving ? ` (extra savings ${offer.saving})` : ''}`).join(' · ');
+  return {
+    kind: 'buy_option',
+    step: 'Add to bag',
+    plus: [product.plu],
+    message: `Product ${product.plu} has ${offered}. How many would you like to buy?`,
+    detail: `${product.name ? `${product.name}. ` : ''}${prices}.`,
+    options: [
+      { action: 'buy', quantity: 1, label: 'Buy 1 at its normal price' },
+      ...deals.map((offer): AskOption => ({ action: 'buy', quantity: offer.quantity, label: `Buy ${offer.quantity} for the promotional discount` })),
+      { action: 'stop', label: 'Stop automation' },
+    ],
+  };
 }
 
 /** The other delivery methods, as "Try …" choices (whether they take the products shows when tried). */

@@ -1527,6 +1527,7 @@ const ASK_TITLES = {
   not_available: 'Can’t be added to the bag',
   not_eligible: 'Delivery not possible',
   choose_store: 'Choose the pickup store',
+  buy_option: 'Choose how many to buy',
   error: 'Something went wrong',
 };
 
@@ -1601,7 +1602,7 @@ function renderAsk() {
 
 function chooseAnswer(option) {
   if (option.action === 'choose') return ask.choice ? sendAnswer({ action: 'choose', value: ask.choice }) : undefined;
-  if (option.action !== 'replace') return sendAnswer({ action: option.action, mode: option.mode, method: option.method });
+  if (option.action !== 'replace') return sendAnswer({ action: option.action, mode: option.mode, method: option.method, quantity: option.quantity });
   // One PLU, or several where the choice allows them (2026-10-22).
   Object.assign(ask, { replacing: true, many: Boolean(option.many), error: '' });
   $('ask-plu-label').textContent = ask.many ? 'PLUs to add (separate several with spaces)' : 'PLU to use instead';

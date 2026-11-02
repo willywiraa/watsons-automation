@@ -60,11 +60,12 @@ RUNNING A TEST
    Completed with the order number, No change, or Failed. You can start the next run straight
    away.
 5. If something needs your decision before Checkout (a product out of stock, not found or not
-   addable, a product the delivery can't take, an error), the run pauses and asks you in a card
-   above Live browser. Click one of its buttons (for example Skip product and continue, Replace
-   with another PLU, Use Standard instead, Try Home Delivery, Retry or Stop automation): the run
-   goes on from there. It waits for you up to 30 minutes. Your choice is kept in the run's log
-   and in Logs / History.
+   addable, how many of a product with a "Buy 2" offer, a product the delivery can't take, an
+   error), the run pauses and asks you in a card above Live browser. Click one of its buttons
+   (for example Skip product and continue, Replace with another PLU, Buy 2 for the promotional
+   discount, Use Standard instead, Try Home Delivery, Retry or Stop automation): the run goes on
+   from there. It waits for you up to 30 minutes. Your choice is kept in the run's log and in
+   Logs / History.
 6. When a run fails, the launcher shows the step it failed at, with the message, the time, the
    page and a screenshot. "Copy error report" puts it on the clipboard for Teams or email; it is
    also saved as error-report.txt.

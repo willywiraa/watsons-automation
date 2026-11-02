@@ -182,7 +182,8 @@ needed"). It shows only the choices that make sense then:
 |---|---|---|
 | Out of stock (Product Search) | "Product 39656 is out of stock. What would you like to do?" | Skip product and continue · Replace with another PLU · Stop automation |
 | Not found (Product Search) | "Product 12345 was not found on staging. …" | the same |
-| Staging won't add it (Add to bag): its "not available for checkout" pop-up, or its "add to bag" only opens the product's page | "Product 57893 can't be added to the bag. …" | the same |
+| Staging won't add it (Add to bag): its "not available for checkout" pop-up, or its "add to bag" only opens the product's page (a page without Buy 1 / Buy 2) | "Product 57893 can't be added to the bag. …" | the same |
+| A product with **Buy 1 / Buy 2** on its page (Add to bag, since 2026-11-02): its "add to bag" opens that page | "Product 23475 has a Buy 2 offer. How many would you like to buy?", with the page's prices ("Buy 1: S$ 8.50 · Buy 2: S$ 11.90 (extra savings S$ 5.10)") | Buy 1 at its normal price · Buy 2 for the promotional discount · Stop automation |
 | The delivery mode can't take some products (checkout page) | "Products 17971 and 21684 are not eligible for Express delivery with Home Delivery." | Remove them and continue · Remove them and add other PLUs (one product: Replace with another PLU) · Use Standard instead (when Standard takes them) · Try another delivery method · Stop automation |
 | The delivery method can't take some products (bag page) | "Products 45614 and 24264 are not eligible for Click & Collect." | Remove them and continue · Remove them and add other PLUs (one product: Replace with another PLU) · Try another delivery method · Stop automation |
 | Shell Station with **Let me choose** (checkout page, since 2026-10-30) | "Which Shell Station should the order be picked up from?", with staging's list of stations (name, address, stock; the one chosen now is selected; a search box when the list is long) | Use this store · Stop automation |
@@ -192,6 +193,10 @@ needed"). It shows only the choices that make sense then:
 - **Skip** is offered only when other products are left to order.
 - **Replace** asks for the PLU to use instead. The new product is checked like the others: if it
   is out of stock too, the run asks again.
+- **Buy 1 / Buy 2** (since 2026-11-02) is asked once per product, when the order has 1 of it.
+  The run chooses that on the product's page and clicks **BUY NOW**, so the bag and the order
+  get 1 or 2 (Logs / History shows ×2); staging applies the offer itself ("2ND BUY AT 60% OFF").
+  With 2 or more in the order nothing is asked: that many are bought on its page.
 - **Remove … and continue** (products a delivery can't take, since 2026-10-22) takes them out of
   the bag, a "Buy 1 Get 1 Free" line with them, and the run goes on with the others. **Remove them
   and add other PLUs** (or **Replace with another PLU** for one product) takes several PLUs,
@@ -208,7 +213,8 @@ needed"). It shows only the choices that make sense then:
   **Decisions**, in Logs / History (and its CSV export), and in `result.json` (`decisions`).
 - Runs from the command line (`npm run order`) are never asked. They do what they always did:
   skip sold-out products, stop on a PLU that isn't found, and leave out products the mode can't
-  deliver; for Shell Station they choose the pickup store themselves.
+  deliver; for Shell Station they choose the pickup store themselves. A product with Buy 1 / Buy 2
+  is bought as ordered (1: the normal price).
 
 On the hosted version, only the person whose run it is can answer, and every answer is in the
 audit trail.
@@ -316,6 +322,16 @@ Collect, please select Home Delivery") with **Buy Next Time**, and **Next** can'
 The test reads that list (`BagPage.methodProblem`). A run from the launcher window asks: remove
 them, remove them and add other PLUs, another method, or stop. From the command line it stops
 with `DELIVERY_METHOD_NOT_AVAILABLE`, naming them.
+
+**Buy 1 / Buy 2 products** (seen 2026-11-02 with PLU 23475 and 23317, "Buy 2 Get Discount"):
+the search results show them as e.g. "S$5.95/pcs (Buy 2 - Offer price)", and their **add to
+bag** opens the product's page instead of adding. Before, the run tried 3 times and then asked
+"can't be added to the bag". That page offers **Buy 1** (the normal price) and **Buy 2** (with
+"Extra Savings") above QUANTITY and **BUY NOW**. Choosing one only sets the quantity; BUY NOW then
+adds that many with the search results' own request (`…/entries?code=23475&qty=2`) and the page
+stays. The test checks the request and that the bag's count went up by that many. The bag then
+shows one line of 2, "Applied 2ND BUY AT 60% OFF" (S$17.00 → S$11.90), and checks it like any
+other line. Code: `src/pages/ProductPage.ts`, `src/flows/order-products.ts`.
 
 **Free items** (seen 2026-10-22): with "Buy 1 Get 1 Free" (e.g. PLU 17971) staging adds the free
 unit by itself, as its own bag line marked FREE without a quantity box. The bag check leaves it
@@ -492,7 +508,7 @@ The `reports/` folder is never saved in Git. Delete old run folders whenever you
 | `src/config/settings.ts` | Reads and checks the settings |
 | `src/safety/staging-guard.ts` | The safety lock: approved address and browser guard |
 | `src/fixtures/staging.ts` | The `test` used by every test that visits staging (safety lock, recordings) |
-| `src/pages/` | One "page object" per staging page (login, search, bag, checkout, payment, confirmation) |
+| `src/pages/` | One "page object" per staging page (login, search, product page, bag, checkout, payment, confirmation) |
 | `src/reporting/` | The evidence folder per order run (`reports/`) and the PASS/FAIL box |
 | `launcher/` | The launcher window (`launcher.cjs` runs it and reads Logs / History from `reports/`; `ui.html` is the page, with the Watsons logo inside it); see `docs/launcher-decision.md` |
 | `server/` | The hosted version: `server.cjs` (the web app), `lib/` (sign-in, runs, database, evidence), `scripts/` (users, import of desktop reports, recording the walkthrough), `walkthrough/` (the walkthrough video, its poster and its captions), `iis/web.config`; setup in `docs/server-deployment.md` |

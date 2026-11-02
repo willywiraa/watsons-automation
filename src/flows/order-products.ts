@@ -1,17 +1,19 @@
 import type { Page } from '@playwright/test';
 import type { OrderLine } from '../config/order';
 import type { BagPage } from '../pages/BagPage';
+import type { ProductOffers } from '../pages/ProductPage';
 import type { Availability, ProductSearch } from '../pages/ProductSearch';
 import { ask, decided, interactive, type Decision } from '../utils/ask';
 import { StepError } from '../utils/errors';
 import { log } from '../utils/log';
-import { errorQuestion, hasCode, productQuestion, reasonOf, replaceLine, retryOrAsk, stopped } from './order-issues';
+import { buyQuestion, errorQuestion, hasCode, productQuestion, reasonOf, replaceLine, retryOrAsk, stopped } from './order-issues';
 
 // The products of an order run, as the person's decisions change them (user's request
 // 2026-10-22). A product out of stock, not found, or refused by staging is skipped or replaced;
 // a failed add is retried without adding anything twice (the bag is read first). A command-line
 // run decides as before: sold-out products are skipped, PLUs not found end the run, and any
-// other problem ends it.
+// other problem ends it. A product with "Buy 1" / "Buy 2" choices on its page (2026-11-02): the
+// person chooses how many (a command-line run buys as ordered), and they are added there.
 
 export const showLines = (lines: OrderLine[]) => lines.map((line) => (line.quantity > 1 ? `${line.plu} x${line.quantity}` : line.plu)).join(', ') || 'none';
 
@@ -26,6 +28,8 @@ export class OrderProducts {
   private readonly inBag = new Map<string, number>();
   /** The PLUs on the search results page now. */
   private shown: string[] = [];
+  /** Products whose page offered "Buy 1" / "Buy 2", once how many was settled: the person's decision, if asked. */
+  private readonly howMany = new Map<string, Decision | undefined>();
 
   constructor(
     private readonly page: Page,
@@ -145,31 +149,79 @@ export class OrderProducts {
         return 'added';
       }
       const othersLeft = this.lines.length - 1;
+      const counted = () => this.inBag.set(line.plu, (this.inBag.get(line.plu) ?? 0) + 1);
+      let offers: ProductOffers | null = null;
       try {
         if (!this.shown.includes(line.plu)) await this.showResults(this.lines.filter((other) => (this.inBag.get(other.plu) ?? 0) < other.quantity).map((other) => other.plu));
-        await this.search.add({ plu: line.plu, quantity: missing }, () => this.inBag.set(line.plu, (this.inBag.get(line.plu) ?? 0) + 1));
+        offers = await this.search.add({ plu: line.plu, quantity: missing }, counted);
       } catch (error) {
-        if (!interactive()) throw error;
-        if (hasCode(error, 'PRODUCT_NOT_AVAILABLE')) {
-          const answer = await ask(productQuestion('not_available', line.plu, othersLeft, reasonOf(error)), { action: 'stop' }, this.decisions);
-          if (answer.action === 'skip') {
-            this.leftOut(line);
-            return 'left out';
-          }
-          if (answer.action !== 'replace' || !answer.plu) stopped('Add to bag', answer, error);
-          const others = this.lines.filter((other) => other !== line);
-          return (await this.resolve(line, othersLeft, others, [], this.replacement(line, answer.plu))) ?? 'left out';
-        }
-        const answer = await ask(errorQuestion('Add to bag', error, { skipPlu: othersLeft > 0 ? line.plu : undefined }), { action: 'stop' }, this.decisions);
-        if (answer.action === 'skip') {
-          this.leftOut(line);
-          return 'left out';
-        }
-        if (answer.action !== 'retry') stopped('Add to bag', answer, error);
+        const next = await this.afterFailedAdd(line, othersLeft, error);
+        if (next !== 'retry') return next;
         retried = true;
-        await this.readBag();
+        continue;
+      }
+      if (!offers) continue;
+      // Its own page opened instead, with "Buy 1" / "Buy 2" (2026-11-02): how many is settled
+      // first (outside the try: a question with no answer ends the run), then added there.
+      this.shown = [];
+      await this.settleHowMany(line, offers);
+      try {
+        await this.search.buyOnProductPage(line.plu, line.quantity - (this.inBag.get(line.plu) ?? 0), counted);
+        const decision = this.howMany.get(line.plu);
+        if (decision) decided(this.decisions, `PLU ${line.plu} x${line.quantity} in the bag`, decision);
+      } catch (error) {
+        const next = await this.afterFailedAdd(line, othersLeft, error);
+        if (next !== 'retry') return next;
+        retried = true;
       }
     }
+  }
+
+  /**
+   * A product whose "add to bag" opened its page with "Buy 1" / "Buy 2" choices (user's request
+   * 2026-11-02): with 1 of it in the order, the person chooses how many to buy, once per product,
+   * and the order then has that many. With more in the order, or from the command line, it keeps
+   * what was ordered.
+   */
+  private async settleHowMany(line: OrderLine, product: ProductOffers): Promise<void> {
+    if (this.howMany.has(line.plu)) return;
+    const more = product.offers.some((offer) => offer.quantity > line.quantity);
+    if (line.quantity > 1 || !more || !interactive()) {
+      this.howMany.set(line.plu, undefined);
+      log(`PLU ${line.plu} has "Buy N" choices on its page: buying ${line.quantity}, as ordered${line.quantity === 1 && more ? ' (the normal price)' : ''}`);
+      return;
+    }
+    const answer = await ask(buyQuestion(product), { action: 'buy', quantity: line.quantity }, this.decisions);
+    if (answer.action !== 'buy' || !answer.quantity) stopped('Add to bag', answer);
+    this.howMany.set(line.plu, this.decisions.at(-1));
+    line.quantity = answer.quantity;
+  }
+
+  /**
+   * An add that failed. Interactive runs ask: skip the product, replace it (staging refused it), or
+   * retry ('retry': the bag is read again first, so nothing is added twice). A command-line run
+   * ends with the error, as before.
+   */
+  private async afterFailedAdd(line: OrderLine, othersLeft: number, error: unknown): Promise<'retry' | 'left out' | OrderLine> {
+    if (!interactive()) throw error;
+    if (hasCode(error, 'PRODUCT_NOT_AVAILABLE')) {
+      const answer = await ask(productQuestion('not_available', line.plu, othersLeft, reasonOf(error)), { action: 'stop' }, this.decisions);
+      if (answer.action === 'skip') {
+        this.leftOut(line);
+        return 'left out';
+      }
+      if (answer.action !== 'replace' || !answer.plu) stopped('Add to bag', answer, error);
+      const others = this.lines.filter((other) => other !== line);
+      return (await this.resolve(line, othersLeft, others, [], this.replacement(line, answer.plu))) ?? 'left out';
+    }
+    const answer = await ask(errorQuestion('Add to bag', error, { skipPlu: othersLeft > 0 ? line.plu : undefined }), { action: 'stop' }, this.decisions);
+    if (answer.action === 'skip') {
+      this.leftOut(line);
+      return 'left out';
+    }
+    if (answer.action !== 'retry') stopped('Add to bag', answer, error);
+    await this.readBag();
+    return 'retry';
   }
 
   /** Before an add is tried again: what the bag really holds, so nothing is added twice. */

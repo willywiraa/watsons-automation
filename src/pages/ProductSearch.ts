@@ -1,10 +1,11 @@
-import { expect, type Locator, type Page, type Request } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import type { OrderLine } from '../config/order';
 import { ADD_DELAY_SECONDS } from '../config/settings';
 import { StepError } from '../utils/errors';
 import { log } from '../utils/log';
 import { bagButton, bagCount } from './header';
 import { closeChatPanelIfShown, closeNotAvailablePopupIfShown, notAvailablePopup, throwIfServerErrorShown } from './popups';
+import { isAddRequest, ProductPage, type ProductOffers } from './ProductPage';
 
 export type Availability = 'available' | 'sold_out' | 'not_found';
 
@@ -19,11 +20,14 @@ export class ProductSearch {
   private readonly msBetweenAdds = ADD_DELAY_SECONDS * 1000;
   /** The PLUs of the last search (searched again when a click leaves the results). */
   private searched: string[] = [];
+  /** Where products with "Buy 1" / "Buy 2" choices are added (2026-11-02). */
+  private readonly productPage: ProductPage;
 
   constructor(private readonly page: Page) {
     this.searchBox = page.getByRole('searchbox', { name: 'Search here...' });
     this.bagButton = bagButton(page);
     this.resultsHeading = page.getByRole('heading', { name: /Search Results for/, level: 1 });
+    this.productPage = new ProductPage(page);
   }
 
   async bagCount(): Promise<number> {
@@ -81,11 +85,11 @@ export class ProductSearch {
    * (POST .../carts/<id>/entries, seen 2026-10-05) is sent. Staging shows pages before its app
    * has started; a click that early does nothing (seen 2026-10-05), so it is safe to repeat.
    * Once a request has been sent, never clicks again (that could add the product twice); nor once
-   * staging has answered with its "not available for checkout" pop-up.
+   * staging has answered with its "not available for checkout" pop-up. Returns null then.
+   * When the click opens the product's page with "Buy 1" / "Buy 2" choices instead (2026-11-02),
+   * returns those: nothing was added, and the page stays open (buyOnProductPage).
    */
-  private async clickAddUntilSent(plu: string): Promise<void> {
-    const isAddRequest = (request: Request) =>
-      request.method() === 'POST' && /\/carts\/[^/]+\/entries$/.test(new URL(request.url()).pathname);
+  private async clickAddUntilSent(plu: string): Promise<ProductOffers | null> {
     let productPages = 0;
     for (let attempt = 1; attempt <= 3; attempt++) {
       await this.waitBetweenAdds();
@@ -95,8 +99,15 @@ export class ProductSearch {
       );
       this.lastClickAt = Date.now();
       await this.addButtonFor(plu).click();
-      if (await requestSent) return;
-      if ((await notAvailablePopup(this.page).count()) > 0) return;
+      if (await requestSent) return null;
+      if ((await notAvailablePopup(this.page).count()) > 0) return null;
+      // A product with "Buy 1" / "Buy 2" (seen 2026-11-02 with PLU 23475 and 23317): its "add to
+      // bag" always opens its page, where the choice is made.
+      const offers = this.productPage.isOpenFor(plu) ? await this.productPage.volumeOffers(plu) : null;
+      if (offers) {
+        log(`"add to bag" for PLU ${plu} opened its page, which offers ${offers.offers.map((offer) => `Buy ${offer.quantity} (${offer.price})`).join(' or ')}`);
+        return offers;
+      }
       // The click can open the product's page instead (seen 2026-10-22 with PLU 21707). Nothing
       // was added (no request was sent): back to the search results, and click again.
       if (!(await this.resultsHeading.isVisible())) {
@@ -129,14 +140,18 @@ export class ProductSearch {
    * Adds `quantity` units, one click each, checking the bag count goes up after every click.
    * Staging can refuse a product with its "not available for checkout" pop-up (2026-10-22): the
    * pop-up is closed and PRODUCT_NOT_AVAILABLE thrown. `onAdded` is told of each unit added.
+   * Returns null once they are added; or, for a product whose "add to bag" opens its page with
+   * "Buy 1" / "Buy 2" choices (2026-11-02), those choices: then nothing was added, and that page
+   * stays open for buyOnProductPage.
    */
-  async add(line: OrderLine, onAdded?: () => void): Promise<void> {
+  async add(line: OrderLine, onAdded?: () => void): Promise<ProductOffers | null> {
     for (let unit = 1; unit <= line.quantity; unit++) {
       await closeChatPanelIfShown(this.page);
       const before = await this.bagCount();
       let refused = false;
       try {
-        await this.clickAddUntilSent(line.plu);
+        const offers = await this.clickAddUntilSent(line.plu);
+        if (offers) return offers;
         // Added when the bag count goes up; refused when the pop-up shows. The count is read
         // briefly each time: the pop-up hides the header's bag button.
         await expect
@@ -170,6 +185,20 @@ export class ProductSearch {
       }
       onAdded?.();
       log(`Added PLU ${line.plu} (${unit}/${line.quantity}); bag now ${await this.bagCount()}`);
+    }
+    return null;
+  }
+
+  /**
+   * Adds `units` of `plu` on its page, open since add() returned its "Buy N" choices: the one for
+   * that many, then BUY NOW (ProductPage.buy), at least the time between adds after the last click.
+   */
+  async buyOnProductPage(plu: string, units: number, onAdded?: () => void): Promise<void> {
+    await this.waitBetweenAdds();
+    try {
+      await this.productPage.buy(plu, units, onAdded);
+    } finally {
+      this.lastClickAt = Date.now();
     }
   }
 }

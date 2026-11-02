@@ -280,7 +280,9 @@ class RunManager {
     const plu = typeof body?.plu === 'string' && /^\d{1,12}$/.test(body.plu.trim()) ? body.plu.trim() : undefined;
     // A choice from a list: e.g. the pickup store's code (2026-10-30).
     const value = body?.action === 'choose' && typeof body.value === 'string' ? body.value.slice(0, 40) : undefined;
-    this.store.audit({ username: session.username, ip, action: 'run-answer', runId: own.runId, detail: { action: String(body?.action), plu, value } });
+    // How many of a product with "Buy 1" / "Buy 2" (2026-11-02).
+    const quantity = body?.action === 'buy' && Number.isInteger(body.quantity) ? body.quantity : undefined;
+    this.store.audit({ username: session.username, ip, action: 'run-answer', runId: own.runId, detail: { action: String(body?.action), plu, value, quantity } });
     return null;
   }
 

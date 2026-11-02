@@ -484,6 +484,32 @@ test.describe('hosted server', () => {
     expect(runLog(setup, runId)).toContain('[launcher] Alice chose: Skip product and continue');
   });
 
+  test('a product with a "Buy 2" offer: its owner answers how many, which is ordered and audited (2026-11-02)', async () => {
+    const alice = client(setup.app);
+    await alice.login('alice');
+    await alice.useAccounts('alice');
+    // PLU 6666: the stand-in run asks at "Add to bag" how many to buy.
+    const runId = (await alice.run({ ...ORDER, products: '10117\n6666' })).data.runId as string;
+    await expect.poll(() => runLog(setup, runId)).toContain('[ASK] Product 6666 has a Buy 2 offer. How many would you like to buy?');
+    const { id } = JSON.parse(readFileSync(join(runFolder(setup, runId), 'ask.json'), 'utf8'));
+    expect((await alice.call('POST', '/api/state', {})).data.current.question).toMatchObject({
+      id,
+      kind: 'buy_option',
+      step: 'Add to bag',
+      options: [{ action: 'buy', quantity: 1 }, { action: 'buy', quantity: 2 }, { action: 'stop' }],
+    });
+    expect(await alice.call('POST', '/api/answer', { id, action: 'buy', quantity: 5 })).toMatchObject({ status: 409, data: { error: 'That is not one of the choices.' } });
+    expect(await alice.call('POST', '/api/answer', { id, action: 'buy', quantity: 2 })).toMatchObject({ status: 200, data: { ok: true } });
+    await ended(setup, runId);
+    const row = ((await alice.history()).data.rows as { runId: string }[]).find((candidate) => candidate.runId === runId);
+    expect(row).toMatchObject({
+      status: 'completed',
+      products: { ordered: [{ plu: '10117', quantity: 1 }, { plu: '6666', quantity: 2 }] },
+      decisions: [{ action: 'buy', label: 'Buy 2 for the promotional discount', outcome: 'PLU 6666 x2 in the bag', by: 'Alice' }],
+    });
+    expect(setup.app.store.auditEvents().some((event) => event.action === 'run-answer' && /"quantity":2/.test(String(event.detail)))).toBe(true);
+  });
+
   test('Shell Station: no mode; the person picks the pickup store, and their next page keeps the choice (2026-10-30)', async () => {
     const alice = client(setup.app);
     await alice.login('alice');

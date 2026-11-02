@@ -8,8 +8,9 @@ import { log } from './log';
 
 // Asking the person who started the run (user's request 2026-10-22). When something needs a
 // decision before Checkout (a product out of stock or not found, a product the chosen delivery
-// can't take, an unexpected error), the run pauses, the launcher's window (or the hosted server's
-// page) shows the question with the actions that make sense, and the run goes on with the answer.
+// can't take, an unexpected error; since 2026-11-02 also how many of a product with a "Buy 2"
+// offer), the run pauses, the launcher's window (or the hosted server's page) shows the question
+// with the actions that make sense, and the run goes on with the answer.
 //
 // Only runs started from the launcher or the hosted server ask (WATSONS_INTERACTIVE=yes, set by
 // launcher/launcher.cjs): nobody would answer a command-line run, which decides as before (the
@@ -19,8 +20,11 @@ import { log } from './log';
 // the "[ASK]" log line (the launcher reads it when it sees that line), and answer-<id>.json, written
 // by the launcher. "Stop automation" never comes here: the launcher stops the run, as Stop does.
 
-/** choose: one of the question's `choices`, e.g. Shell Station's pickup store (2026-10-30). */
-export type AskAction = 'skip' | 'replace' | 'retry' | 'switch_mode' | 'switch_method' | 'choose' | 'stop';
+/**
+ * choose: one of the question's `choices`, e.g. Shell Station's pickup store (2026-10-30).
+ * buy: how many of a product with "Buy 1" / "Buy 2" choices (2026-11-02).
+ */
+export type AskAction = 'skip' | 'replace' | 'retry' | 'switch_mode' | 'switch_method' | 'choose' | 'buy' | 'stop';
 
 export interface AskOption {
   action: AskAction;
@@ -31,6 +35,8 @@ export interface AskOption {
   method?: DeliveryMethod;
   /** replace: the answer may name several PLUs, separated by spaces or commas (2026-10-22). */
   many?: boolean;
+  /** buy: how many. */
+  quantity?: number;
 }
 
 /** One item of a list to choose from: its value (e.g. a store code) and what the person sees. */
@@ -51,9 +57,10 @@ export function pluList(text: string | undefined): string[] {
 export interface Question {
   /**
    * not_available: staging refused to add the product ("not available for checkout");
-   * choose_store: which Shell Station to pick the order up from (2026-10-30).
+   * choose_store: which Shell Station to pick the order up from (2026-10-30);
+   * buy_option: how many of a product whose page offers "Buy 1" / "Buy 2" (2026-11-02).
    */
-  kind: 'out_of_stock' | 'not_found' | 'not_available' | 'not_eligible' | 'choose_store' | 'error';
+  kind: 'out_of_stock' | 'not_found' | 'not_available' | 'not_eligible' | 'choose_store' | 'buy_option' | 'error';
   /** The step it happened at, as the launcher shows it (e.g. "Product Search"). */
   step: string;
   /** The products concerned (none for a general error). */
@@ -75,6 +82,8 @@ export interface Answer {
   value?: string;
   mode?: DeliveryMode;
   method?: DeliveryMethod;
+  /** buy: how many. */
+  quantity?: number;
 }
 
 /** A question, what was chosen and what came of it: kept in the run's result (result.json). */
@@ -121,7 +130,9 @@ export async function ask(question: Question, fallback: Answer, decisions: Decis
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   const answer = JSON.parse(readFileSync(answerFile, 'utf8')) as Answer;
-  const option = question.options.find((candidate) => candidate.action === answer.action && candidate.mode === answer.mode && candidate.method === answer.method);
+  const option = question.options.find(
+    (candidate) => candidate.action === answer.action && candidate.mode === answer.mode && candidate.method === answer.method && candidate.quantity === answer.quantity,
+  );
   const replacements = answer.action === 'replace' ? pluList(answer.plu) : [];
   const choice = answer.action === 'choose' ? question.choices?.find((candidate) => candidate.value === answer.value) : undefined;
   if (

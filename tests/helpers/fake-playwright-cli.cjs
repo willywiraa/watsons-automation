@@ -13,7 +13,8 @@
 //   Placing an order without a backoffice account: stops at "Order confirmation", not approved.
 //   Questions (WATSONS_INTERACTIVE=yes, as the launcher sets it; src/utils/ask.ts): PLU 3333 is out
 //            of stock at "Product Search"; PLU 4444 can't go Express ("<Mode> Delivery Selection");
-//            the add of PLU 5555 fails once ("Add to bag"). The run waits for answer-<id>.json.
+//            the add of PLU 5555 fails once ("Add to bag"); PLU 6666 (1 of it) has a "Buy 2" offer
+//            on its page: how many ("Add to bag", 2026-11-02). The run waits for answer-<id>.json.
 //   PLU 555: a real browser for the hosted server's live view (with WATSONS_LIVE_VIEW_PORT and
 //            FAKE_PLAYWRIGHT_MODULE, the path of Playwright): headless Edge with that DevTools port,
 //            showing a page that logs clicks and typing ("fake page: …"). Its last step lasts until
@@ -186,7 +187,9 @@ function ask(question, then) {
     if (!fs.existsSync(file)) return;
     clearInterval(poll);
     const answer = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const option = question.options.find((candidate) => candidate.action === answer.action && candidate.mode === answer.mode && candidate.method === answer.method);
+    const option = question.options.find(
+      (candidate) => candidate.action === answer.action && candidate.mode === answer.mode && candidate.method === answer.method && candidate.quantity === answer.quantity,
+    );
     const choice = answer.action === 'choose' ? question.choices.find((candidate) => candidate.value === answer.value) : null;
     decisions.push({
       at: new Date().toISOString(),
@@ -249,6 +252,23 @@ function question(step) {
         ordered = without('5555');
         decided('PLU 5555 left out of the order');
       }
+      next();
+    });
+    return true;
+  }
+  // As src/flows/order-products.ts asks it (2026-11-02): Buy 1, or the page's Buy 2.
+  if (step === 'Add to bag' && ordered.some((line) => line.plu === '6666' && line.quantity === 1) && !asked.has('6666')) {
+    asked.add('6666');
+    const options = [
+      { action: 'buy', quantity: 1, label: 'Buy 1 at its normal price' },
+      { action: 'buy', quantity: 2, label: 'Buy 2 for the promotional discount' },
+      { action: 'stop', label: 'Stop automation' },
+    ];
+    const message = 'Product 6666 has a Buy 2 offer. How many would you like to buy?';
+    const detail = 'TIGER BALM Mosquito Repellent Patch Spray 60ml. Buy 1: S$ 8.50 · Buy 2: S$ 11.90 (extra savings S$ 5.10).';
+    ask({ kind: 'buy_option', step, plus: ['6666'], message, detail, options }, (answer) => {
+      ordered = ordered.map((line) => (line.plu === '6666' ? { ...line, quantity: answer.quantity } : line));
+      decided(`PLU 6666 x${answer.quantity} in the bag`);
       next();
     });
     return true;

@@ -424,7 +424,9 @@ function newRunId(root, reportsDir = null) {
 /** The settings that hold passwords: on the hosted server, each run gets its own (TestRunner option "env"). */
 const SECRET_SETTINGS = ['WATSONS_USERNAME', 'WATSONS_PASSWORD', 'WATSONS_BACKOFFICE_USERNAME', 'WATSONS_BACKOFFICE_PASSWORD'];
 
-const ASK_ACTIONS = new Set(['skip', 'replace', 'retry', 'switch_mode', 'switch_method', 'choose', 'stop']);
+const ASK_ACTIONS = new Set(['skip', 'replace', 'retry', 'switch_mode', 'switch_method', 'choose', 'buy', 'stop']);
+/** Buy: how many of a product with "Buy 1" / "Buy 2" choices (2026-11-02). */
+const isBuyQuantity = (value) => Number.isInteger(value) && value >= 1 && value <= 99;
 
 /**
  * The question a run asks (ask.json, written by src/utils/ask.ts), checked: only its known fields,
@@ -446,7 +448,7 @@ function readQuestion(dir) {
       ...(choice.selected === true ? { selected: true } : {}),
     }));
   const options = raw.options
-    .filter((option) => ASK_ACTIONS.has(option?.action) && (option.action !== 'choose' || choices.length > 0))
+    .filter((option) => ASK_ACTIONS.has(option?.action) && (option.action !== 'choose' || choices.length > 0) && (option.action !== 'buy' || isBuyQuantity(option.quantity)))
     .slice(0, 8)
     .map((option) => ({
       action: option.action,
@@ -455,6 +457,7 @@ function readQuestion(dir) {
       ...(option.action === 'replace' && option.many === true ? { many: true } : {}),
       ...(has(MODES, option.mode) ? { mode: option.mode } : {}),
       ...(has(DELIVERY_METHODS, option.method) ? { method: option.method } : {}),
+      ...(option.action === 'buy' ? { quantity: option.quantity } : {}),
     }));
   if (options.length === 0) return null;
   return {
@@ -685,8 +688,8 @@ class TestRunner {
 
   /**
    * The person's answer to the question the run is waiting on: { id, action, plu, value, mode,
-   * method }. `by`: who answered. Writes answer-<id>.json for the test; "Stop automation" stops the
-   * run, as Stop does. Returns what's wrong, or null.
+   * method, quantity }. `by`: who answered. Writes answer-<id>.json for the test; "Stop automation"
+   * stops the run, as Stop does. Returns what's wrong, or null.
    */
   answer(answer, by) {
     const run = this.current;
@@ -694,7 +697,11 @@ class TestRunner {
     if (!question) return 'The run is not waiting for an answer.';
     if (answer?.id !== question.id) return 'That question has already been answered.';
     const option = question.options.find(
-      (candidate) => candidate.action === answer.action && (candidate.mode ?? null) === (answer.mode ?? null) && (candidate.method ?? null) === (answer.method ?? null),
+      (candidate) =>
+        candidate.action === answer.action &&
+        (candidate.mode ?? null) === (answer.mode ?? null) &&
+        (candidate.method ?? null) === (answer.method ?? null) &&
+        (candidate.quantity ?? null) === (answer.quantity ?? null),
     );
     if (!option) return 'That is not one of the choices.';
     // Replace: one PLU, or several (separated by spaces or commas) where the choice allows them.
@@ -751,6 +758,7 @@ class TestRunner {
         ...(choice ? { value: choice.value } : {}),
         ...(option.mode ? { mode: option.mode } : {}),
         ...(option.method ? { method: option.method } : {}),
+        ...(option.quantity ? { quantity: option.quantity } : {}),
       }),
     );
     fs.renameSync(`${file}.tmp`, file); // whole, or not there yet: the test never reads half of it

@@ -769,6 +769,30 @@ test.describe('launcher window', () => {
     expect(await answer({ id, action: 'replace', plu: '45606' })).toMatchObject({ status: 409, body: { error: 'The run is not waiting for an answer.' } });
   });
 
+  test('a product with a "Buy 2" offer: the person chooses how many, and that many are ordered (2026-11-02)', async ({ page }) => {
+    await startOrder(page, '10117\n6666');
+    const ask = page.locator('#ask');
+    await expect(ask).toContainText('Paused at Add to bag · Choose how many to buy');
+    await expect(ask).toContainText('Product 6666 has a Buy 2 offer. How many would you like to buy?');
+    await expect(ask).toContainText('Details: TIGER BALM Mosquito Repellent Patch Spray 60ml. Buy 1: S$ 8.50 · Buy 2: S$ 11.90 (extra savings S$ 5.10).');
+    await expect(ask.getByRole('button')).toHaveText(['Buy 1 at its normal price', 'Buy 2 for the promotional discount', 'Stop automation']);
+    // Only the quantities offered.
+    const { id } = JSON.parse(readFileSync(join(runFolder(), 'ask.json'), 'utf8'));
+    const key = new URL(app.url).searchParams.get('token')!;
+    const answer = (body: object) => postJson(app.url, '/api/answer', body, key);
+    expect(await answer({ id, action: 'buy', quantity: 3 })).toMatchObject({ status: 409, body: { error: 'That is not one of the choices.' } });
+    expect(await answer({ id, action: 'buy' })).toMatchObject({ status: 409, body: { error: 'That is not one of the choices.' } });
+    await ask.getByRole('button', { name: 'Buy 2 for the promotional discount' }).click();
+    await runEnded(page, 0);
+    expect(JSON.parse(readFileSync(join(runFolder(), `answer-${id}.json`), 'utf8'))).toEqual({ action: 'buy', quantity: 2 });
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#result')).toContainText('6666×2Ordered');
+    await expect(page.locator('#result')).toContainText('→ Buy 2 for the promotional discount: PLU 6666 x2 in the bag');
+    const [row] = launcher.readHistory(root);
+    expect(row.decisions).toMatchObject([{ step: 'Add to bag', kind: 'buy_option', action: 'buy', label: 'Buy 2 for the promotional discount', outcome: 'PLU 6666 x2 in the bag', by: 'Test Operator' }]);
+    expect(row.products.ordered).toEqual([{ plu: '10117', quantity: 1 }, { plu: '6666', quantity: 2 }]);
+  });
+
   test('"Stop automation" stops the run where it paused (2026-10-22)', async ({ page }) => {
     await startOrder(page, '3333');
     await page.locator('#ask').getByRole('button', { name: 'Stop automation' }).click();

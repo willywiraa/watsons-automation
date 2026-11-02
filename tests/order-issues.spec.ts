@@ -1,12 +1,14 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OrderLine } from '../src/config/order';
 import { chooseDelivery } from '../src/flows/delivery-modes';
-import { eligibilityQuestion, errorQuestion, methodEligibilityQuestion, productQuestion, replaceLine } from '../src/flows/order-issues';
+import { buyQuestion, eligibilityQuestion, errorQuestion, methodEligibilityQuestion, productQuestion, replaceLine } from '../src/flows/order-issues';
+import { OrderProducts } from '../src/flows/order-products';
 import { BagPage } from '../src/pages/BagPage';
 import type { CheckoutPage } from '../src/pages/CheckoutPage';
+import type { ProductOffers } from '../src/pages/ProductPage';
 import { ProductSearch } from '../src/pages/ProductSearch';
 import { ask, pluList, type Answer, type Decision, type Question } from '../src/utils/ask';
 import { StepError } from '../src/utils/errors';
@@ -70,6 +72,28 @@ test.describe('the questions and their choices', () => {
     expect(pluList('')).toEqual([]);
   });
 
+  test('a product with "Buy 1" / "Buy 2" on its page: how many, with the page’s prices (2026-11-02)', () => {
+    const product: ProductOffers = {
+      plu: '23475',
+      name: 'TIGER BALM Mosquito Repellent Patch Spray 60ml',
+      offers: [{ quantity: 1, price: 'S$ 8.50' }, { quantity: 2, price: 'S$ 11.90', saving: 'S$ 5.10' }],
+    };
+    const question = buyQuestion(product);
+    expect(question).toMatchObject({
+      kind: 'buy_option',
+      step: 'Add to bag',
+      plus: ['23475'],
+      message: 'Product 23475 has a Buy 2 offer. How many would you like to buy?',
+      detail: 'TIGER BALM Mosquito Repellent Patch Spray 60ml. Buy 1: S$ 8.50 · Buy 2: S$ 11.90 (extra savings S$ 5.10).',
+    });
+    expect(labels(question)).toEqual(['Buy 1 at its normal price', 'Buy 2 for the promotional discount', 'Stop automation']);
+    expect(question.options.map((option) => option.quantity)).toEqual([1, 2, undefined]);
+    // A page with more offers: one choice each.
+    const more = buyQuestion({ ...product, offers: [...product.offers, { quantity: 3, price: 'S$ 15.30', saving: 'S$ 10.20' }] });
+    expect(more.message).toBe('Product 23475 has Buy 2 and Buy 3 offers. How many would you like to buy?');
+    expect(labels(more)).toEqual(['Buy 1 at its normal price', 'Buy 2 for the promotional discount', 'Buy 3 for the promotional discount', 'Stop automation']);
+  });
+
   test('a replacement takes the old product’s place and quantity, or joins the same PLU', () => {
     const lines: OrderLine[] = [{ plu: '1', quantity: 1 }, { plu: '2', quantity: 3 }, { plu: '3', quantity: 1 }];
     expect(replaceLine(lines, '2', '9')).toEqual([{ plu: '1', quantity: 1 }, { plu: '9', quantity: 3 }, { plu: '3', quantity: 1 }]);
@@ -99,7 +123,7 @@ function useInteractive() {
 }
 
 /** Waits for a question not answered yet (ask.json, no answer-<id>.json) and answers it as the launcher does. */
-async function answerNext(answer: Answer): Promise<Question & { id: number }> {
+async function answerNext(answer: Answer, timeout = 10_000): Promise<Question & { id: number }> {
   let asked: (Question & { id: number }) | null = null;
   await expect
     .poll(
@@ -111,7 +135,7 @@ async function answerNext(answer: Answer): Promise<Question & { id: number }> {
           return false;
         }
       },
-      { timeout: 10_000 },
+      { timeout },
     )
     .toBe(true);
   const question = asked as unknown as Question & { id: number };
@@ -156,6 +180,14 @@ test.describe('asking the person', () => {
       const [result] = await Promise.all([ask(productQuestion('out_of_stock', '39656', 0), { action: 'stop' }, []).catch((error) => error), answerNext({ action: 'skip' })]);
       expect(result).toBeInstanceOf(StepError);
       expect(result.message).toContain('was not one of the choices offered');
+      // How many: only a quantity offered (2026-11-02).
+      const product: ProductOffers = { plu: '23475', name: 'Spray', offers: [{ quantity: 1, price: 'S$ 8.50' }, { quantity: 2, price: 'S$ 11.90' }] };
+      const [three] = await Promise.all([ask(buyQuestion(product), { action: 'stop' }, []).catch((error) => error), answerNext({ action: 'buy', quantity: 3 })]);
+      expect(three).toBeInstanceOf(StepError);
+      const decisions: Decision[] = [];
+      const [two] = await Promise.all([ask(buyQuestion(product), { action: 'stop' }, decisions), answerNext({ action: 'buy', quantity: 2 })]);
+      expect(two).toEqual({ action: 'buy', quantity: 2 });
+      expect(decisions).toMatchObject([{ kind: 'buy_option', step: 'Add to bag', plus: ['23475'], action: 'buy', label: 'Buy 2 for the promotional discount' }]);
     });
   });
 });
@@ -250,7 +282,9 @@ test.describe('delivery choice when products can’t go that way', () => {
 
 // Search results with one tile per PLU. PLU 57893: staging's "not available for checkout"
 // pop-up (the page behind it hidden from accessibility tools, as on staging). PLU 21707: "add to
-// bag" opens the product's page. Others: added (the header's count goes up).
+// bag" opens the product's page. PLU 23475: "add to bag" opens its page, which offers "Buy 1" /
+// "Buy 2" as staging's did on 2026-11-02 (a choice sets QUANTITY; BUY NOW adds that many). Others:
+// added (the header's count goes up).
 const SHOP = `<!doctype html><title>Shop</title>
 <header id="header"><input type="search" aria-label="Search here..." id="q"><button id="bag" type="button"></button></header>
 <main id="main"></main>
@@ -270,6 +304,7 @@ const SHOP = `<!doctype html><title>Shop</title>
       button.addEventListener('click', async () => {
         const plu = button.dataset.plu;
         if (plu === '21707') return void (location.href = '/p/BP_21707');
+        if (plu === '23475') return void (location.href = '/tiger-balm-mosquito-repellent-patch-spray-60ml/p/BP_23475');
         await post();
         if (plu === '57893') {
           document.getElementById('main').setAttribute('aria-hidden', 'true');
@@ -288,7 +323,33 @@ const SHOP = `<!doctype html><title>Shop</title>
         }, 200);
       });
     }
-  } else if (location.pathname.startsWith('/p/')) {
+  } else if (location.pathname.endsWith('/p/BP_23475')) {
+    document.title = 'TIGER BALM Mosquito Repellent Patch Spray 60ml | Baby & Kids Care | Watsons Singapore';
+    const offer = (n, price, saving) =>
+      '<div class="swiper-slide"><div class="volume-offer-option' + (n === 1 ? ' checked' : ' save') + '"><label><input type="radio" name="volume-offer-price" style="position:absolute;opacity:0">' +
+      '<div class="option"><div class="option-wrapper"><div class="quantity"><span>Buy ' + n + '</span></div><div class="price"><span>S$</span> ' + price + ' </div>' +
+      (saving ? '<div class="reward"><span>Extra Savings</span>S$ ' + saving + ' </div>' : '') + '</div></div></label></div></div>';
+    document.getElementById('main').innerHTML = '<h1>Mosquito Repellent Patch Spray 60ml</h1>' +
+      '<wtc-product-volume-offer><div class="swiper-wrapper">' + offer(1, '8.50') + offer(2, '11.90', '5.10') + '</div></wtc-product-volume-offer>' +
+      '<wtc-add-to-cart><form aria-label="item-counter"><span>QUANTITY</span><e2-item-counter><button type="button" aria-label="minus">-</button>' +
+      '<input type="number" aria-label="input-val" min="1" max="66" value="1"><button type="button" aria-label="plus">+</button></e2-item-counter></form>' +
+      '<button type="button" class="btn btn-add-to-cart"><span> BUY NOW </span></button></wtc-add-to-cart>';
+    const box = document.querySelector('input[aria-label="input-val"]');
+    for (const option of document.querySelectorAll('.volume-offer-option')) {
+      option.querySelector('input').addEventListener('change', () => {
+        for (const other of document.querySelectorAll('.volume-offer-option')) other.classList.toggle('checked', other === option);
+        box.value = option.querySelector('.quantity').textContent.match(/\\d+/)[0];
+      });
+    }
+    document.querySelector('.btn-add-to-cart').addEventListener('click', async () => {
+      const qty = Number(box.value);
+      await fetch('/occ/v2/carts/1/entries?code=23475&qty=' + qty, { method: 'POST' });
+      setTimeout(() => {
+        sessionStorage.setItem('count', String(count() + qty));
+        bag.textContent = count() + ' MY Bag';
+      }, 200);
+    });
+  } else if (location.pathname.includes('/p/')) {
     document.getElementById('main').innerHTML = '<h2>Product page</h2>';
   }
 </script>`;
@@ -318,7 +379,8 @@ test.describe('adding to the bag', () => {
   });
 
   test('an "add to bag" that opens the product’s page: searched again and clicked again; every time → PRODUCT_NOT_AVAILABLE', async ({ page }) => {
-    test.setTimeout(120_000);
+    // Each time its page is also given 15 s to show "Buy N" choices (2026-11-02).
+    test.setTimeout(180_000);
     const search = new ProductSearch(page);
     await search.searchAll(['21707']);
     const error = await search.add({ plu: '21707', quantity: 1 }).catch((caught) => caught);
@@ -326,6 +388,82 @@ test.describe('adding to the bag', () => {
     expect(error.code).toBe('PRODUCT_NOT_AVAILABLE');
     expect(error.message).toContain('opens the product\'s page instead (3 tries)');
     await expect(page.getByRole('button', { name: /MY Bag$/ })).toHaveText('0 MY Bag');
+  });
+
+  /** The amounts the shop was asked to add ("?code=…&qty=…"), from now on. */
+  const addRequests = (page: Page) => {
+    const asked: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST') asked.push(new URL(request.url()).search);
+    });
+    return asked;
+  };
+
+  test('"Buy 1" / "Buy 2" on the product’s page: add() returns them and adds nothing; then 2 are bought there (2026-11-02)', async ({ page }) => {
+    test.setTimeout(120_000);
+    const search = new ProductSearch(page);
+    await search.searchAll(['23475', '45606']);
+    expect(await search.add({ plu: '23475', quantity: 1 })).toEqual({
+      plu: '23475',
+      name: 'TIGER BALM Mosquito Repellent Patch Spray 60ml',
+      offers: [{ quantity: 1, price: 'S$ 8.50' }, { quantity: 2, price: 'S$ 11.90', saving: 'S$ 5.10' }],
+    });
+    await expect(page.getByRole('button', { name: /MY Bag$/ })).toHaveText('0 MY Bag');
+    const asked = addRequests(page);
+    let added = 0;
+    await search.buyOnProductPage('23475', 2, () => added++);
+    expect(added).toBe(2);
+    expect(asked).toEqual(['?code=23475&qty=2']);
+    await expect(page.locator('.volume-offer-option.checked')).toContainText('Buy 2');
+    await expect(page.getByRole('button', { name: /MY Bag$/ })).toHaveText('2 MY Bag');
+  });
+
+  test('"Buy 1" / "Buy 2": a command-line run buys as ordered, without asking (2026-11-02)', async ({ page }) => {
+    test.setTimeout(120_000);
+    const asked = addRequests(page);
+    const decisions: Decision[] = [];
+    const products = new OrderProducts(page, new ProductSearch(page), new BagPage(page), decisions, [{ plu: '23475', quantity: 1 }, { plu: '45606', quantity: 1 }]);
+    await products.addAll();
+    expect(products.lines).toEqual([{ plu: '23475', quantity: 1 }, { plu: '45606', quantity: 1 }]);
+    expect(asked).toEqual(['?code=23475&qty=1', '']);
+    expect(decisions).toEqual([]);
+    await expect(page.getByRole('button', { name: /MY Bag$/ })).toHaveText('2 MY Bag');
+  });
+
+  test.describe('from the launcher', () => {
+    useInteractive();
+
+    test('"Buy 1" / "Buy 2": asked once with the page’s prices; "Buy 2" puts 2 in the bag and in the order (2026-11-02)', async ({ page }) => {
+      test.setTimeout(120_000);
+      const asked = addRequests(page);
+      const decisions: Decision[] = [];
+      const products = new OrderProducts(page, new ProductSearch(page), new BagPage(page), decisions, [{ plu: '23475', quantity: 1 }, { plu: '45606', quantity: 1 }]);
+      // Asked once its page is open: after the search results' "add to bag" waited 10 s for an add.
+      const [, question] = await Promise.all([products.addAll(), answerNext({ action: 'buy', quantity: 2 }, 60_000)]);
+      expect(question).toMatchObject({
+        kind: 'buy_option',
+        step: 'Add to bag',
+        message: 'Product 23475 has a Buy 2 offer. How many would you like to buy?',
+        detail: 'TIGER BALM Mosquito Repellent Patch Spray 60ml. Buy 1: S$ 8.50 · Buy 2: S$ 11.90 (extra savings S$ 5.10).',
+      });
+      expect(labels(question)).toEqual(['Buy 1 at its normal price', 'Buy 2 for the promotional discount', 'Stop automation']);
+      expect(products.lines).toEqual([{ plu: '23475', quantity: 2 }, { plu: '45606', quantity: 1 }]);
+      expect(asked).toEqual(['?code=23475&qty=2', '']);
+      expect(decisions).toMatchObject([{ kind: 'buy_option', plus: ['23475'], action: 'buy', label: 'Buy 2 for the promotional discount', outcome: 'PLU 23475 x2 in the bag' }]);
+      await expect(page.getByRole('button', { name: /MY Bag$/ })).toHaveText('3 MY Bag');
+    });
+
+    test('"Buy 1" / "Buy 2" with 2 of it in the order: nothing to ask, 2 are bought (2026-11-02)', async ({ page }) => {
+      test.setTimeout(120_000);
+      const asked = addRequests(page);
+      const decisions: Decision[] = [];
+      const products = new OrderProducts(page, new ProductSearch(page), new BagPage(page), decisions, [{ plu: '23475', quantity: 2 }]);
+      await products.addAll();
+      expect(existsSync(join(folder(), 'ask.json'))).toBe(false);
+      expect(asked).toEqual(['?code=23475&qty=2']);
+      expect(decisions).toEqual([]);
+      await expect(page.getByRole('button', { name: /MY Bag$/ })).toHaveText('2 MY Bag');
+    });
   });
 });
 
