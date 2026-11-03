@@ -82,7 +82,14 @@ export default defineConfig({
       // The order flow (npm run test:e2e): several minutes, and it changes the test account's bag.
       name: 'e2e',
       testMatch: /\.e2e\.spec\.ts$/,
-      testIgnore: /approve\.e2e\.spec\.ts$/,
+      testIgnore: /(approve|extraction-check)\.e2e\.spec\.ts$/,
+      use: { channel: 'msedge' },
+    },
+    {
+      // Whether orders are extracted yet, read from the shop (user's request 2026-11-03): the hosted
+      // server starts it for orders whose run ended at "Order Split". It only reads.
+      name: 'extraction',
+      testMatch: /extraction-check\.e2e\.spec\.ts$/,
       use: { channel: 'msedge' },
     },
     {

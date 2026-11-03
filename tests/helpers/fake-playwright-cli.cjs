@@ -23,6 +23,11 @@
 //   Shell Station (2026-10-30): no mode; its step is "Pickup Store Selection". "pickup store: Let me
 //            choose" asks which of PICKUP_STORES (a "choose" question, interactive runs); otherwise
 //            the first one is used. The result names the store.
+//   Extraction checks (--project=extraction, the hosted server's, 2026-11-03): order 12345678 (the
+//            one this runner places) is ORDER_SPLIT at its first check and ORDER_EXTRACTED from its
+//            second; order 99999999 is not in the account's orders; others stay ORDER_SPLIT. Each
+//            check is noted in extraction-checks.log in the project folder, with the account's
+//            fingerprint.
 // It prints only fingerprints of the accounts it received (first 8 hex digits of a SHA-256), never them.
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
@@ -30,6 +35,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const fingerprint = (value) => (value ? crypto.createHash('sha256').update(value).digest('hex').slice(0, 8) : 'none');
+
+// ---- An extraction check, as tests/extraction-check.e2e.spec.ts writes its result.
+if (process.argv.includes('--project=extraction')) {
+  const counts = path.join(process.cwd(), 'extraction-checks.json');
+  const seen = fs.existsSync(counts) ? JSON.parse(fs.readFileSync(counts, 'utf8')) : {};
+  const orders = (process.env.WATSONS_CHECK_ORDERS ?? '').split(/\s+/).filter(Boolean);
+  const checkedAt = new Date().toISOString();
+  const found = orders.map((orderNumber) => {
+    seen[orderNumber] = (seen[orderNumber] ?? 0) + 1;
+    if (orderNumber === '99999999') return { orderNumber, found: false, status: null, extractedAt: null, checkedAt };
+    const extracted = orderNumber === '12345678' && seen[orderNumber] >= 2;
+    return { orderNumber, found: true, status: extracted ? 'ORDER_EXTRACTED' : 'ORDER_SPLIT', extractedAt: extracted ? '2026-11-03T04:20:09.000Z' : null, checkedAt };
+  });
+  fs.writeFileSync(counts, JSON.stringify(seen));
+  fs.appendFileSync(path.join(process.cwd(), 'extraction-checks.log'), `account=${fingerprint(process.env.WATSONS_USERNAME)} orders=${orders.join(',')}\n`);
+  fs.writeFileSync(process.env.WATSONS_CHECK_RESULT, JSON.stringify(found));
+  console.log(`fake runner: checked ${orders.join(', ')}`);
+  process.exit(0);
+}
 
 // A 1×1 PNG: the "screenshot" the fake browser takes.
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');

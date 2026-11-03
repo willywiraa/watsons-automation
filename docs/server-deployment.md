@@ -192,6 +192,21 @@ it couldn't follow to the end shows as **Interrupted** in the history.
   - A reset portal password (`users.cjs reset`): their remembered accounts can't be opened any
     more, so they enter them once again.
   - Change a staging account's password if it was shared.
+- **Extraction pending (since 2026-11-03):** an order whose run ended at Order Split is checked
+  by the service in the staging shop until it is ORDER_EXTRACTED. Logs / History then shows
+  **Order extracted** by itself, in every open page.
+  - When: 2 minutes after the run, every 2 minutes for the first hour, then every 10 minutes, for
+    up to 24 hours.
+  - How: a short headless Edge (`tests\extraction-check.e2e.spec.ts`, Playwright project
+    `extraction`) signs in to the shop with the testing account that placed the order and reads
+    the order under My Account. It only reads; the backoffice isn't used.
+  - One check at a time, never while that testing account is in use by a run or while the
+    server runs as many runs as it allows. Its temporary folders are under
+    `<data dir>\extraction-checks\` and are deleted after each check.
+  - The service holds a testing account only while its person is signed in: their checks pause
+    while they are signed out and go on at their next sign-in.
+  - A check that didn't finish is written to the service log (no passwords) and tried again at
+    the next interval.
 - **Walkthrough (since 2026-10-31):** the page shows a 30-second video of the whole workflow by
   itself the first time a browser lands on it after sign-in; **Walkthrough** in the header shows
   it again. Since 2026-11-01 it shows a test order from start to ORDER_EXTRACTED (the run sped

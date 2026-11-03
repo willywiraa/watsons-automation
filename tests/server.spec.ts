@@ -206,6 +206,18 @@ function filesUnder(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? filesUnder(join(dir, entry.name)) : [join(dir, entry.name)]));
 }
 
+test('extraction checks: 2 minutes after the run, every 2 minutes for the first hour, then every 10 (user’s choice 2026-11-03)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { nextCheckAt, TIMING } = require('../server/lib/extraction.cjs');
+  const since = Date.parse('2026-11-03T04:00:00Z');
+  const minutes = (n: number) => since + n * 60_000;
+  expect(nextCheckAt(since, null)).toBe(minutes(2));
+  expect(nextCheckAt(since, minutes(2))).toBe(minutes(4));
+  expect(nextCheckAt(since, minutes(59))).toBe(minutes(61));
+  expect(nextCheckAt(since, minutes(61))).toBe(minutes(71));
+  expect(TIMING.giveUpAfterMs).toBe(24 * 3600_000);
+});
+
 test.describe('hosted server', () => {
   test.skip(!SERVER_INSTALLED, skipReason);
   let setup: Setup;
@@ -508,6 +520,93 @@ test.describe('hosted server', () => {
       decisions: [{ action: 'buy', label: 'Buy 2 for the promotional discount', outcome: 'PLU 6666 x2 in the bag', by: 'Alice' }],
     });
     expect(setup.app.store.auditEvents().some((event) => event.action === 'run-answer' && /"quantity":2/.test(String(event.detail)))).toBe(true);
+  });
+
+  test('an order left at Order Split is checked in the shop until it is ORDER_EXTRACTED; checks pause while its person is signed out (2026-11-03)', async () => {
+    await closeServer(setup);
+    setup = await makeServer({ extractionTiming: { tickMs: 200, firstAfterMs: 2_000, earlyEveryMs: 500, lateEveryMs: 500 } });
+    type Row = { runId: string; status: string; backoffice: { extractionPending: boolean; finalStatus: string; extractionCheck?: Record<string, unknown>; extractedLater?: { at: string; seenAt: string } } };
+    const alice = client(setup.app);
+    const carol = client(setup.app);
+    await alice.login('alice');
+    await alice.useAccounts('alice');
+    await carol.login('carol');
+    // PLU 2222: the stand-in run approves the order, which then stays at Order Split.
+    const runId = (await alice.run({ ...ORDER, products: '2222' })).data.runId as string;
+    await ended(setup, runId);
+    const row = async () => ((await carol.history()).data.rows as Row[]).find((candidate) => candidate.runId === runId)!;
+    expect(await row()).toMatchObject({ status: 'completed', backoffice: { extractionPending: true, finalStatus: 'Order Split' } });
+
+    // Alice signs out before the first check: it waits for her (her testing account goes with her session).
+    await alice.call('POST', '/api/logout');
+    await expect.poll(async () => (await row()).backoffice.extractionCheck, { timeout: 10_000 }).toMatchObject({ state: 'paused', reason: 'signed_out', who: ['Alice'] });
+    const checks = join(setup.options.projectDir as string, 'extraction-checks.log');
+    expect(existsSync(checks)).toBe(false);
+
+    // She signs in again (her remembered accounts come back): checked with her testing account,
+    // still at Order Split the first time, extracted the second; Carol's open page is told.
+    const carolsPage = liveUpdates(setup.app, carol.cookie, 10_000);
+    await alice.login('alice');
+    await expect.poll(async () => (await row()).backoffice.extractionPending, { timeout: 10_000 }).toBe(false);
+    const done = await row();
+    expect(done).toMatchObject({
+      status: 'completed',
+      backoffice: { finalStatus: 'ORDER_EXTRACTED', extractedLater: { at: '2026-11-03T04:20:09.000Z' }, extractionCheck: { state: 'done' } },
+    });
+    expect(Date.parse(done.backoffice.extractedLater!.seenAt)).toBeGreaterThan(Date.parse('2026-11-03T04:20:09.000Z'));
+    expect(readFileSync(checks, 'utf8').trim().split('\n')).toEqual([
+      `account=${fingerprint(PEOPLE.alice.testing.username)} orders=12345678`,
+      `account=${fingerprint(PEOPLE.alice.testing.username)} orders=12345678`,
+    ]);
+    const updates = await carolsPage;
+    expect(updates).toContain('event: history\ndata: {"extraction":"12345678"}');
+    expect(updates).toContain('event: history\ndata: {"extracted":"12345678"}');
+    expect(setup.app.store.auditEvents().some((event) => event.action === 'order-extracted' && String(event.detail).includes('12345678'))).toBe(true);
+    // Nothing else is checked afterwards, and the check's folders are gone.
+    await new Promise((done) => setTimeout(done, 1_500));
+    expect(readFileSync(checks, 'utf8').trim().split('\n')).toHaveLength(2);
+    expect(filesUnder(join(setup.dataDir, 'extraction-checks'))).toEqual([]);
+  });
+
+  test('the page: an order left at Order Split shows "Order extracted" by itself once the check sees it (2026-11-03)', async ({ page }) => {
+    await closeServer(setup);
+    setup = await makeServer({ extractionTiming: { tickMs: 200, firstAfterMs: 3_000, earlyEveryMs: 1_500, lateEveryMs: 1_500 } });
+    await page.goto(setup.app.url);
+    await page.locator('#login-username').fill('alice');
+    await page.locator('#login-password').fill(PEOPLE.alice.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.locator('#testing-username').fill(PEOPLE.alice.testing.username);
+    await page.locator('#testing-password').fill(PEOPLE.alice.testing.password);
+    await page.locator('#testing-save').click();
+    await page.locator('#backoffice-change').click(); // optional for a new order: its form opens with Add
+    await page.locator('#backoffice-username').fill(PEOPLE.alice.backoffice.username);
+    await page.locator('#backoffice-password').fill(PEOPLE.alice.backoffice.password);
+    await page.locator('#backoffice-save').click();
+    await expect(page.locator('#backoffice-masked')).toHaveText('al•••');
+    await page.getByLabel('One PLU per line').fill('2222');
+    await page.locator('#run').click();
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
+
+    // The run ends at Order Split: pending, and checked automatically.
+    await expect(page.locator('#result .verdict')).toHaveText('Completed', { timeout: 15_000 });
+    const note = page.locator('#result .p-note');
+    await expect(note).toContainText('Extraction still pending: WTCSG12345678 is at Order Split, not yet ORDER_EXTRACTED. It is checked automatically, and this page updates by itself once it is extracted.');
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    const row = page.locator('tr.hrow').first();
+    await expect(row).toContainText('Extraction pending');
+
+    // No reload: the row and its details change once the check sees ORDER_EXTRACTED.
+    await expect(row).toContainText('Order extracted', { timeout: 15_000 });
+    await expect(row).not.toContainText('Extraction pending');
+    await row.click();
+    const details = page.locator('tr.hdetail');
+    await expect(details).toContainText('Placed and approved in the backoffice. The order is now ORDER_EXTRACTED.');
+    await expect(details.locator('.p-note--ok')).toContainText('Order extracted: WTCSG12345678 reached ORDER_EXTRACTED at');
+    await expect(details).not.toContainText('Extraction still pending');
+    // The run's result on the Automation page too.
+    await page.getByRole('tab', { name: 'Automation' }).click();
+    await expect(page.locator('#result .p-note--ok')).toContainText('Order extracted: WTCSG12345678 reached ORDER_EXTRACTED');
+    await expect(page.locator('#result')).not.toContainText('Extraction still pending');
   });
 
   test('Shell Station: no mode; the person picks the pickup store, and their next page keeps the choice (2026-10-30)', async () => {

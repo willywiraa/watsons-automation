@@ -488,6 +488,9 @@ body{background:var(--canvas);min-width:1024px}
 /* Completed, with what is still to come for the order (2026-10-23): awaiting approval, extraction pending. */
 .p-note{display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:var(--radius-panel);background:var(--tint-warning);color:var(--text);font-size:var(--text-body);line-height:var(--lh-body);max-width:var(--measure)}
 .p-note > [data-icon], .p-note > .wa-icon{color:var(--warning);margin-top:2px}
+.p-note--ok{background:var(--tint-success)}
+.p-note--ok > [data-icon], .p-note--ok > .wa-icon{color:var(--success)}
+.p-ok{color:var(--success);font-weight:var(--weight-semibold)}
 /* The workflow (side navigation) and the delivery choices are real radio buttons, laid over their labels. */
 .p-wfitem input,.p-segopt input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:inherit}
 .p-wfitem:has(input:checked){background:var(--tint-accent);color:var(--accent);font-weight:var(--weight-semibold)}
@@ -1690,7 +1693,7 @@ let currentStepSince = null; // when the running step started (this page's clock
 function renderSteps(view, queued) {
   if (view === 'compose') return;
   const run = view === 'run' ? current : last;
-  const row = view === 'result' ? last.row : null;
+  const row = view === 'result' ? latestRow(last) : null;
   const values = formValues();
   const key = JSON.stringify([
     view, queued, run?.runId, run?.step, run?.mode, run?.deliveryMethod, run?.passed, run?.cancelled, row, view === 'result' ? resultOpen.message : null, automation(), values.mode, values.deliveryMethod,
@@ -2004,11 +2007,36 @@ function pendingNote(row) {
     return `Awaiting approval: someone with a backoffice account must approve order ${row.orderNumber}${approvesNewOrders() ? ' (Approve now)' : ' (Logs / History → Approve)'}. Until then it is not extracted.`;
   }
   if (row.backoffice?.extractionPending) {
-    return `Extraction still pending: WTCSG${row.orderNumber} is at ${row.backoffice.finalStatus ?? 'Order Split'}, not yet ORDER_EXTRACTED. Wait a few minutes, then check it in the backoffice.`;
+    return `Extraction still pending: WTCSG${row.orderNumber} is at ${row.backoffice.finalStatus ?? 'Order Split'}, not yet ORDER_EXTRACTED. ${extractionCheckText(row)}`;
   }
   return null;
 }
-const noteBox = (text) => el('p', { className: 'p-note', attrs: { role: 'status' } }, iconNode('circle-alert'), el('span', { textContent: text }));
+
+/**
+ * How the hosted server's checks of a pending extraction stand (user's request 2026-11-03: the order
+ * is checked in the shop until it is ORDER_EXTRACTED, and Logs / History updates by itself). The
+ * desktop window doesn't check.
+ */
+function extractionCheckText(row) {
+  if (!serverMode) return 'Wait a few minutes, then check it in the backoffice.';
+  const check = row.backoffice.extractionCheck ?? {};
+  const last = check.lastCheckedAt ? ` Last checked ${formatShort(check.lastCheckedAt)}${check.lastStatus ? `: ${check.lastStatus}` : ''}.` : '';
+  const who = check.who?.length ? check.who.join(' and ') : row.operator ?? 'the person who placed it';
+  if (check.state === 'paused' && check.reason === 'signed_out') {
+    return `Its automatic checks pause while ${who} ${check.who?.length > 1 ? 'are' : 'is'} signed out, and go on at the next sign-in.${last}`;
+  }
+  if (check.state === 'paused') return `It can't be checked automatically: the shop doesn't show it for the testing account of ${who}. Check it in the backoffice.${last}`;
+  if (check.state === 'stopped') return `It is no longer checked automatically (24 hours have passed): check it in the backoffice.${last}`;
+  return `It is checked automatically, and this page updates by itself once it is extracted.${last}${check.problem ? ` ${check.problem}` : ''}`;
+}
+/** An order the automatic checks saw extracted after its run ended (2026-11-03), or null. */
+function extractedNote(row) {
+  const later = row.backoffice?.extractedLater;
+  if (!later) return null;
+  return `Order extracted: WTCSG${row.orderNumber} reached ORDER_EXTRACTED at ${formatShort(later.at)}, after the run (seen by the automatic check at ${formatShort(later.seenAt)}).`;
+}
+const noteBox = (text, ok = false) =>
+  el('p', { className: `p-note${ok ? ' p-note--ok' : ''}`, attrs: { role: 'status' } }, iconNode(ok ? 'check' : 'circle-alert'), el('span', { textContent: text }));
 /** The status a run is shown with: an order awaiting approval is a completed run (2026-10-23). */
 const shownStatus = (row) => (row.status === 'awaiting_approval' ? 'completed' : row.status);
 
@@ -2057,13 +2085,22 @@ function copyable(value, title, size) {
 }
 
 let resultKey = '';
+/**
+ * A finished run's row: Logs / History's once it has the finished run, since it can change after the
+ * run ended (e.g. its order extracted later, 2026-11-03); else the one the run ended with.
+ */
+function latestRow(run) {
+  const listed = history.find((row) => row.runId === run.runId);
+  return listed && listed.status !== 'running' ? listed : run.row;
+}
+
 function renderResult(view) {
   if (view !== 'result') {
     resultKey = '';
     return;
   }
   const run = last;
-  const row = last.row;
+  const row = latestRow(last);
   const steps = stepsOf(run);
   const key = JSON.stringify([run.runId, row, resultOpen, approvesNewOrders()]);
   if (key !== resultKey) {
@@ -2098,6 +2135,7 @@ function resultHead(run, row, steps) {
     row.orderNumber ? el('div', { className: 'wa-result__row' }, copyable(row.orderNumber, `Backoffice code WTCSG${row.orderNumber}`, 'display'), el('span', { className: 'wa-result__facts', textContent: facts })) : null,
     el('p', { className: 'wa-result__sentence' }, sentence),
     pendingNote(row) ? noteBox(pendingNote(row)) : null,
+    extractedNote(row) ? noteBox(extractedNote(row), true) : null,
     row.approvedLater ? el('span', { className: 'wa-muted p-small', textContent: approvedLaterText(row) }) : null,
     el('div', { className: 'wa-result__actions' }, ...resultActions(row)),
   );
@@ -2475,12 +2513,15 @@ function statusCell(row) {
   const at = row.error?.step ?? stoppedAt(row);
   // What is still to come for the order (2026-10-23).
   const next = row.status === 'awaiting_approval' ? 'Awaiting approval' : row.backoffice?.extractionPending ? 'Extraction pending' : null;
+  // Extracted after the run, as the automatic checks saw (2026-11-03).
+  const extracted = row.backoffice?.extractedLater ? 'Order extracted' : null;
   return el(
     'span',
     { className: 'p-lstatus' },
     pill(row),
     at ? el('span', { className: 'p-l2__sub p-ell', textContent: `at ${at}` }) : null,
     next ? el('span', { className: 'p-l2__sub p-warn', textContent: next }) : null,
+    extracted ? el('span', { className: 'p-l2__sub p-ok', textContent: extracted }) : null,
     approveButton(row),
   );
 }
@@ -2529,7 +2570,8 @@ function backofficeText(row) {
   if (!row.backoffice) return row.outcome === 'order_placed_unapproved' ? (row.approvedLater ? `Approved later by ${row.approvedLater.by}` : 'Not approved yet') : null;
   const status = row.backoffice.finalStatus ?? '?';
   const pending = row.backoffice.extractionPending ? ', extraction pending' : '';
-  return `${status}${pending}${row.backoffice.approved ? ' (approved by this run)' : ' (approved before this run)'}`;
+  const later = row.backoffice.extractedLater ? ` at ${formatShort(row.backoffice.extractedLater.at)}` : '';
+  return `${status}${later}${pending}${row.backoffice.approved ? ' (approved by this run)' : ' (approved before this run)'}`;
 }
 
 /** The expanded row: what happened, the run's facts, and its evidence. */
@@ -2553,6 +2595,7 @@ function runDetails(row) {
   } else {
     what.push(el('p', { className: 'p-x__msg', textContent: sentenceOf(row) }));
     if (pendingNote(row)) what.push(noteBox(pendingNote(row)));
+    if (extractedNote(row)) what.push(noteBox(extractedNote(row), true));
   }
   if (row.approvedLater) what.push(el('div', { className: 'p-x__muted', textContent: approvedLaterText(row) }));
   if (row.evidenceState === 'deleted') what.push(el('div', { className: 'p-x__muted', textContent: 'Its screenshots and files were removed after the retention period; this summary stays.' }));

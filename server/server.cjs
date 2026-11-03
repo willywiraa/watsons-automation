@@ -17,6 +17,7 @@ const { readConfig } = require('./lib/config.cjs');
 const { ACCOUNT_KINDS, UserDirectory, Sessions, publicUser, parseCookies } = require('./lib/auth.cjs');
 const { Store } = require('./lib/store.cjs');
 const { RunManager } = require('./lib/runs.cjs');
+const { ExtractionWatcher } = require('./lib/extraction.cjs');
 const evidence = require('./lib/evidence.cjs');
 const vault = require('./lib/vault.cjs');
 
@@ -63,6 +64,9 @@ async function startServer(overrides = {}) {
   const runs = new RunManager({ config, store, sendTo, broadcast });
   const corrected = runs.recheckFailedRuns();
   if (corrected > 0) log(`${corrected} run(s) saved as failed had in fact passed (browser closed afterwards): corrected.`);
+  // Orders left at "Order Split": checked in the shop until they are ORDER_EXTRACTED (2026-11-03).
+  const extraction = new ExtractionWatcher({ config, store, runs, sessions, broadcast, log });
+  extraction.start();
 
   /** What a person's window may know about one of their accounts: whether it is set (masked), and remembered. */
   const accountState = (account) => (account ? { set: true, masked: account.masked, remembered: account.remember } : { set: false });
@@ -421,12 +425,14 @@ async function startServer(overrides = {}) {
     store,
     sessions,
     runs,
+    extraction,
     users,
     maintenance,
     async close() {
       clearTimeout(firstUpkeep);
       clearInterval(upkeepTimer);
       clearInterval(ping);
+      await extraction.stop();
       runs.shutdown();
       // Let the stopped runs end (and be saved) before the database closes.
       for (let waited = 0; runs.active.size > 0 && waited < 10_000; waited += 100) await new Promise((done) => setTimeout(done, 100));

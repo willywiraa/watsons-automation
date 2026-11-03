@@ -177,6 +177,62 @@ class Store {
       .run(JSON.stringify({ runId, by, at }), now(), orderNumber).changes;
   }
 
+  /**
+   * The runs that ended with their order at "Order Split", its extraction to ORDER_EXTRACTED still
+   * pending (2026-10-23; Logs / History: "Extraction pending"), oldest first: the orders the
+   * extraction checks follow (extraction.cjs, user's request 2026-11-03).
+   */
+  extractionPending() {
+    return this.db
+      .prepare(
+        `SELECT username, display_name, evidence_state, detail_json FROM runs
+         WHERE status IN ('completed', 'no_change') AND order_number IS NOT NULL
+           AND json_extract(detail_json, '$.backoffice.extractionPending') = 1
+         ORDER BY started_at, run_id`,
+      )
+      .all()
+      .map((record) => Store.rowOf(record));
+  }
+
+  /** Who ran something for this order, the ones who placed it first: [{ username, operator, automation }]. */
+  peopleOf(orderNumber) {
+    return this.db
+      .prepare(
+        `SELECT username, COALESCE(json_extract(detail_json, '$.operator'), display_name, username) AS operator, automation FROM runs
+         WHERE order_number = ? ORDER BY automation = 'order' DESC, started_at`,
+      )
+      .all(orderNumber);
+  }
+
+  /** How the checks of this order's extraction stand ({ state, lastCheckedAt, … }), on its pending runs. */
+  noteExtractionCheck(orderNumber, check) {
+    return this.db
+      .prepare(
+        `UPDATE runs SET detail_json = json_set(detail_json, '$.backoffice.extractionCheck', json(?)), updated_at = ?
+         WHERE order_number = ? AND json_extract(detail_json, '$.backoffice.extractionPending') = 1`,
+      )
+      .run(JSON.stringify(check), now(), orderNumber).changes;
+  }
+
+  /**
+   * The order is ORDER_EXTRACTED now (seen by a check, at `seenAt`; extracted at `extractedAt`): its
+   * runs no longer show "Extraction pending". Returns how many rows changed.
+   */
+  markExtracted(orderNumber, { extractedAt, seenAt }) {
+    return this.db
+      .prepare(
+        `UPDATE runs SET detail_json = json_set(
+             json_insert(detail_json, '$.backoffice.statuses[#]', 'ORDER_EXTRACTED'),
+             '$.backoffice.extractionPending', json('false'),
+             '$.backoffice.finalStatus', 'ORDER_EXTRACTED',
+             '$.backoffice.extractedLater', json(?),
+             '$.backoffice.extractionCheck', json(?)),
+           updated_at = ?
+         WHERE order_number = ? AND json_extract(detail_json, '$.backoffice.extractionPending') = 1`,
+      )
+      .run(JSON.stringify({ at: extractedAt, seenAt }), JSON.stringify({ state: 'done', lastCheckedAt: seenAt }), now(), orderNumber).changes;
+  }
+
   markEvidenceDeleted(runId) {
     this.db.prepare("UPDATE runs SET evidence_state = 'deleted', updated_at = ? WHERE run_id = ?").run(now(), runId);
     this.db.prepare('DELETE FROM run_files WHERE run_id = ?').run(runId);

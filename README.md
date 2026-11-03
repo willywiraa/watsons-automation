@@ -141,7 +141,8 @@ A run ends as soon as it is done (since 2026-10-23; before, its last page stayed
   backoffice. Once it is **Order Split** it gets at most 1 more minute; if it isn't extracted by
   then, the run still completes and says **extraction still pending**: wait a few minutes, then
   check the order in the backoffice. (Before, it waited 10 minutes and then failed with
-  `ORDER_NOT_EXTRACTED`.)
+  `ORDER_NOT_EXTRACTED`.) The hosted version keeps checking it and updates the page by itself
+  once it is extracted (since 2026-11-03, see [The hosted version](#the-hosted-version-server)).
 - Without a backoffice account it ends on "Thank you for your order" right away: **Completed**,
   with a note that the order is **awaiting approval** until someone with a backoffice account
   approves it (Logs / History → **Approve**).
@@ -361,6 +362,7 @@ on the server, headless, and everyone sees **one shared Logs / History**.
 | Live browser | While a run goes on, its owner sees the server's browser in the page (**Live browser**, about 3 pictures a second) and can use it: click, scroll, type, and switch between its tabs. Nobody else sees it. The run ends as soon as it is done (since 2026-10-23), so the next one can start straight away. |
 | Parallel runs | One run per person, and per testing account, at a time; up to `WATSONS_MAX_PARALLEL_RUNS` runs at once, then a waiting line. |
 | Logs / History | Everyone's runs, from a database on the server (SQLite), with a **Mine / All** filter. Screenshots are shown in the browser (**Download** saves one); the error report is copied from the page. The rest of the evidence stays on the server (no zip, report or error-report.txt downloads since 2026-10-25). |
+| Extraction pending (since 2026-11-03) | An order whose run ended at **Order Split** is checked until it is **ORDER_EXTRACTED**: 2 minutes after the run, every 2 minutes for the first hour, then every 10 minutes, for up to 24 hours. A check signs in to the staging **shop** with the testing account that placed the order and reads the order under My Account (the shop gives its status, e.g. `ORDER_EXTRACTED`, and its extraction time); it only reads, and never uses the backoffice. Once extracted, every open page updates by itself, with no refresh: Logs / History shows **Order extracted** instead of **Extraction pending**, and the run's details and result say when it was extracted. The checks pause while the person who placed it is signed out (the server holds their testing account only while they are) and go on at their next sign-in; one at a time, never while that account is in use by a run. After 24 hours the row says to check it in the backoffice. Code: `server/lib/extraction.cjs`, `tests/extraction-check.e2e.spec.ts` (Playwright project `extraction`). The desktop window doesn't check. |
 | Walkthrough (since 2026-10-31) | A 30-second video of the whole workflow, recorded from the hosted app itself (since 2026-11-01): a new test order with its products and delivery, its run followed step by step (sped up), its approval in the backoffice, the order at ORDER_EXTRACTED, and Logs / History. It opens by itself the first time a browser lands on the page after sign-in, with captions and steps to jump to; **Start using app**, **×** or Esc close it, and **Walkthrough** in the header shows it again. The video is only sent when it opens. The desktop window has none. To record it again after the page changes: `node server/scripts/record-walkthrough.cjs --place-order` (it places a real staging test order, which the run approves; [docs/server-deployment.md](docs/server-deployment.md) §7). |
 
 - **Code:** `server/` (Node.js 24 with express, express-rate-limit and bcryptjs; the database is
@@ -461,6 +463,7 @@ The approved staging address is written into the code (`src/safety/staging-guard
 | `npm run test:e2e` | The order flow from `test-data/order.txt`, up to the Checkout button with the file's mode selected (several minutes; empties and refills the test account's bag; places no order) |
 | `npm run order` | The same, then **places a real STAGING test order**: Checkout, Pay, OTP, and checks the order number on the confirmation page |
 | `npm run approve` | **Approves an existing STAGING order** in the backoffice (no new order). Set its number first: `$env:WATSONS_APPROVE_ORDER = '07091012'; npm run approve` (then `$env:WATSONS_APPROVE_ORDER = ''`) |
+| `npx playwright test --project=extraction` | **Reads** whether orders are extracted, in the staging shop with the `.env` testing account (only reads). The hosted version runs it by itself (since 2026-11-03). By hand: `$env:WATSONS_CHECK_ORDERS = '07155003'; $env:WATSONS_CHECK_RESULT = 'check.json'; npx playwright test --project=extraction` |
 | `npx playwright test --headed` | Run all tests with the Edge window visible |
 | `npm run report` | Open the last test report (press Ctrl+C in the terminal to stop it) |
 | `npm run typecheck` | Check the TypeScript code for mistakes |

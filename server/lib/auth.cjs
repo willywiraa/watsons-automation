@@ -130,6 +130,16 @@ class Sessions {
     return Boolean(session && this.users.active(session.username) && now - session.lastSeen <= this.idleMs && now - session.createdAt <= this.maxMs);
   }
 
+  /**
+   * A person's testing account, from one of their sessions still valid, for work done for them in
+   * the background (extraction checks, 2026-11-03); null while they are signed out. Not counted as
+   * their activity.
+   */
+  testingAccountOf(username, now = Date.now()) {
+    for (const [id, session] of this.byId) if (session.username === username && session.testingAccount && this.peek(id, now)) return session.testingAccount;
+    return null;
+  }
+
   destroy(id) {
     const session = this.byId.get(id);
     if (session) {
