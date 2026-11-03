@@ -47,6 +47,21 @@ test.describe('the questions and their choices', () => {
     expect(labels(only)).toEqual(['Replace with another PLU', 'Try Shell Station', 'Stop automation']);
   });
 
+  test('a partial order (2026-11-03): "Split into 2 orders" first, with what goes in each; the other choices stay', () => {
+    const kept = [{ plu: '10031', quantity: 1 }, { plu: '46700', quantity: 2 }];
+    const rest = [{ plu: '17562', quantity: 1 }];
+    const question = eligibilityQuestion({ plus: ['17562'], mode: 'express', method: 'click_collect', otherMode: 'standard', othersLeft: 2, triedMethods: [], split: { kept, rest } });
+    expect(question.message).toBe('Product 17562 is not eligible for Express delivery with Click & Collect.');
+    expect(question.detail).toBe('Split: order 1 by Express for PLU 10031, 46700 x2, then order 2 by Standard for PLU 17562, from the bag (staging keeps it there).');
+    expect(labels(question)).toEqual(['Split into 2 orders: Express, then Standard', 'Remove it and continue', 'Replace with another PLU', 'Use Standard instead', 'Try Home Delivery', 'Try Shell Station', 'Stop automation']);
+    expect(question.options[0]).toEqual({ action: 'split', mode: 'standard', label: 'Split into 2 orders: Express, then Standard' });
+    // Standard first, Express for the rest: the same the other way round.
+    const back = eligibilityQuestion({ plus: ['45614'], mode: 'standard', method: 'home_delivery', otherMode: 'express', othersLeft: 1, triedMethods: [], split: { kept: [{ plu: '10117', quantity: 1 }], rest: [{ plu: '45614', quantity: 1 }] } });
+    expect(back.options[0]).toEqual({ action: 'split', mode: 'express', label: 'Split into 2 orders: Standard, then Express' });
+    // No other mode to take them: no split.
+    expect(labels(eligibilityQuestion({ plus: ['17562'], mode: 'express', method: 'click_collect', otherMode: null, othersLeft: 2, triedMethods: [], split: { kept, rest } }))).not.toContain('Split into 2 orders: Express, then Standard');
+  });
+
   test('products the delivery method can’t take (the bag page): another method, leave out, replace, stop; staging’s words as details', () => {
     const said = 'Sorry, your order includes item(s) not available for Click & Collect service. Please review your shopping bag or try another delivery option.';
     const question = methodEligibilityQuestion({ plus: ['24264', '21684'], method: 'click_collect', message: said, othersLeft: 3, triedMethods: [] });
@@ -215,15 +230,29 @@ function fakeCheckout(offered: ('express' | 'standard')[], notFor: Record<'expre
     },
   } as unknown as CheckoutPage;
 }
-const choose = (checkout: CheckoutPage, decisions: Decision[] = []) =>
-  chooseDelivery({ checkout, mode: 'express', method: 'home_delivery', lines: LINES, namesByPlu: NAMES, decisions, triedMethods: [] });
+const choose = (checkout: CheckoutPage, decisions: Decision[] = [], allowSplit = false) =>
+  chooseDelivery({ checkout, mode: 'express', method: 'home_delivery', lines: LINES, namesByPlu: NAMES, decisions, triedMethods: [], allowSplit });
 
 test.describe('delivery choice when products can’t go that way', () => {
   test('a command-line run leaves them out, as before', async () => {
     const calls: string[] = [];
     const next = await choose(fakeCheckout(['express', 'standard'], { express: ['17971'], standard: [] }, calls));
     expect(next).toMatchObject({ kind: 'ready', excluded: [{ plu: '17971' }] });
+    expect(next).not.toHaveProperty('followUp');
     expect(calls).toEqual(['look up express', 'select express']);
+  });
+
+  test('a command-line run splits the order when the other mode takes them all (a partial order, 2026-11-03)', async () => {
+    const calls: string[] = [];
+    const next = await choose(fakeCheckout(['express', 'standard'], { express: ['17971', '21684'], standard: [] }, calls), [], true);
+    expect(next).toEqual({ kind: 'ready', kept: [LINES[0]], excluded: [], followUp: { mode: 'standard', lines: [LINES[1], LINES[2]] } });
+    expect(calls).toEqual(['look up express', 'look up standard', 'select express']);
+    // The other mode can't take one of them: no split, they are left out as before.
+    const partly = await choose(fakeCheckout(['express', 'standard'], { express: ['17971', '21684'], standard: ['21684'] }, []), [], true);
+    expect(partly).toEqual({ kind: 'ready', kept: [LINES[0]], excluded: [LINES[1], LINES[2]] });
+    // None of them can go this way: nothing to split.
+    const none = await choose(fakeCheckout(['express', 'standard'], { express: ['45274', '17971', '21684'], standard: [] }, []), [], true).catch((error: unknown) => error);
+    expect(none).toMatchObject({ code: 'EXPRESS_OPTION_NOT_FOUND' });
   });
 
   test.describe('from the launcher', () => {
@@ -274,6 +303,38 @@ test.describe('delivery choice when products can’t go that way', () => {
       expect(next).toMatchObject({ kind: 'ready', excluded: [] });
       // The list is read once (2026-10-22), then the mode selected.
       expect(calls).toEqual(['look up express', 'select express']);
+    });
+
+    test('a partial order (2026-11-03): "Split into 2 orders" selects this mode for the others, and order 2 gets the rest', async () => {
+      const calls: string[] = [];
+      const decisions: Decision[] = [];
+      const [next, asked] = await Promise.all([
+        choose(fakeCheckout(['express', 'standard'], { express: ['17971'], standard: [] }, calls), decisions, true),
+        answerNext({ action: 'split', mode: 'standard' }),
+      ]);
+      expect(labels(asked)).toEqual(['Split into 2 orders: Express, then Standard', 'Remove it and continue', 'Replace with another PLU', 'Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Stop automation']);
+      expect(asked.detail).toBe('Split: order 1 by Express for PLU 45274, 21684, then order 2 by Standard for PLU 17971, from the bag (staging keeps it there).');
+      expect(next).toEqual({ kind: 'ready', kept: [LINES[0], LINES[2]], excluded: [], followUp: { mode: 'standard', lines: [LINES[1]] } });
+      // Each list read once, then Express selected for order 1.
+      expect(calls).toEqual(['look up express', 'look up standard', 'select express']);
+      expect(decisions).toMatchObject([{ action: 'split', label: 'Split into 2 orders: Express, then Standard', outcome: 'Order 1 by Express: PLU 45274, 21684; then order 2 by Standard: PLU 17971' }]);
+    });
+
+    test('no split for a second order, nor when the other mode can’t take them all', async () => {
+      // Order 2 of a partial order (allowSplit off): the choices as before.
+      const [, second] = await Promise.all([choose(fakeCheckout(['express', 'standard'], { express: ['17971'], standard: [] }, [])), answerNext({ action: 'skip' })]);
+      expect(labels(second)).not.toContain('Split into 2 orders: Express, then Standard');
+      const [, partly] = await Promise.all([
+        choose(fakeCheckout(['express', 'standard'], { express: ['17971', '21684'], standard: ['21684'] }, []), [], true),
+        answerNext({ action: 'skip' }),
+      ]);
+      expect(labels(partly)).toEqual(['Remove them and continue', 'Remove them and add other PLUs', 'Use Standard instead', 'Try Click & Collect', 'Try Shell Station', 'Stop automation']);
+      // A split answer where none was offered is refused.
+      const [refused] = await Promise.all([
+        choose(fakeCheckout(['express', 'standard'], { express: ['17971'], standard: ['17971'] }, []), [], true).catch((error: unknown) => error),
+        answerNext({ action: 'split', mode: 'standard' }),
+      ]);
+      expect(refused).toBeInstanceOf(StepError);
     });
   });
 });

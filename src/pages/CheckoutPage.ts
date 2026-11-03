@@ -14,6 +14,9 @@ import { closeChatPanelIfShown, closeCookieNoticeIfShown, throwIfServerErrorShow
 // switched on for the run (Settings.placeOrder; CLAUDE.md rule 3, approved 2026-10-05).
 
 const normalize = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
+/** A product's status in an "Available items" list: "In Stock", or "Not available" / "Sorry, this item is not available for Express mode.". */
+const IN_STOCK = /^\s*in stock\s*$/i;
+const NOT_AVAILABLE = /\bnot available\b/i;
 /** " Sat \n 17/10 " → "Sat 17/10" (a day in the delivery date list). */
 const normalizeDay = (text: string) => text.replace(/\s+/g, ' ').trim();
 
@@ -195,12 +198,38 @@ export class CheckoutPage {
     } catch (error) {
       throw fail(`The "View N item(s)" button of ${what} did not open the "Available items" list.`, error);
     }
-    const lines = (await this.availableItemsDialog.innerText()).split('\n').map(normalize).filter(Boolean);
+    // Each product in the list (verified 2026-11-03): <div class="product"> with its name (".name",
+    // without the brand) and its status (".status"): "In Stock", or, when this option can't deliver
+    // it, the class "disabled" and "Not available" (Home Delivery) or "Sorry, this item is not
+    // available for Express mode." (Click & Collect; the user's error log of 2026-11-03). A free gift
+    // has the class "freeGift" and "Free Gift" under its status.
+    const items = await this.availableItemsDialog.locator('.product').evaluateAll((products) =>
+      products.map((product) => ({
+        name: (product.querySelector('.name-group .name') ?? product.querySelector('.name'))?.textContent ?? '',
+        status: product.querySelector('.status')?.textContent ?? '',
+        disabled: product.classList.contains('disabled'),
+      })),
+    );
+    // Without those (the list as it was drawn before): its lines, each status after its product's name.
+    const lines = items.length > 0 ? [] : (await this.availableItemsDialog.innerText()).split('\n').map(normalize).filter(Boolean);
+    const names = new Set(Object.values(namesByPlu).map(normalize));
+    const statusOf = (productName: string): 'in stock' | 'not available' | undefined => {
+      const wanted = normalize(productName);
+      const item = items.find((candidate) => normalize(candidate.name) === wanted);
+      if (item) return item.disabled || NOT_AVAILABLE.test(item.status) ? 'not available' : IN_STOCK.test(item.status) ? 'in stock' : undefined;
+      const at = lines.indexOf(wanted);
+      // Only up to the next product's name: never another product's status.
+      for (const line of at < 0 ? [] : lines.slice(at + 1)) {
+        if (names.has(line)) break;
+        if (NOT_AVAILABLE.test(line)) return 'not available';
+        if (IN_STOCK.test(line)) return 'in stock';
+      }
+      return undefined;
+    };
 
     const unavailable: string[] = [];
     for (const [plu, productName] of Object.entries(namesByPlu)) {
-      const at = lines.indexOf(normalize(productName));
-      const status = at < 0 ? undefined : lines.slice(at + 1).find((line) => line === 'in stock' || line === 'not available');
+      const status = statusOf(productName);
       if (!status) {
         throw fail(`PLU ${plu} ("${productName}") is not in the "Available items" list of ${what}, so its availability is unknown.`);
       }

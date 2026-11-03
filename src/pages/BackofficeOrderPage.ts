@@ -24,9 +24,11 @@ export class BackofficeOrderPage {
   }
 
   // Verified on staging 2026-10-06 (inspection/backoffice-home, -orders): the left menu row,
-  // and the text search above the list (the backoffice's own search widget).
+  // and the text search above the list (the backoffice's own search widget). Once it is the
+  // selected menu item, the row is named "Orders selected" (seen 2026-11-03, when a partial order's
+  // second order was looked for after the first one's approval).
   get ordersMenu(): Locator {
-    return this.page.getByRole('row', { name: 'Orders', exact: true });
+    return this.page.getByRole('row', { name: /^Orders(?: selected)?$/ });
   }
   get searchBox(): Locator {
     return this.page.locator('.yw-textsearch-searchbox input');

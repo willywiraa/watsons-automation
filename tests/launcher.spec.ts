@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseOrder, parseOrderNumber, type OrderLine } from '../src/config/order';
 import { ADD_DELAY_SECONDS } from '../src/config/settings';
+import { orderStep, placedLine, plannedLine } from '../src/flows/partial-order';
 import { PICKUP_STORE_STEP } from '../src/flows/shell-station';
+import type { RunOrder } from '../src/reporting/order-run';
 import { STAGING_HOST } from '../src/safety/staging-guard';
 
 // Offline checks of the launcher (launcher/launcher.cjs, PRD §32–38). The window tests use a
@@ -21,6 +23,8 @@ interface HistoryRow {
   automation: string;
   status: string;
   orderNumber: string | null;
+  orders: HistoryOrder[] | null;
+  approvedLater?: { runId: string; by: string; at: string };
   operator: string | null;
   delivery: { label: string; method: string; mode: string | null; store?: string | null } | null;
   products: { requested: OrderLine[]; ordered: OrderLine[]; excluded: string[] };
@@ -41,6 +45,17 @@ interface Launcher {
   checkRunRequest(body: unknown, setup: SetupResult): { problems: string[]; order?: unknown };
   readHistory(root: string): HistoryRow[];
   startLauncher(options: { root: string; openWindow?: boolean; quiet?: boolean; openFile?: (target: string) => void }): Promise<{ url: string; close(): Promise<void> }>;
+  PARTIAL_PLAN: RegExp;
+  PARTIAL_PLACED: RegExp;
+  partialPlan(text: string): { orders: { mode: string | null; products: OrderLine[]; orderNumber: string | null }[] } | null;
+}
+/** A partial order's order in Logs / History (2026-11-03). */
+interface HistoryOrder {
+  orderNumber: string | null;
+  delivery: { method: string; mode: string | null; label: string };
+  products: OrderLine[];
+  backoffice: { finalStatus?: string; extractionPending?: boolean } | null;
+  approvedLater?: { runId: string; by: string; at: string };
 }
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const launcher: Launcher = require('../launcher/launcher.cjs');
@@ -142,6 +157,27 @@ test.describe('launcher checks', () => {
   test('the page asks for everything relative to its own address (so it also works under IIS’s /automation/)', () => {
     const page = readFileSync(join(__dirname, '..', 'launcher', 'ui.html'), 'utf8');
     expect(page).not.toMatch(/["'`]\/api\//);
+  });
+
+  test('reads a partial order’s plan and its placed orders as the order test logs them (2026-11-03)', () => {
+    const orders: RunOrder[] = [
+      { deliveryMethod: 'click_collect', deliveryMode: 'express', ordered: [{ plu: '10031', quantity: 1 }, { plu: '46700', quantity: 2 }] },
+      { deliveryMethod: 'click_collect', deliveryMode: 'standard', ordered: [{ plu: '17562', quantity: 1 }] },
+    ];
+    const plan = plannedLine(orders);
+    expect(plan).toBe('Partial order planned: order 1 by Express (PLU 10031, 46700 x2), order 2 by Standard (PLU 17562)');
+    expect(launcher.partialPlan(plan.match(launcher.PARTIAL_PLAN)![1])).toEqual({
+      orders: [
+        { mode: 'express', products: [{ plu: '10031', quantity: 1 }, { plu: '46700', quantity: 2 }], orderNumber: null },
+        { mode: 'standard', products: [{ plu: '17562', quantity: 1 }], orderNumber: null },
+      ],
+    });
+    orders[1].orderNumber = '07156004';
+    const placed = placedLine(orders, 1);
+    expect(placed).toBe('Order 2 of 2 placed: 07156004 (Standard, Click & Collect)');
+    expect(placed.match(launcher.PARTIAL_PLACED)?.slice(1)).toEqual(['2', '2', '07156004']);
+    expect(orderStep('Checkout', 2)).toBe('Checkout (order 2)');
+    expect(orderStep('Checkout', 1)).toBe('Checkout');
   });
 
   test('waits the same fixed 5 seconds between adds as the order test (user\'s decision 2026-10-21)', () => {
@@ -791,6 +827,114 @@ test.describe('launcher window', () => {
     const [row] = launcher.readHistory(root);
     expect(row.decisions).toMatchObject([{ step: 'Add to bag', kind: 'buy_option', action: 'buy', label: 'Buy 2 for the promotional discount', outcome: 'PLU 6666 x2 in the bag', by: 'Test Operator' }]);
     expect(row.products.ordered).toEqual([{ plu: '10117', quantity: 1 }, { plu: '6666', quantity: 2 }]);
+  });
+
+  test('a partial order (2026-11-03): split in two, each order placed and approved, its number, mode and status shown', async ({ page }) => {
+    await startOrder(page, '10117\n7777');
+    const ask = page.locator('#ask');
+    await expect(ask).toContainText('Product 7777 is not eligible for Express delivery with Click & Collect.');
+    await expect(ask).toContainText('Details: Split: order 1 by Express for PLU 10117, then order 2 by Standard for PLU 7777, from the bag (staging keeps it there).');
+    await expect(ask.getByRole('button')).toHaveText(['Split into 2 orders: Express, then Standard', 'Remove it and continue', 'Replace with another PLU', 'Use Standard instead', 'Try Home Delivery', 'Try Shell Station', 'Stop automation']);
+    await ask.getByRole('button', { name: 'Split into 2 orders: Express, then Standard' }).click();
+    await runEnded(page, 0);
+    expect(JSON.parse(readFileSync(join(runFolder(), 'answer-1.json'), 'utf8'))).toEqual({ action: 'split', mode: 'standard' });
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    const orders = page.locator('#result .p-orders__item');
+    await expect(orders).toHaveCount(2);
+    await expect(orders.nth(0)).toContainText('Order 1');
+    await expect(orders.nth(0)).toContainText('12345678');
+    await expect(orders.nth(0)).toContainText('Express · PLU 10117');
+    await expect(orders.nth(0)).toContainText('ORDER_EXTRACTED');
+    await expect(orders.nth(1)).toContainText('12345679');
+    await expect(orders.nth(1)).toContainText('Standard · PLU 7777');
+    await expect(orders.nth(1)).toContainText('ORDER_EXTRACTED');
+    await expect(page.locator('#result')).toContainText('A partial order of 2 orders: each placed and approved in the backoffice.');
+    await expect(page.locator('#result')).toContainText('10117×1Ordered · Order 1, Express');
+    await expect(page.locator('#result')).toContainText('7777×1Ordered · Order 2, Standard');
+    await expect(page.locator('#result')).toContainText('→ Split into 2 orders: Express, then Standard: Order 1 by Express: PLU 10117; then order 2 by Standard: PLU 7777');
+    // Both orders' steps, all done: order 2's checkout after order 1's, its approval after order 1's.
+    const steps = page.locator('#steps li .wa-step__name');
+    await expect(steps).toHaveCount(23);
+    await expect(page.locator('#steps li.done')).toHaveCount(23);
+    await expect(steps.nth(10)).toHaveText('Cart validation (order 2)');
+    await expect(steps.nth(11)).toHaveText('Standard Delivery Selection (order 2)');
+    await expect(steps.nth(15)).toHaveText('Order confirmation (order 2)');
+    await expect(steps.nth(19)).toHaveText('Find order in backoffice (order 2)');
+    await expect(steps.nth(22)).toHaveText('Order extracted (order 2)');
+
+    const [row] = launcher.readHistory(root);
+    expect(row).toMatchObject({ status: 'completed', orderNumber: '12345678', delivery: { label: 'Express, then Standard · Click & Collect' } });
+    expect(row.orders).toMatchObject([
+      { orderNumber: '12345678', delivery: { mode: 'express' }, products: [{ plu: '10117', quantity: 1 }], backoffice: { finalStatus: 'ORDER_EXTRACTED' } },
+      { orderNumber: '12345679', delivery: { mode: 'standard' }, products: [{ plu: '7777', quantity: 1 }], backoffice: { finalStatus: 'ORDER_EXTRACTED' } },
+    ]);
+    expect(row.decisions).toMatchObject([{ action: 'split', label: 'Split into 2 orders: Express, then Standard', by: 'Test Operator' }]);
+    // Logs / History: both numbers, both modes; each number found by the search.
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    const historyRow = page.locator('tr.hrow').first();
+    await expect(historyRow).toContainText('12345678');
+    await expect(historyRow).toContainText('12345679');
+    await expect(historyRow).toContainText('Express + Standard');
+    await page.locator('#history-search').fill('WTCSG12345679');
+    await expect(page.locator('tr.hrow')).toHaveCount(1);
+  });
+
+  test('a partial order without a backoffice account: both orders await approval, approved one at a time (2026-11-03)', async ({ page }) => {
+    writeFileSync(join(root, '.env'), `WATSONS_STAGING_URL=https://${STAGING_HOST}/\nWATSONS_USERNAME=fake-user\nWATSONS_PASSWORD=fake-value\n`);
+    delete process.env.WATSONS_BACKOFFICE_USERNAME;
+    delete process.env.WATSONS_BACKOFFICE_PASSWORD;
+    await startOrder(page, '10117\n7777');
+    await page.locator('#ask').getByRole('button', { name: 'Split into 2 orders: Express, then Standard' }).click();
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Completed');
+    await expect(page.locator('#result .p-note')).toHaveText('Awaiting approval: someone with a backoffice account must approve orders 12345678 and 12345679 (Logs / History → Approve). Until then they are not extracted.');
+    await expect(page.locator('#result .p-orders__item')).toHaveText([/12345678.*Awaiting approval/, /12345679.*Awaiting approval/]);
+    // Order 2's steps ran; the approval steps of both did not.
+    await expect(page.locator('#steps li.done')).toHaveCount(16);
+    await expect(page.locator('#steps li.skipped')).toHaveCount(7);
+
+    writeFileSync(join(root, '.env'), `WATSONS_STAGING_URL=https://${STAGING_HOST}/\nWATSONS_USERNAME=fake-user\nWATSONS_PASSWORD=fake-value\nWATSONS_BACKOFFICE_USERNAME=fake-support\nWATSONS_BACKOFFICE_PASSWORD=fake-value\n`);
+    process.env.WATSONS_BACKOFFICE_USERNAME = 'fake-backoffice';
+    process.env.WATSONS_BACKOFFICE_PASSWORD = 'fake-value';
+    await page.reload();
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    // Two orders to approve; Approve fills in the first one.
+    await expect(page.locator('#history-count')).toHaveText('2');
+    const rows = page.locator('tr.hrow');
+    await rows.first().getByRole('button', { name: 'Approve order 12345678' }).click();
+    await expect(page.locator('#order-number')).toHaveValue('12345678');
+    await expect(page.locator('#order-placed')).toContainText('order 1 of a partial order');
+    await page.locator('#run').click();
+    await page.locator('#confirm').getByRole('button', { name: 'Approve order' }).click();
+    await runEnded(page, 1);
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    // Still waiting for order 2.
+    await expect(rows.nth(1)).toContainText('Awaiting approval (1 of 2)');
+    await expect(page.locator('#history-count')).toHaveText('1');
+    expect(launcher.readHistory(root)[1]).toMatchObject({ status: 'awaiting_approval', orders: [{ approvedLater: { by: 'Test Operator' } }, { orderNumber: '12345679' }] });
+    await rows.nth(1).getByRole('button', { name: 'Approve order 12345679' }).click();
+    await expect(page.locator('#order-number')).toHaveValue('12345679');
+    await page.locator('#run').click();
+    await page.locator('#confirm').getByRole('button', { name: 'Approve order' }).click();
+    await runEnded(page, 2);
+    const placed = launcher.readHistory(root)[2];
+    expect(placed).toMatchObject({ status: 'completed', approvedLater: { by: 'Test Operator' } });
+    expect(placed.orders?.every((order) => order.approvedLater)).toBe(true);
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    await expect(rows.nth(2)).toContainText('Completed');
+    await expect(page.locator('#history-count')).toBeHidden();
+  });
+
+  test('a partial order whose order 2 fails: order 1 is kept and reported, order 2 not placed (2026-11-03)', async ({ page }) => {
+    await startOrder(page, '10117\n7770');
+    await page.locator('#ask').getByRole('button', { name: 'Split into 2 orders: Express, then Standard' }).click();
+    await runEnded(page, 0);
+    await expect(page.locator('#result .verdict')).toHaveText('Failed at Pay (order 2)');
+    await expect(page.locator('#result .p-orders__item')).toHaveText([/12345678.*Placed, not approved/, /Order 2.*Standard · PLU 7770.*Not placed/]);
+    const [row] = launcher.readHistory(root);
+    expect(row).toMatchObject({ status: 'failed', orderNumber: '12345678', error: { code: 'PAYMENT_FAILED', step: 'Pay (order 2)' } });
+    expect(row.orders).toMatchObject([{ orderNumber: '12345678' }, { orderNumber: null, products: [{ plu: '7770', quantity: 1 }] }]);
+    expect(row.errorReport).toContain('Order:       WTCSG12345678 (Express) + not placed (Standard)');
   });
 
   test('"Stop automation" stops the run where it paused (2026-10-22)', async ({ page }) => {

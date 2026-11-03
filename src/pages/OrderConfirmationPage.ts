@@ -38,7 +38,30 @@ export class OrderConfirmationPage {
       .waitFor({ state: 'visible', timeout: 60_000 })
       .then(() => true, () => false);
     log(`Order confirmation detected: order ${orderNumber}${shown ? '' : ' (number not drawn on the page yet)'}`);
+    const delivery = await this.deliveryShown();
+    if (delivery) log(`The confirmation page shows the delivery method: ${delivery}`);
     return orderNumber;
+  }
+
+  /** What the page shows next to "Delivery Method" (e.g. "Store Express Pickup Delivery"), or null. */
+  async deliveryShown(): Promise<string | null> {
+    return this.page
+      .evaluate(() => {
+        const label = [...document.querySelectorAll('body *')].find((element) => element.children.length === 0 && /^\s*Delivery Method\s*$/i.test(element.textContent ?? ''));
+        const text = (label?.parentElement?.textContent ?? '').replace(/\s+/g, ' ').trim().replace(/^Delivery Method\s*/i, '');
+        return text && text.length <= 80 ? text : null;
+      })
+      .catch(() => null);
+  }
+
+  /**
+   * A partial order (2026-11-03): staging's note that the products this order didn't take are back
+   * in the bag ("The remaining 1 items have been added to your bag."), or null when it shows none.
+   */
+  async remainingNotice(timeoutMs = 15_000): Promise<string | null> {
+    const notice = this.page.getByText(/The remaining \d+ items? (?:have|has) been added to your bag/i).first();
+    const shown = await notice.waitFor({ state: 'visible', timeout: timeoutMs }).then(() => true, () => false);
+    return shown ? (await notice.innerText()).replace(/\s+/g, ' ').trim() : null;
   }
 }
 

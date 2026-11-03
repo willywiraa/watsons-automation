@@ -16,6 +16,28 @@ export interface RunFailure {
   pages: string[];
 }
 
+/** The backoffice approval of an order: whether this run clicked Approve Order, and the statuses seen after. */
+export interface BackofficeApproval {
+  approved: boolean;
+  statuses: string[];
+  /** It ended at "Order Split", ORDER_EXTRACTED still to come (2026-10-23). */
+  extractionPending?: boolean;
+}
+
+/**
+ * One order of a partial order (user's request 2026-11-03): a run that splits its order places
+ * them one after the other, each with its own delivery mode and products.
+ */
+export interface RunOrder {
+  /** Once placed. */
+  orderNumber?: string;
+  deliveryMethod: DeliveryMethod;
+  deliveryMode?: DeliveryMode;
+  pickupStore?: string;
+  ordered: OrderLine[];
+  backoffice?: BackofficeApproval;
+}
+
 export interface OrderRunSnapshot {
   startedAt: string;
   completedStep: string;
@@ -32,12 +54,19 @@ export interface OrderRunSnapshot {
   soldOut: string[];
   excluded: string[];
   freeGiftRemoved: string | null;
+  /** The order placed; of a partial order, the first one (all of them are in `orders`). */
   orderNumber?: string;
   /**
    * The backoffice approval: whether this run clicked Approve Order, and the statuses seen after.
-   * extractionPending: it ended at "Order Split", ORDER_EXTRACTED still to come (2026-10-23).
+   * extractionPending: it ended at "Order Split", ORDER_EXTRACTED still to come (2026-10-23). Of a
+   * partial order: whether it approved them all, and pending while any order is.
    */
-  backoffice?: { approved: boolean; statuses: string[]; extractionPending?: boolean };
+  backoffice?: BackofficeApproval;
+  /**
+   * A partial order (2026-11-03): its orders, in the order they are placed (2 so far). Planned once
+   * the run decides to split; each gets its number when placed. Runs with one order have none.
+   */
+  orders?: RunOrder[];
   /** What the person decided when the run asked them (src/utils/ask.ts, 2026-10-22). Older runs: none. */
   decisions?: Decision[];
   consoleErrors: string[];

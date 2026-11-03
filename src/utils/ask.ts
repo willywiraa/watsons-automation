@@ -9,8 +9,9 @@ import { log } from './log';
 // Asking the person who started the run (user's request 2026-10-22). When something needs a
 // decision before Checkout (a product out of stock or not found, a product the chosen delivery
 // can't take, an unexpected error; since 2026-11-02 also how many of a product with a "Buy 2"
-// offer), the run pauses, the launcher's window (or the hosted server's page) shows the question
-// with the actions that make sense, and the run goes on with the answer.
+// offer; since 2026-11-03 whether to split the order in two), the run pauses, the launcher's window
+// (or the hosted server's page) shows the question with the actions that make sense, and the run
+// goes on with the answer.
 //
 // Only runs started from the launcher or the hosted server ask (WATSONS_INTERACTIVE=yes, set by
 // launcher/launcher.cjs): nobody would answer a command-line run, which decides as before (the
@@ -23,14 +24,16 @@ import { log } from './log';
 /**
  * choose: one of the question's `choices`, e.g. Shell Station's pickup store (2026-10-30).
  * buy: how many of a product with "Buy 1" / "Buy 2" choices (2026-11-02).
+ * split: a partial order (2026-11-03): this order without the products its mode can't take, then
+ * a second order for them by the other mode (`mode`).
  */
-export type AskAction = 'skip' | 'replace' | 'retry' | 'switch_mode' | 'switch_method' | 'choose' | 'buy' | 'stop';
+export type AskAction = 'skip' | 'replace' | 'retry' | 'switch_mode' | 'switch_method' | 'choose' | 'buy' | 'split' | 'stop';
 
 export interface AskOption {
   action: AskAction;
   /** The button's text, e.g. "Skip product and continue". */
   label: string;
-  /** For switch_mode / switch_method: which one. */
+  /** For switch_mode / switch_method: which one; for split, the second order's mode. */
   mode?: DeliveryMode;
   method?: DeliveryMethod;
   /** replace: the answer may name several PLUs, separated by spaces or commas (2026-10-22). */

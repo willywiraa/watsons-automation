@@ -162,25 +162,57 @@ class Store {
   }
 
   /**
-   * An approve run approved this order (or found it extracted already): the order runs that
-   * placed it without approving it are now "Completed", noting who approved it, in which run and
-   * when (user's request 2026-10-14). Returns how many rows changed.
+   * The runs of an order, as records: the run that placed or approved it (order_number), and a
+   * partial order's run that has it among its orders (detail_json $.orders, 2026-11-03). `where`:
+   * more conditions on the run.
    */
-  markApprovedLater(orderNumber, { runId, by, at }) {
+  runsOfOrder(orderNumber, where = '1') {
     return this.db
       .prepare(
-        `UPDATE runs SET status = 'completed',
-           detail_json = json_set(detail_json, '$.status', 'completed', '$.statusLabel', 'Completed', '$.approvedLater', json(?)),
-           updated_at = ?
-         WHERE automation = 'order' AND status = 'awaiting_approval' AND order_number = ?`,
+        `SELECT run_id, username, display_name, evidence_state, detail_json FROM runs
+         WHERE (order_number = :order
+             OR EXISTS (SELECT 1 FROM json_each(runs.detail_json, '$.orders') AS entry WHERE json_extract(entry.value, '$.orderNumber') = :order))
+           AND ${where}
+         ORDER BY started_at, run_id`,
       )
-      .run(JSON.stringify({ runId, by, at }), now(), orderNumber).changes;
+      .all({ order: orderNumber });
+  }
+
+  /** Saves a run's row after a change made here (its status and detail). */
+  saveRow(runId, row) {
+    this.db.prepare('UPDATE runs SET status = ?, detail_json = ?, updated_at = ? WHERE run_id = ?').run(row.status, JSON.stringify(row), now(), runId);
+  }
+
+  /**
+   * An approve run approved this order (or found it extracted already): the order runs that
+   * placed it without approving it are now "Completed", noting who approved it, in which run and
+   * when (user's request 2026-10-14). A partial order's run (2026-11-03) notes it on that order,
+   * and is Completed once each of its orders is approved. Returns how many rows changed.
+   */
+  markApprovedLater(orderNumber, { runId, by, at }) {
+    let changed = 0;
+    for (const record of this.runsOfOrder(orderNumber, "automation = 'order' AND status = 'awaiting_approval'")) {
+      const row = JSON.parse(record.detail_json);
+      const approval = { runId, by, at };
+      if (Array.isArray(row.orders)) {
+        const order = row.orders.find((entry) => entry.orderNumber === orderNumber);
+        if (!order || order.approvedLater) continue;
+        order.approvedLater = approval;
+      }
+      if (!row.orders || row.orders.filter((entry) => entry.orderNumber).every((entry) => entry.approvedLater)) {
+        Object.assign(row, { status: 'completed', statusLabel: 'Completed', approvedLater: approval });
+      }
+      this.saveRow(record.run_id, row);
+      changed++;
+    }
+    return changed;
   }
 
   /**
    * The runs that ended with their order at "Order Split", its extraction to ORDER_EXTRACTED still
    * pending (2026-10-23; Logs / History: "Extraction pending"), oldest first: the orders the
-   * extraction checks follow (extraction.cjs, user's request 2026-11-03).
+   * extraction checks follow (extraction.cjs, user's request 2026-11-03). A partial order's run is
+   * pending while any of its orders is.
    */
   extractionPending() {
     return this.db
@@ -196,41 +228,60 @@ class Store {
 
   /** Who ran something for this order, the ones who placed it first: [{ username, operator, automation }]. */
   peopleOf(orderNumber) {
-    return this.db
-      .prepare(
-        `SELECT username, COALESCE(json_extract(detail_json, '$.operator'), display_name, username) AS operator, automation FROM runs
-         WHERE order_number = ? ORDER BY automation = 'order' DESC, started_at`,
-      )
-      .all(orderNumber);
+    return this.runsOfOrder(orderNumber)
+      .map((record) => {
+        const row = JSON.parse(record.detail_json);
+        return { username: record.username, operator: row.operator ?? record.display_name ?? record.username, automation: row.automation };
+      })
+      .sort((a, b) => Number(b.automation === 'order') - Number(a.automation === 'order'));
+  }
+
+  /**
+   * The backoffice approval of this order in a run's row, while its extraction is pending: the
+   * run's own, or a partial order's order (2026-11-03). Null otherwise.
+   */
+  static pendingApproval(row, orderNumber) {
+    const backoffice = Array.isArray(row.orders) ? row.orders.find((entry) => entry.orderNumber === orderNumber)?.backoffice : row.backoffice;
+    return backoffice?.extractionPending ? backoffice : null;
   }
 
   /** How the checks of this order's extraction stand ({ state, lastCheckedAt, … }), on its pending runs. */
   noteExtractionCheck(orderNumber, check) {
-    return this.db
-      .prepare(
-        `UPDATE runs SET detail_json = json_set(detail_json, '$.backoffice.extractionCheck', json(?)), updated_at = ?
-         WHERE order_number = ? AND json_extract(detail_json, '$.backoffice.extractionPending') = 1`,
-      )
-      .run(JSON.stringify(check), now(), orderNumber).changes;
+    let changed = 0;
+    for (const record of this.runsOfOrder(orderNumber, "json_extract(detail_json, '$.backoffice.extractionPending') = 1")) {
+      const row = JSON.parse(record.detail_json);
+      const backoffice = Store.pendingApproval(row, orderNumber);
+      if (!backoffice) continue;
+      backoffice.extractionCheck = check;
+      this.saveRow(record.run_id, row);
+      changed++;
+    }
+    return changed;
   }
 
   /**
    * The order is ORDER_EXTRACTED now (seen by a check, at `seenAt`; extracted at `extractedAt`): its
-   * runs no longer show "Extraction pending". Returns how many rows changed.
+   * runs no longer show "Extraction pending" for it. A partial order's run stays pending while
+   * another of its orders is (2026-11-03). Returns how many rows changed.
    */
   markExtracted(orderNumber, { extractedAt, seenAt }) {
-    return this.db
-      .prepare(
-        `UPDATE runs SET detail_json = json_set(
-             json_insert(detail_json, '$.backoffice.statuses[#]', 'ORDER_EXTRACTED'),
-             '$.backoffice.extractionPending', json('false'),
-             '$.backoffice.finalStatus', 'ORDER_EXTRACTED',
-             '$.backoffice.extractedLater', json(?),
-             '$.backoffice.extractionCheck', json(?)),
-           updated_at = ?
-         WHERE order_number = ? AND json_extract(detail_json, '$.backoffice.extractionPending') = 1`,
-      )
-      .run(JSON.stringify({ at: extractedAt, seenAt }), JSON.stringify({ state: 'done', lastCheckedAt: seenAt }), now(), orderNumber).changes;
+    let changed = 0;
+    for (const record of this.runsOfOrder(orderNumber, "json_extract(detail_json, '$.backoffice.extractionPending') = 1")) {
+      const row = JSON.parse(record.detail_json);
+      const backoffice = Store.pendingApproval(row, orderNumber);
+      if (!backoffice) continue;
+      Object.assign(backoffice, {
+        statuses: [...(backoffice.statuses ?? []), 'ORDER_EXTRACTED'],
+        extractionPending: false,
+        finalStatus: 'ORDER_EXTRACTED',
+        extractedLater: { at: extractedAt, seenAt },
+        extractionCheck: { state: 'done', lastCheckedAt: seenAt },
+      });
+      if (Array.isArray(row.orders)) row.backoffice.extractionPending = row.orders.some((entry) => entry.backoffice?.extractionPending);
+      this.saveRow(record.run_id, row);
+      changed++;
+    }
+    return changed;
   }
 
   markEvidenceDeleted(runId) {

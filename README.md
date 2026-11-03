@@ -72,8 +72,10 @@ mode: Express
 
 - `delivery:` is `Home Delivery`, `Click & Collect` or `Shell Station`.
 - `mode:` is `Express` (the default) or `Standard`. From the command line, products that the
-  mode can't deliver right now are left out of the order and listed in the result; a run from
-  the launcher window asks first ("When a run needs your decision", below).
+  mode can't deliver right now go in a second order by the other mode when it takes them all (a
+  **partial order**, since 2026-11-03, below); otherwise they are left out of the order and listed
+  in the result. A run from the launcher window asks first ("When a run needs your decision",
+  below).
 - **Shell Station** has no mode (since 2026-10-30): instead, `pickup store:` is `Choose for me`
   (the default) or `Let me choose` ("Shell Station pickup store", below). A `mode:` line is
   ignored for it.
@@ -185,7 +187,7 @@ needed"). It shows only the choices that make sense then:
 | Not found (Product Search) | "Product 12345 was not found on staging. …" | the same |
 | Staging won't add it (Add to bag): its "not available for checkout" pop-up, or its "add to bag" only opens the product's page (a page without Buy 1 / Buy 2) | "Product 57893 can't be added to the bag. …" | the same |
 | A product with **Buy 1 / Buy 2** on its page (Add to bag, since 2026-11-02): its "add to bag" opens that page | "Product 23475 has a Buy 2 offer. How many would you like to buy?", with the page's prices ("Buy 1: S$ 8.50 · Buy 2: S$ 11.90 (extra savings S$ 5.10)") | Buy 1 at its normal price · Buy 2 for the promotional discount · Stop automation |
-| The delivery mode can't take some products (checkout page) | "Products 17971 and 21684 are not eligible for Express delivery with Home Delivery." | Remove them and continue · Remove them and add other PLUs (one product: Replace with another PLU) · Use Standard instead (when Standard takes them) · Try another delivery method · Stop automation |
+| The delivery mode can't take some products (checkout page) | "Products 17971 and 21684 are not eligible for Express delivery with Home Delivery." With a split, the details say what goes in each order | **Split into 2 orders: Express, then Standard** (when Standard takes all of them and some products can go Express; since 2026-11-03) · Remove them and continue · Remove them and add other PLUs (one product: Replace with another PLU) · Use Standard instead (when Standard takes them) · Try another delivery method · Stop automation |
 | The delivery method can't take some products (bag page) | "Products 45614 and 24264 are not eligible for Click & Collect." | Remove them and continue · Remove them and add other PLUs (one product: Replace with another PLU) · Try another delivery method · Stop automation |
 | Shell Station with **Let me choose** (checkout page, since 2026-10-30) | "Which Shell Station should the order be picked up from?", with staging's list of stations (name, address, stock; the one chosen now is selected; a search box when the list is long) | Use this store · Stop automation |
 | The Shell station lacks some products (checkout page) | "Product 43808 is not available at SHELL BUKIT BATOK ROAD." | Remove it and continue · Replace with another PLU · Try another delivery method · Stop automation |
@@ -198,6 +200,9 @@ needed"). It shows only the choices that make sense then:
   The run chooses that on the product's page and clicks **BUY NOW**, so the bag and the order
   get 1 or 2 (Logs / History shows ×2); staging applies the offer itself ("2ND BUY AT 60% OFF").
   With 2 or more in the order nothing is asked: that many are bought on its page.
+- **Split into 2 orders** (since 2026-11-03) places a **partial order**: order 1 by the chosen
+  mode without those products, then order 2 by the other mode with them ("Partial orders", below).
+  **Stop automation** stops before Checkout, with no order placed.
 - **Remove … and continue** (products a delivery can't take, since 2026-10-22) takes them out of
   the bag, a "Buy 1 Get 1 Free" line with them, and the run goes on with the others. **Remove them
   and add other PLUs** (or **Replace with another PLU** for one product) takes several PLUs,
@@ -208,14 +213,16 @@ needed"). It shows only the choices that make sense then:
 - After your choice the run goes on from where it paused. Another delivery method goes back to
   the bag first; the steps follow your choice.
 - A question waits up to 30 minutes, then the run stops there (`NO_ANSWER`).
-- Nothing is asked from **Checkout** on: the order may exist by then, so a problem there ends the
-  run as before, and nothing is retried.
+- Nothing is asked from an order's **Checkout** on: the order may exist by then, so a problem
+  there ends the run as before, and nothing is retried. (Order 2 of a partial order can still ask
+  before its own Checkout, e.g. Retry when its bag page didn't load.)
 - Each question, the choice, who made it and what came of it are in the log, in the result's
   **Decisions**, in Logs / History (and its CSV export), and in `result.json` (`decisions`).
 - Runs from the command line (`npm run order`) are never asked. They do what they always did:
   skip sold-out products, stop on a PLU that isn't found, and leave out products the mode can't
-  deliver; for Shell Station they choose the pickup store themselves. A product with Buy 1 / Buy 2
-  is bought as ordered (1: the normal price).
+  deliver, unless the other mode takes them all: then they split the order (a partial order, since
+  2026-11-03). For Shell Station they choose the pickup store themselves. A product with Buy 1 /
+  Buy 2 is bought as ordered (1: the normal price).
 
 On the hosted version, only the person whose run it is can answer, and every answer is in the
 audit trail.
@@ -241,7 +248,10 @@ products (and how many were left out), status (**Running**, **Completed**, **Awa
 screenshots. An order with status **Awaiting approval** ("Needs approval") has an **Approve**
 button: it fills in an "Approve existing order" run for that order number; the header counts
 these orders. Once that approval completes (or finds the order already extracted), the order
-shows **Completed**, "approved later by …". Search by order number, PLU, error code or operator,
+shows **Completed**, "approved later by …". A **partial order** (since 2026-11-03) shows both
+order numbers and both modes ("Express + Standard"); each of its orders is approved on its own
+(**Approve** fills in the next one, "Awaiting approval (1 of 2)" meanwhile), and the run shows
+**Completed** once both are. Search by order number (either order of a partial order), PLU, error code or operator,
 filter by status or automation, and click a run for its details (what happened, the run's
 facts and its screenshots; **Copy error report** for a failed run). The first 40 runs show;
 **Load 100 more** shows more.
@@ -281,6 +291,31 @@ run asked for **Express** but the page offers only Standard, it stops before Che
 run from the launcher window asks instead ("Use Standard instead"). A
 page that doesn't load, or whose Checkout button stays unavailable, stops the run with
 `CHECKOUT_FAILED`.
+
+### Partial orders (since 2026-11-03)
+
+When the chosen mode can't deliver some products but the **other mode takes them all** (and some
+products can go the chosen way), the order can be **split in two**, e.g. Click & Collect Express
+(CCE) or Home Delivery Express (HDE) with PLUs 10031 and 46700 (Express) and 17562 (Standard only):
+1. The run asks first (**Split into 2 orders: Express, then Standard**; the details say what goes
+   in each). The other choices stay; **Stop automation** stops before Checkout. A command-line
+   run splits by itself.
+2. **Order 1** is checked out by the chosen mode with the products it takes. Staging keeps the
+   others in the bag ("The remaining 1 items have been added to your bag." on the thank-you page).
+3. **Order 2** comes from that bag: nothing is emptied or removed. Its own steps, named
+   "… (order 2)", check that the bag holds exactly those products, choose the other mode (the
+   page often offers only that one) and its date if asked, then check out, pay and confirm.
+4. With a backoffice account, each order is approved, then each one's extraction is waited for.
+   Without one, both wait for approval.
+5. The run is **Completed** only once every order is placed (and approved, with a backoffice
+   account). The result, Logs / History, the log and `result.json` (`orders`) give each order's
+   number, delivery mode, products and status. If order 2 fails, the run fails at its step, and
+   order 1's number is still shown.
+
+Works the other way round too (Standard first, Express for the rest), for Home Delivery and Click
+& Collect. Not for Shell Station (one way only), and order 2 is never split again. The checkout
+page's "Available items" list marks a product a mode can't deliver "Not available" or, with Click &
+Collect since 2026-11-03, "Sorry, this item is not available for Express mode."; both are read.
 
 **Click & Collect** needs a pickup store on the account. Staging remembers the last one used
 ("Recent Pickup Store"), and with one, Click & Collect runs reach Checkout (2026-10-14). Without
@@ -362,7 +397,7 @@ on the server, headless, and everyone sees **one shared Logs / History**.
 | Live browser | While a run goes on, its owner sees the server's browser in the page (**Live browser**, about 3 pictures a second) and can use it: click, scroll, type, and switch between its tabs. Nobody else sees it. The run ends as soon as it is done (since 2026-10-23), so the next one can start straight away. |
 | Parallel runs | One run per person, and per testing account, at a time; up to `WATSONS_MAX_PARALLEL_RUNS` runs at once, then a waiting line. |
 | Logs / History | Everyone's runs, from a database on the server (SQLite), with a **Mine / All** filter. Screenshots are shown in the browser (**Download** saves one); the error report is copied from the page. The rest of the evidence stays on the server (no zip, report or error-report.txt downloads since 2026-10-25). |
-| Extraction pending (since 2026-11-03) | An order whose run ended at **Order Split** is checked until it is **ORDER_EXTRACTED**: 2 minutes after the run, every 2 minutes for the first hour, then every 10 minutes, for up to 24 hours. A check signs in to the staging **shop** with the testing account that placed the order and reads the order under My Account (the shop gives its status, e.g. `ORDER_EXTRACTED`, and its extraction time); it only reads, and never uses the backoffice. Once extracted, every open page updates by itself, with no refresh: Logs / History shows **Order extracted** instead of **Extraction pending**, and the run's details and result say when it was extracted. The checks pause while the person who placed it is signed out (the server holds their testing account only while they are) and go on at their next sign-in; one at a time, never while that account is in use by a run. After 24 hours the row says to check it in the backoffice. Code: `server/lib/extraction.cjs`, `tests/extraction-check.e2e.spec.ts` (Playwright project `extraction`). The desktop window doesn't check. |
+| Extraction pending (since 2026-11-03) | An order whose run ended at **Order Split** is checked until it is **ORDER_EXTRACTED**: 2 minutes after the run, every 2 minutes for the first hour, then every 10 minutes, for up to 24 hours. A check signs in to the staging **shop** with the testing account that placed the order and reads the order under My Account (the shop gives its status, e.g. `ORDER_EXTRACTED`, and its extraction time); it only reads, and never uses the backoffice. Once extracted, every open page updates by itself, with no refresh: Logs / History shows **Order extracted** instead of **Extraction pending**, and the run's details and result say when it was extracted. The checks pause while the person who placed it is signed out (the server holds their testing account only while they are) and go on at their next sign-in; one at a time, never while that account is in use by a run. After 24 hours the row says to check it in the backoffice. A partial order's orders are followed one by one (e.g. "Order 2 extracted"). Code: `server/lib/extraction.cjs`, `tests/extraction-check.e2e.spec.ts` (Playwright project `extraction`). The desktop window doesn't check. |
 | Walkthrough (since 2026-10-31) | A 30-second video of the whole workflow, recorded from the hosted app itself (since 2026-11-01): a new test order with its products and delivery, its run followed step by step (sped up), its approval in the backoffice, the order at ORDER_EXTRACTED, and Logs / History. It opens by itself the first time a browser lands on the page after sign-in, with captions and steps to jump to; **Start using app**, **×** or Esc close it, and **Walkthrough** in the header shows it again. The video is only sent when it opens. The desktop window has none. To record it again after the page changes: `node server/scripts/record-walkthrough.cjs --place-order` (it places a real staging test order, which the run approves; [docs/server-deployment.md](docs/server-deployment.md) §7). |
 
 - **Code:** `server/` (Node.js 24 with express, express-rate-limit and bcryptjs; the database is
@@ -487,7 +522,7 @@ Every `npm run test:e2e` or `npm run order` run saves its evidence in its own fo
 
 | File | Contents |
 |---|---|
-| `result.json` | Passed/failed, the automation (`order` or `approve`), the outcome (`order_placed`, `order_placed_unapproved` (placed without a backoffice account), `ready_to_check_out`, `approved`, `no_change` or `failed`), the order number, the failed step and error code with the time it failed, the pages open then and their screenshots, the products ordered / skipped as sold out / left out as not eligible, the questions the run asked and what was chosen (`decisions`, since 2026-10-22), browser console errors |
+| `result.json` | Passed/failed, the automation (`order` or `approve`), the outcome (`order_placed`, `order_placed_unapproved` (placed without a backoffice account), `ready_to_check_out`, `approved`, `no_change` or `failed`), the order number (of a partial order, the first; each of its orders with its number, delivery mode, products and backoffice status in `orders`, since 2026-11-03), the failed step and error code with the time it failed, the pages open then and their screenshots, the products ordered / skipped as sold out / left out as not eligible, the questions the run asked and what was chosen (`decisions`, since 2026-10-22), browser console errors |
 | `log.txt` | The step-by-step log of the run |
 | `screenshot-*.png` | The checkout summary, the order confirmation and the backoffice order (when an order is placed or approved), and `screenshot-N-failure.png`: each open page when the run failed |
 | `order.txt`, `launcher-log.txt`, `launcher-run.json` | Launcher runs only: what was asked, the full log, and what the launcher knows about the run (automation, operator, status, seconds between adds) for Logs / History |

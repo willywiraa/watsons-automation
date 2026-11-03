@@ -63,9 +63,11 @@ RUNNING A TEST
    addable, how many of a product with a "Buy 2" offer, a product the delivery can't take, an
    error), the run pauses and asks you in a card above Live browser. Click one of its buttons
    (for example Skip product and continue, Replace with another PLU, Buy 2 for the promotional
-   discount, Use Standard instead, Try Home Delivery, Retry or Stop automation): the run goes on
-   from there. It waits for you up to 30 minutes. Your choice is kept in the run's log and in
-   Logs / History.
+   discount, Split into 2 orders, Use Standard instead, Try Home Delivery, Retry or Stop
+   automation): the run goes on from there. It waits for you up to 30 minutes. Your choice is
+   kept in the run's log and in Logs / History. "Split into 2 orders" places a partial order:
+   order 1 with the products the chosen mode can take, then order 2 with the rest, from the
+   bag, by the other mode; the result shows both order numbers.
 6. When a run fails, the launcher shows the step it failed at, with the message, the time, the
    page and a screenshot. "Copy error report" puts it on the clipboard for Teams or email; it is
    also saved as error-report.txt.

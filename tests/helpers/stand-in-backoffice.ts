@@ -37,10 +37,13 @@ const ROLES = `
 // As seen 2026-10-16: it leaves the page, then lands on the sign-in page.
 const BOUNCE = "<p>Loading…</p><script>setTimeout(() => location.replace('/backoffice/login.zul'), 300);</script>";
 
-/** The main screen: Orders, its list with the search, and the opened order (one page, like ZK's). */
+/**
+ * The main screen: Orders, its list with the search, and the opened order (one page, like ZK's).
+ * Once clicked, the Orders row is named "Orders selected", as staging's is (seen 2026-11-03).
+ */
 function home(code: string): string {
   return `
-  <table><tr role="row" onclick="document.getElementById('orders').hidden = false"><td>Orders</td></tr></table>
+  <table><tr role="row" onclick="document.getElementById('orders').hidden = false; this.setAttribute('aria-selected', 'true'); this.setAttribute('aria-label', 'Orders selected')"><td>Orders</td></tr></table>
   <div id="orders" hidden>
     <div class="yw-textsearch-searchbox"><input id="search"></div>
     <div id="results"></div>

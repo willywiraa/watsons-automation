@@ -141,6 +141,70 @@ test.describe('delivery step of the order flow', () => {
   });
 });
 
+// The "Available items" list of a delivery option (src/pages/CheckoutPage.ts unavailableIn). A
+// stand-in from staging's markup of 2026-11-03 (PLUs 10031, 46700, 17562 and the free gift 18360):
+// each product a <div class="product">, with "disabled" and "Not available" (Home Delivery) or
+// "Sorry, this item is not available for Express mode." (Click & Collect) when the option can't
+// deliver it.
+const ITEMS = [
+  { brand: 'DUREX', name: 'PLAY Intimate Lube Warming 100ml' },
+  { brand: 'HADA LABO', name: 'Premium Whitening Essence ( Concentrated Triple Brightening Formula With Niacinamide, Arbutin &amp; Vitamin C To Brighten Dull Skin) 30g' },
+  { brand: 'PURE BEAUTY', name: 'Pomegranate Urban Shield Anti-Oxidant Anti-Pollution Makeup Remover Facial Cleansing Wipes 20s', gift: true },
+  { brand: 'KATE TOKYO', name: 'Kate CC Lip Oil - Sheer Yellow 03 1s' },
+];
+const ITEM_NAMES = {
+  10031: 'PLAY Intimate Lube Warming 100ml',
+  46700: 'Premium Whitening Essence ( Concentrated Triple Brightening Formula With Niacinamide, Arbutin & Vitamin C To Brighten Dull Skin) 30g',
+  18360: 'Pomegranate Urban Shield Anti-Oxidant Anti-Pollution Makeup Remover Facial Cleansing Wipes 20s',
+  17562: 'Kate CC Lip Oil - Sheer Yellow 03 1s',
+};
+/** One product of the list; `unavailable`: the option's words for a product it can't deliver. */
+function item({ brand, name, gift = false }: (typeof ITEMS)[number], unavailable: string | null): string {
+  return `<div class="product${unavailable ? ' disabled' : ''}${gift ? ' freeGift' : ''}"><div class="product-image"><img alt=""></div>
+    <div class="product-info"><div class="name-group"><div class="brand"> ${brand} </div><div class="name">${name}</div></div>
+    <div class="status"> ${unavailable ?? 'In Stock'} </div>${gift ? '<div class="special-tag"><span>Free Gift</span></div>' : ''}</div>
+    ${unavailable ? '' : '<div class="product-quantity"> x1 </div>'}</div>`;
+}
+/** The checkout page with the Express option, whose "View N item(s)" opens `list`. */
+function itemsPage(list: string): string {
+  return `${summaryPage(option('express') + option('standard'))}
+    <div role="dialog" id="items" hidden><div class="modal-title"> AVAILABLE ITEMS </div><i class="btn-close icon-close"></i>
+      <div class="list-info"><div class="name"> Fulfilled by Watsons<span class="amount">&nbsp;(3)</span></div></div>${list}</div>
+    <script>
+      {
+        // A block: a second setContent in the same page keeps its globals.
+        const items = document.getElementById('items');
+        for (const open of document.querySelectorAll('button.amount')) open.onclick = (event) => { event.preventDefault(); items.hidden = false; };
+        document.addEventListener('keydown', (event) => { if (event.key === 'Escape') items.hidden = true; });
+      }
+    </script>`;
+}
+
+test.describe('the "Available items" list of a delivery option', () => {
+  test('Click & Collect Express (2026-11-03): "Sorry, this item is not available for Express mode." is not available; a free gift is in stock', async ({ page }) => {
+    await page.setContent(itemsPage(ITEMS.map((entry) => item(entry, entry.brand === 'KATE TOKYO' ? 'Sorry, this item is not available for Express mode.' : null)).join('')));
+    expect(await new CheckoutPage(page).unavailableFor('express', ITEM_NAMES)).toEqual(['17562']);
+    await expect(page.locator('#items')).toBeHidden();
+  });
+
+  test('Home Delivery Express: "Not available" is not available', async ({ page }) => {
+    await page.setContent(itemsPage(ITEMS.map((entry) => item(entry, entry.brand === 'KATE TOKYO' ? 'Not available' : null)).join('')));
+    expect(await new CheckoutPage(page).unavailableFor('express', ITEM_NAMES)).toEqual(['17562']);
+  });
+
+  test('a list drawn as plain lines (before 2026-11-03): each status is read up to the next product, never from it', async ({ page }) => {
+    const lines = (status: string) => `<p>DUREX</p><p>PLAY Intimate Lube Warming 100ml</p><p>${status}</p><p>x1</p><p>KATE TOKYO</p><p>Kate CC Lip Oil - Sheer Yellow 03 1s</p><p>In Stock</p>`;
+    const names = { 10031: ITEM_NAMES[10031], 17562: ITEM_NAMES[17562] };
+    await page.setContent(itemsPage(lines('Sorry, this item is not available for Express mode.')));
+    expect(await new CheckoutPage(page).unavailableFor('express', names)).toEqual(['10031']);
+    // A status it doesn't know: unknown, not the next product's "In Stock".
+    await page.setContent(itemsPage(lines('Coming soon')));
+    const error = await new CheckoutPage(page).unavailableFor('express', names).catch((thrown: unknown) => thrown);
+    expect(error).toMatchObject({ code: 'EXPRESS_OPTION_NOT_FOUND' });
+    expect(String((error as Error).message)).toContain('PLU 10031 ("PLAY Intimate Lube Warming 100ml") is not in the "Available items" list of Express');
+  });
+});
+
 // The delivery date (user's request 2026-10-16: for any mode, the latest available date). A stand-in
 // for the checkout page and its date dialog, from the user's inspect of 2026-10-16.
 function datedOption(mode: 'express' | 'standard', asksForDate: boolean): string {

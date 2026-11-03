@@ -609,6 +609,117 @@ test.describe('hosted server', () => {
     await expect(page.locator('#result')).not.toContainText('Extraction still pending');
   });
 
+  test('a partial order (2026-11-03): its owner splits it; both orders await approval, and each is approved on its own', async () => {
+    type Order = { orderNumber: string | null; delivery: { mode: string }; approvedLater?: { runId: string; by: string } };
+    type Row = { runId: string; status: string; orderNumber: string; orders: Order[]; approvedLater?: { runId: string } };
+    const alice = client(setup.app);
+    const carol = client(setup.app);
+    await alice.login('alice');
+    await alice.useTestingAccount('alice'); // no backoffice account: the orders wait for approval
+    // PLU 7777: the stand-in run can't send it Express, and Standard takes it.
+    const placed = (await alice.run({ ...ORDER, products: '10117\n7777' })).data.runId as string;
+    await expect.poll(() => runLog(setup, placed)).toContain('[ASK] Product 7777 is not eligible for Express delivery with Home Delivery.');
+    const { id } = JSON.parse(readFileSync(join(runFolder(setup, placed), 'ask.json'), 'utf8'));
+    expect((await alice.call('POST', '/api/state', {})).data.current.question.options[0]).toEqual({ action: 'split', mode: 'standard', label: 'Split into 2 orders: Express, then Standard' });
+    expect(await alice.call('POST', '/api/answer', { id, action: 'split', mode: 'express' })).toMatchObject({ status: 409, data: { error: 'That is not one of the choices.' } });
+    expect(await alice.call('POST', '/api/answer', { id, action: 'split', mode: 'standard' })).toMatchObject({ status: 200 });
+    await ended(setup, placed);
+    expect(runLog(setup, placed)).toContain('[PASS] Order placed (not approved yet: no backoffice account for this run). Order number: 12345678; order 2: 12345679');
+
+    await carol.login('carol');
+    const row = async () => ((await carol.history()).data.rows as Row[]).find((candidate) => candidate.runId === placed)!;
+    expect(await row()).toMatchObject({
+      status: 'awaiting_approval',
+      orderNumber: '12345678',
+      orders: [{ orderNumber: '12345678', delivery: { mode: 'express' } }, { orderNumber: '12345679', delivery: { mode: 'standard' } }],
+    });
+    // Carol approves order 2 first: the run still waits for order 1.
+    await carol.useBackofficeAccount('carol');
+    const second = (await carol.run({ automation: 'approve', orderNumber: '12345679', confirmed: true })).data.runId as string;
+    await ended(setup, second);
+    const half = await row();
+    expect(half).toMatchObject({ status: 'awaiting_approval', orders: [{ orderNumber: '12345678' }, { orderNumber: '12345679', approvedLater: { runId: second, by: 'Carol' } }] });
+    expect(half.orders[0].approvedLater).toBeUndefined();
+    const first = (await carol.run({ automation: 'approve', orderNumber: '12345678', confirmed: true })).data.runId as string;
+    await ended(setup, first);
+    expect(await row()).toMatchObject({
+      status: 'completed',
+      approvedLater: { runId: first },
+      orders: [{ approvedLater: { runId: first, by: 'Carol' } }, { approvedLater: { runId: second, by: 'Carol' } }],
+    });
+    expect(setup.app.store.auditEvents().filter((event) => event.action === 'order-approved-later')).toHaveLength(2);
+  });
+
+  test('a partial order whose order 2 is left at Order Split: only that order is checked, until it is extracted (2026-11-03)', async () => {
+    await closeServer(setup);
+    setup = await makeServer({ extractionTiming: { tickMs: 200, firstAfterMs: 1_000, earlyEveryMs: 500, lateEveryMs: 500 } });
+    type Backoffice = { finalStatus: string; extractionPending?: boolean; extractedLater?: { at: string }; extractionCheck?: { state: string } };
+    type Row = { runId: string; status: string; backoffice: Backoffice; orders: { orderNumber: string; backoffice: Backoffice }[] };
+    const alice = client(setup.app);
+    await alice.login('alice');
+    await alice.useAccounts('alice');
+    // PLU 2222: order 2 is approved but stays at Order Split; order 1 is extracted.
+    const runId = (await alice.run({ ...ORDER, products: '2222\n7777' })).data.runId as string;
+    await expect.poll(() => runLog(setup, runId)).toContain('[ASK] Product 7777');
+    const { id } = JSON.parse(readFileSync(join(runFolder(setup, runId), 'ask.json'), 'utf8'));
+    await alice.call('POST', '/api/answer', { id, action: 'split', mode: 'standard' });
+    await ended(setup, runId);
+    expect(runLog(setup, runId)).toContain('[PASS] Order test completed successfully. Order number: 12345678 (backoffice: ORDER_EXTRACTED); order 2: 12345679 (backoffice: Order Split; extraction still pending)');
+    const row = async () => ((await alice.history()).data.rows as Row[]).find((candidate) => candidate.runId === runId)!;
+    expect(await row()).toMatchObject({
+      status: 'completed',
+      backoffice: { extractionPending: true },
+      orders: [{ orderNumber: '12345678', backoffice: { finalStatus: 'ORDER_EXTRACTED' } }, { orderNumber: '12345679', backoffice: { finalStatus: 'Order Split', extractionPending: true } }],
+    });
+    await expect.poll(async () => (await row()).backoffice.extractionPending, { timeout: 15_000 }).toBe(false);
+    expect((await row()).orders[1].backoffice).toMatchObject({ finalStatus: 'ORDER_EXTRACTED', extractionPending: false, extractedLater: { at: '2026-11-03T04:20:09.000Z' }, extractionCheck: { state: 'done' } });
+    expect((await row()).orders[0].backoffice.extractedLater).toBeUndefined();
+    // Only order 2 was checked: at Order Split the first time, extracted the second.
+    const checks = readFileSync(join(setup.options.projectDir as string, 'extraction-checks.log'), 'utf8').trim().split('\n');
+    expect(checks).toEqual([`account=${fingerprint(PEOPLE.alice.testing.username)} orders=12345679`, `account=${fingerprint(PEOPLE.alice.testing.username)} orders=12345679`]);
+  });
+
+  test('the page: a partial order shows both orders, and order 2’s extraction updates by itself (2026-11-03)', async ({ page }) => {
+    await closeServer(setup);
+    setup = await makeServer({ extractionTiming: { tickMs: 200, firstAfterMs: 3_000, earlyEveryMs: 1_500, lateEveryMs: 1_500 } });
+    await page.goto(setup.app.url);
+    await page.locator('#login-username').fill('alice');
+    await page.locator('#login-password').fill(PEOPLE.alice.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.locator('#testing-username').fill(PEOPLE.alice.testing.username);
+    await page.locator('#testing-password').fill(PEOPLE.alice.testing.password);
+    await page.locator('#testing-save').click();
+    await page.locator('#backoffice-change').click();
+    await page.locator('#backoffice-username').fill(PEOPLE.alice.backoffice.username);
+    await page.locator('#backoffice-password').fill(PEOPLE.alice.backoffice.password);
+    await page.locator('#backoffice-save').click();
+    await expect(page.locator('#backoffice-masked')).toHaveText('al•••');
+    await page.getByLabel('One PLU per line').fill('2222\n7777');
+    await page.locator('#run').click();
+    await page.locator('#confirm').getByRole('button', { name: 'Place test order' }).click();
+
+    const ask = page.locator('#ask');
+    await expect(ask.getByRole('button').first()).toHaveText('Split into 2 orders: Express, then Standard', { timeout: 15_000 });
+    await ask.getByRole('button', { name: 'Split into 2 orders: Express, then Standard' }).click();
+    await expect(page.locator('#result .verdict')).toHaveText('Completed', { timeout: 15_000 });
+    const orders = page.locator('#result .p-orders__item');
+    await expect(orders).toHaveText([/Order 1.*12345678.*Express · PLU 2222.*ORDER_EXTRACTED/, /Order 2.*12345679.*Standard · PLU 7777.*Order Split, extraction pending/]);
+    await expect(page.locator('#result .p-note')).toContainText('Extraction still pending: WTCSG12345679 (order 2) is at Order Split, not yet ORDER_EXTRACTED. It is checked automatically');
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    const row = page.locator('tr.hrow').first();
+    await expect(row).toContainText('12345678');
+    await expect(row).toContainText('12345679');
+    await expect(row).toContainText('Extraction pending');
+    // No reload: order 2's extraction shows once the check sees it.
+    await expect(row).toContainText('Order 2 extracted', { timeout: 15_000 });
+    await expect(row).not.toContainText('Extraction pending');
+    await row.click();
+    await expect(page.locator('tr.hdetail .p-note--ok')).toContainText('Order extracted: WTCSG12345679 (order 2) reached ORDER_EXTRACTED at');
+    await page.getByRole('tab', { name: 'Automation' }).click();
+    await expect(page.locator('#result .p-orders__item').nth(1)).toContainText('ORDER_EXTRACTED at');
+    await expect(page.locator('#result')).not.toContainText('Extraction still pending');
+  });
+
   test('Shell Station: no mode; the person picks the pickup store, and their next page keeps the choice (2026-10-30)', async () => {
     const alice = client(setup.app);
     await alice.login('alice');

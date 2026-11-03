@@ -11,7 +11,8 @@
 // A testing account is in this service's memory only while its person is signed in (decision
 // 2026-10-09): while nobody who ran the order is, its checks pause, and they go on at that person's
 // next sign-in (their remembered account comes back then). One check at a time; none while that
-// account is in use by a run, nor while the server runs as many runs as it allows.
+// account is in use by a run, nor while the server runs as many runs as it allows. A partial
+// order's run (2026-11-03) has its orders followed one by one, each with its own checks.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -49,6 +50,19 @@ function nextCheckAt(since, last, timing = TIMING) {
 
 /** Extracted: the shop's status says so, or it has an extraction time (as src/pages/MyOrderPage.ts). */
 const isExtracted = (order) => /EXTRACTED/i.test(order.status ?? '') || Boolean(order.extractedAt);
+
+/**
+ * The orders of a pending run whose extraction is pending, each with how its checks stand:
+ * [{ orderNumber, check }]. The run's own order, or a partial order's (2026-11-03).
+ */
+function pendingOrders(row) {
+  if (Array.isArray(row.orders)) {
+    return row.orders
+      .filter((order) => order?.orderNumber && order.backoffice?.extractionPending)
+      .map((order) => ({ orderNumber: order.orderNumber, check: order.backoffice.extractionCheck ?? null }));
+  }
+  return row.orderNumber ? [{ orderNumber: row.orderNumber, check: row.backoffice?.extractionCheck ?? null }] : [];
+}
 
 /** Deletes a check's folder; one Windows still holds a moment (its browser closing) is left for the next start. */
 function removeFolder(folder) {
@@ -95,27 +109,33 @@ class ExtractionWatcher {
     }
   }
 
-  /** Writes how the checks of an order stand on its runs, when that changed, and tells the open pages. */
-  note(orderNumber, rows, check) {
-    const before = rows[0]?.backoffice?.extractionCheck ?? null;
+  /** Writes how the checks of an order stand on its runs (`before`: as they stood), when that changed, and tells the open pages. */
+  note(orderNumber, before, check) {
     const same = (key) => (before?.[key] ?? null) === (check[key] ?? null);
     if (before && ['state', 'reason', 'lastCheckedAt', 'lastStatus', 'nextCheckAt', 'problem'].every(same) && (before.who ?? []).join() === (check.who ?? []).join()) return;
     if (this.store.noteExtractionCheck(orderNumber, check) > 0) this.broadcast('history', { extraction: orderNumber });
   }
 
+  /** The orders still pending: order number → { rows (its pending runs, oldest first), check (how its checks stand) }. */
+  pending() {
+    const byOrder = new Map();
+    for (const row of this.store.extractionPending()) {
+      for (const { orderNumber, check } of pendingOrders(row)) {
+        if (!byOrder.has(orderNumber)) byOrder.set(orderNumber, { rows: [], check });
+        byOrder.get(orderNumber).rows.push(row);
+      }
+    }
+    return byOrder;
+  }
+
   /** Looks at the orders still pending: notes how they stand, and starts the check that is due. */
   async tick(now = Date.now()) {
     if (this.stopped || this.checking) return;
-    const byOrder = new Map();
-    for (const row of this.store.extractionPending()) {
-      if (!byOrder.has(row.orderNumber)) byOrder.set(row.orderNumber, []);
-      byOrder.get(row.orderNumber).push(row);
-    }
+    const byOrder = this.pending();
     for (const orderNumber of this.orders.keys()) if (!byOrder.has(orderNumber)) this.orders.delete(orderNumber);
 
     const due = new Map(); // account fingerprint → { account, orders }
-    for (const [orderNumber, rows] of byOrder) {
-      const check = rows[0].backoffice?.extractionCheck ?? null;
+    for (const [orderNumber, { rows, check }] of byOrder) {
       if (check?.state === 'stopped') continue;
       const since = Math.min(...rows.map((row) => Date.parse(row.finishedAt ?? row.startedAt)).filter(Number.isFinite));
       if (!Number.isFinite(since)) continue;
@@ -125,7 +145,7 @@ class ExtractionWatcher {
       }
       const memory = this.orders.get(orderNumber);
       if (now - since > this.timing.giveUpAfterMs) {
-        this.note(orderNumber, rows, { state: 'stopped', lastCheckedAt: check?.lastCheckedAt ?? null, lastStatus: check?.lastStatus ?? null });
+        this.note(orderNumber, check, { state: 'stopped', lastCheckedAt: check?.lastCheckedAt ?? null, lastStatus: check?.lastStatus ?? null });
         this.orders.delete(orderNumber);
         continue;
       }
@@ -139,10 +159,10 @@ class ExtractionWatcher {
       const lastCheckedAt = memory.lastCheckedAt ? new Date(memory.lastCheckedAt).toISOString() : null;
       if (!account) {
         const reason = signedIn.length > 0 ? 'not_found' : 'signed_out';
-        this.note(orderNumber, rows, { state: 'paused', reason, who: people.map(([, name]) => name), lastCheckedAt, lastStatus: check?.lastStatus ?? null });
+        this.note(orderNumber, check, { state: 'paused', reason, who: people.map(([, name]) => name), lastCheckedAt, lastStatus: check?.lastStatus ?? null });
         continue;
       }
-      this.note(orderNumber, rows, { state: 'checking', lastCheckedAt, lastStatus: check?.lastStatus ?? null, nextCheckAt: new Date(next).toISOString(), problem: check?.problem ?? null });
+      this.note(orderNumber, check, { state: 'checking', lastCheckedAt, lastStatus: check?.lastStatus ?? null, nextCheckAt: new Date(next).toISOString(), problem: check?.problem ?? null });
       if (now < next || this.runs.accountInUse(account.fingerprint)) continue;
       if (!due.has(account.fingerprint)) due.set(account.fingerprint, { account, orders: [] });
       due.get(account.fingerprint).orders.push(orderNumber);
@@ -210,12 +230,11 @@ class ExtractionWatcher {
   /** What a check found: extracted orders are marked so; the others noted for their next check. */
   apply(account, orders, found, checkedAt) {
     const at = checkedAt.toISOString();
-    const pending = new Map();
-    for (const row of this.store.extractionPending()) if (!pending.has(row.orderNumber)) pending.set(row.orderNumber, row);
+    const pending = this.pending();
     for (const orderNumber of orders) {
       const memory = this.orders.get(orderNumber) ?? { lastCheckedAt: null, notIn: new Set() };
       this.orders.set(orderNumber, memory);
-      const row = pending.get(orderNumber);
+      const { rows: [row] = [], check } = pending.get(orderNumber) ?? {};
       const order = found?.find((entry) => entry?.orderNumber === orderNumber);
       if (found && order && !order.found) {
         memory.notIn.add(account.fingerprint); // another person's account may have it: the next look decides
@@ -233,10 +252,10 @@ class ExtractionWatcher {
       }
       if (!row) continue;
       const since = Date.parse(row.finishedAt ?? row.startedAt);
-      this.note(orderNumber, [row], {
+      this.note(orderNumber, check, {
         state: 'checking',
         lastCheckedAt: at,
-        lastStatus: order?.status ?? row.backoffice?.extractionCheck?.lastStatus ?? null,
+        lastStatus: order?.status ?? check?.lastStatus ?? null,
         nextCheckAt: new Date(nextCheckAt(since, memory.lastCheckedAt, this.timing)).toISOString(),
         problem: order ? null : 'The last check could not finish; it is tried again.',
       });

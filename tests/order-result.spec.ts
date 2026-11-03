@@ -71,6 +71,57 @@ test.describe('order result', () => {
     expect(box).toContain('Reason: No product found for PLU 99999.');
   });
 
+  test('a partial order (2026-11-03): each order with its number, mode, products and backoffice status', () => {
+    const partial: OrderRunSnapshot = {
+      ...run,
+      deliveryMethod: 'click_collect',
+      ordered: [{ plu: '10031', quantity: 1 }, { plu: '46700', quantity: 1 }, { plu: '17562', quantity: 1 }],
+      excluded: [],
+      orderNumber: '07156003',
+      backoffice: { approved: true, statuses: ['ORDER_EXTRACTED'], extractionPending: true },
+      orders: [
+        { orderNumber: '07156003', deliveryMethod: 'click_collect', deliveryMode: 'express', ordered: [{ plu: '10031', quantity: 1 }, { plu: '46700', quantity: 1 }], backoffice: { approved: true, statuses: ['Order Split', 'ORDER_EXTRACTED'], extractionPending: false } },
+        { orderNumber: '07156004', deliveryMethod: 'click_collect', deliveryMode: 'standard', ordered: [{ plu: '17562', quantity: 1 }], backoffice: { approved: true, statuses: ['Order Split'], extractionPending: true } },
+      ],
+    };
+    const result = buildOrderResult({ runId: 'x', run: partial, passed: true, durationMs: 600_000, artifacts });
+    expect(result).toMatchObject({ outcome: 'order_placed', orderNumber: '07156003' });
+    expect(result.orders).toEqual([
+      { orderNumber: '07156003', delivery: { method: 'click_collect', mode: 'express' }, ordered: [{ plu: '10031', quantity: 1 }, { plu: '46700', quantity: 1 }], backoffice: { approved: true, statuses: ['Order Split', 'ORDER_EXTRACTED'], extractionPending: false, finalStatus: 'ORDER_EXTRACTED' } },
+      { orderNumber: '07156004', delivery: { method: 'click_collect', mode: 'standard' }, ordered: [{ plu: '17562', quantity: 1 }], backoffice: { approved: true, statuses: ['Order Split'], extractionPending: true, finalStatus: 'Order Split' } },
+    ]);
+    const box = formatResultBox(result);
+    expect(box).toContain('Order 1 (express): 07156003');
+    expect(box).toContain('  Status: ORDER_EXTRACTED');
+    expect(box).toContain('Order 2 (standard): 07156004');
+    expect(box).toContain('  Status: Order Split (extraction pending)');
+    expect(box).toContain('Delivery: click_collect (partial order)');
+    expect(box).not.toContain('Order Number:');
+    // A run with one order has no orders.
+    expect(buildOrderResult({ runId: 'x', run, passed: true, durationMs: 1, artifacts })).not.toHaveProperty('orders');
+  });
+
+  test('a partial order that failed in order 2: the step names the order, and order 1’s number stays', () => {
+    const failed: OrderRunSnapshot = {
+      ...run,
+      orderNumber: '07156003',
+      backoffice: undefined,
+      currentStep: 'Cart validation (order 2)',
+      orders: [
+        { orderNumber: '07156003', deliveryMethod: 'home_delivery', deliveryMode: 'express', ordered: [{ plu: '10031', quantity: 1 }] },
+        { deliveryMethod: 'home_delivery', deliveryMode: 'standard', ordered: [{ plu: '17562', quantity: 1 }] },
+      ],
+    };
+    const message = '❌ CART_VALIDATION_FAILED\n\nStep: Cart validation\nReason: Expected 17562 x1 but the bag has (empty).';
+    const result = buildOrderResult({ runId: 'x', run: failed, passed: false, durationMs: 1, errorMessage: message, artifacts });
+    expect(result.error).toMatchObject({ code: 'CART_VALIDATION_FAILED', step: 'Cart validation (order 2)' });
+    expect(result).toMatchObject({ orderNumber: '07156003', orders: [{ orderNumber: '07156003' }, { delivery: { mode: 'standard' } }] });
+    const box = formatResultBox(result);
+    expect(box).toContain('Order 1 (express): 07156003');
+    expect(box).toContain('Order 2 (standard): PLU 17562');
+    expect(box).toContain('Step: Cart validation (order 2)');
+  });
+
   test('a failure without a StepError falls back to the step that was running', () => {
     const result = buildOrderResult({ runId: 'x', run: { ...run, currentStep: 'Pay' }, passed: false, durationMs: 1, errorMessage: 'TimeoutError: boom', artifacts });
     expect(result.error).toMatchObject({ step: 'Pay', code: undefined });

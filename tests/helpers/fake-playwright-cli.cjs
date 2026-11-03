@@ -23,11 +23,16 @@
 //   Shell Station (2026-10-30): no mode; its step is "Pickup Store Selection". "pickup store: Let me
 //            choose" asks which of PICKUP_STORES (a "choose" question, interactive runs); otherwise
 //            the first one is used. The result names the store.
-//   Extraction checks (--project=extraction, the hosted server's, 2026-11-03): order 12345678 (the
-//            one this runner places) is ORDER_SPLIT at its first check and ORDER_EXTRACTED from its
-//            second; order 99999999 is not in the account's orders; others stay ORDER_SPLIT. Each
-//            check is noted in extraction-checks.log in the project folder, with the account's
-//            fingerprint.
+//   Extraction checks (--project=extraction, the hosted server's, 2026-11-03): orders 12345678 and
+//            12345679 (the ones this runner places) are ORDER_SPLIT at their first check and
+//            ORDER_EXTRACTED from their second; order 99999999 is not in the account's orders; others
+//            stay ORDER_SPLIT. Each check is noted in extraction-checks.log in the project folder, with
+//            the account's fingerprint.
+//   A partial order (2026-11-03): PLU 7777 can't go Express, and Standard takes it. Interactive runs
+//            are asked (split first); a command-line run splits. Order 1 (Express, the others) is
+//            12345678, order 2 (Standard, PLU 7777) is 12345679; each is approved with a backoffice
+//            account (with PLU 2222, order 2 ends at Order Split). PLU 7770: the same, but order 2
+//            fails at "Pay (order 2)", after order 1 was placed.
 // It prints only fingerprints of the accounts it received (first 8 hex digits of a SHA-256), never them.
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
@@ -45,7 +50,7 @@ if (process.argv.includes('--project=extraction')) {
   const found = orders.map((orderNumber) => {
     seen[orderNumber] = (seen[orderNumber] ?? 0) + 1;
     if (orderNumber === '99999999') return { orderNumber, found: false, status: null, extractedAt: null, checkedAt };
-    const extracted = orderNumber === '12345678' && seen[orderNumber] >= 2;
+    const extracted = ['12345678', '12345679'].includes(orderNumber) && seen[orderNumber] >= 2;
     return { orderNumber, found: true, status: extracted ? 'ORDER_EXTRACTED' : 'ORDER_SPLIT', extractedAt: extracted ? '2026-11-03T04:20:09.000Z' : null, checkedAt };
   });
   fs.writeFileSync(counts, JSON.stringify(seen));
@@ -95,8 +100,44 @@ const approvesNewOrder = placeOrder && Boolean(process.env.WATSONS_BACKOFFICE_US
 if (placeOrder) steps.push('Checkout', 'Pay', 'OTP', 'Order confirmation');
 if (approvesNewOrder) steps.push('Backoffice login', 'Find order in backoffice', 'Approve order', 'Order extracted');
 // Approved, but at "Order Split" a minute later, extraction still pending (2026-10-23): approving
-// order 22222222, or an order with PLU 2222 (and a backoffice account).
+// order 22222222, or an order with PLU 2222 (and a backoffice account); of a partial order, order 2.
 const extractionPending = (approving && orderNumberToApprove === '22222222') || (approvesNewOrder && products.some((line) => line.plu === '2222'));
+
+// A partial order (2026-11-03), as src/flows/delivery-modes.ts and tests/order.e2e.spec.ts do it:
+// [{ mode, lines, orderNumber }] once the order is split; PLU 7777 (or 7770) goes in order 2.
+let partial = null;
+const PARTIAL_PLUS = ['7777', '7770'];
+const failsOrder2 = products.some((line) => line.plu === '7770');
+const showLines = (lines) => lines.map((line) => (line.quantity > 1 ? `${line.plu} x${line.quantity}` : line.plu)).join(', ');
+function split() {
+  const rest = ordered.filter((line) => PARTIAL_PLUS.includes(line.plu));
+  partial = [
+    { mode: 'express', lines: ordered.filter((line) => !PARTIAL_PLUS.includes(line.plu)), orderNumber: null },
+    { mode: 'standard', lines: rest, orderNumber: null },
+  ];
+  console.log(`[12:00:00] [WARN] Not available for Express: PLU ${showLines(rest)} goes in order 2, by Standard, once this order is placed`);
+  console.log(`[12:00:00] [INFO] Partial order planned: order 1 by Express (PLU ${showLines(partial[0].lines)}), order 2 by Standard (PLU ${showLines(rest)})`);
+  if (!placeOrder) return;
+  // Order 2's steps after order 1's confirmation, its approval after order 1's, its extraction last.
+  const named = (step) => `${step} (order 2)`;
+  steps.splice(steps.indexOf('Order confirmation') + 1, 0, ...['Cart validation', 'Standard Delivery Selection', 'Checkout', 'Pay', 'OTP', 'Order confirmation'].map(named));
+  if (!approvesNewOrder) return;
+  steps.splice(steps.indexOf('Approve order') + 1, 0, named('Find order in backoffice'), named('Approve order'));
+  steps.push(named('Order extracted'));
+}
+/** result.json's orders: each with its number once placed, and its approval once the run is done. */
+function resultOrders(done) {
+  return partial.map((order, index) => {
+    const pending = done && extractionPending && index === 1;
+    const finalStatus = pending ? 'Order Split' : 'ORDER_EXTRACTED';
+    return {
+      ...(order.orderNumber ? { orderNumber: order.orderNumber } : {}),
+      delivery: { method, mode: order.mode },
+      ordered: order.lines,
+      ...(done && approvesNewOrder ? { backoffice: { approved: true, statuses: [finalStatus], finalStatus, ...(pending ? { extractionPending: true } : {}) } } : {}),
+    };
+  });
+}
 
 // PLU 555: a real headless Edge with the live view's DevTools port, opened right away.
 const liveBrowser =
@@ -176,6 +217,7 @@ function writeResult(result) {
     finishedAt: new Date().toISOString(),
     placeOrder,
     delivery: approving ? {} : method === 'shell_station' ? { method, ...(store ? { store } : {}) } : { method, mode },
+    ...(partial ? { orders: resultOrders(result.status === 'passed') } : {}),
     products: { ordered: approving ? [] : ordered, soldOut, excludedNotEligible: excluded.map((line) => line.plu), freeGiftRemoved: null },
     decisions,
     consoleErrors: [],
@@ -333,6 +375,31 @@ function question(step) {
     });
     return true;
   }
+  // A partial order (2026-11-03), as src/flows/order-issues.ts asks it: split first, then the other choices.
+  if (step === 'Express Delivery Selection' && ordered.some((line) => PARTIAL_PLUS.includes(line.plu)) && method !== 'shell_station' && !partial) {
+    const plu = ordered.find((line) => PARTIAL_PLUS.includes(line.plu)).plu;
+    const options = [
+      { action: 'split', mode: 'standard', label: 'Split into 2 orders: Express, then Standard' },
+      ...(others(plu) > 0 ? [{ action: 'skip', label: 'Remove it and continue' }] : []),
+      { action: 'replace', label: 'Replace with another PLU', many: true },
+      { action: 'switch_mode', mode: 'standard', label: 'Use Standard instead' },
+      ...['home_delivery', 'click_collect', 'shell_station'].filter((other) => other !== method).map((other) => ({ action: 'switch_method', method: other, label: `Try ${METHOD_LABELS[other]}` })),
+      { action: 'stop', label: 'Stop automation' },
+    ];
+    const message = `Product ${plu} is not eligible for Express delivery with ${METHOD_LABELS[method]}.`;
+    const detail = `Split: order 1 by Express for PLU ${showLines(without(plu))}, then order 2 by Standard for PLU ${plu}, from the bag (staging keeps it there).`;
+    ask({ kind: 'not_eligible', step, plus: [plu], message, detail, options }, (answer) => {
+      if (answer.action === 'split') {
+        split();
+        decided(`Order 1 by Express: PLU ${showLines(partial[0].lines)}; then order 2 by Standard: PLU ${plu}`);
+      } else {
+        ordered = without(plu);
+        decided(`PLU ${plu} taken out of the order`);
+      }
+      next();
+    });
+    return true;
+  }
   // Shell Station, "Let me choose" (2026-10-30): the stores to pick one from.
   if (step === PICKUP_STORE_STEP && pickupStoreChoice === 'ask' && !store) {
     const options = [{ action: 'choose', label: 'Use this store' }, { action: 'stop', label: 'Stop automation' }];
@@ -353,8 +420,9 @@ function next() {
     const approved = approving && orderNumberToApprove !== '11111111';
     const orderNumber = approving ? orderNumberToApprove : placeOrder ? '12345678' : undefined;
     const usesBackoffice = approving || approvesNewOrder;
-    const finalStatus = extractionPending ? 'Order Split' : 'ORDER_EXTRACTED';
-    const pending = extractionPending ? '; extraction still pending' : '';
+    // A partial order's order 1 is extracted; its order 2 is the one left at Order Split (PLU 2222).
+    const finalStatus = extractionPending && !partial ? 'Order Split' : 'ORDER_EXTRACTED';
+    const pending = extractionPending && !partial ? '; extraction still pending' : '';
     const finish = () => {
       const shot = placeOrder || approving ? screenshot(usesBackoffice ? 'screenshot-1-backoffice-order.png' : 'screenshot-1-order-confirmation.png') : null;
       writeResult({
@@ -371,11 +439,12 @@ function next() {
     };
     if (!placeOrder && !approving) return finish();
     const pass = () => {
+      const second = partial ? (approvesNewOrder ? `; order 2: 12345679 (backoffice: ${extractionPending ? 'Order Split; extraction still pending' : 'ORDER_EXTRACTED'})` : '; order 2: 12345679') : '';
       if (approving && approved) console.log(`[12:00:00] [PASS] Order approved successfully. Order number: ${orderNumber} (backoffice: ${finalStatus}${pending})`);
       else if (approving) console.log(`[12:00:00] [PASS] No change needed. Order number: ${orderNumber} (backoffice: already ${finalStatus}${pending})`);
-      else if (approvesNewOrder) console.log(`[12:00:00] [PASS] Order test completed successfully. Order number: 12345678 (backoffice: ${finalStatus}${pending})`);
-      else console.log('[12:00:00] [PASS] Order placed (not approved yet: no backoffice account for this run). Order number: 12345678');
-      if (extractionPending) console.log(`[12:00:00] [WARN] WTCSG${orderNumber} is at Order Split: extraction to ORDER_EXTRACTED is still pending. Wait a few minutes, then check it in the backoffice.`);
+      else if (approvesNewOrder) console.log(`[12:00:00] [PASS] Order test completed successfully. Order number: 12345678 (backoffice: ${finalStatus}${pending})${second}`);
+      else console.log(`[12:00:00] [PASS] Order placed (not approved yet: no backoffice account for this run). Order number: 12345678${second}`);
+      if (extractionPending) console.log(`[12:00:00] [WARN] WTCSG${partial ? '12345679' : orderNumber} is at Order Split: extraction to ORDER_EXTRACTED is still pending. Wait a few minutes, then check it in the backoffice.`);
       finish();
     };
     // The live view (PLU 555): the last step lasts until the person has used the page.
@@ -385,6 +454,18 @@ function next() {
   const step = steps[index++];
   console.log(`[12:00:00] [INFO] Step: ${step}`);
   if (question(step)) return;
+  // A partial order: a command-line run splits by itself; each order's number once placed; PLU 7770
+  // fails at order 2's Pay, after order 1 was placed.
+  if (step === 'Express Delivery Selection' && !partial && method !== 'shell_station' && ordered.some((line) => PARTIAL_PLUS.includes(line.plu))) split();
+  if (partial && /^Order confirmation( \(order 2\))?$/.test(step)) {
+    const at = step === 'Order confirmation' ? 0 : 1;
+    partial[at].orderNumber = at === 0 ? '12345678' : '12345679';
+    const labels = { express: 'Express', standard: 'Standard' };
+    console.log(`[12:00:00] [INFO] Order ${at + 1} of 2 placed: ${partial[at].orderNumber} (${labels[partial[at].mode]}, ${METHOD_LABELS[method]})`);
+  }
+  if (step === 'Pay (order 2)' && failsOrder2) {
+    return fail(step, 'PAYMENT_FAILED', 'The "Pay" button could not be clicked.', 'https://testsecureacceptance.cybersource.com/oneclick/review', '12345678');
+  }
   if (step === 'Product Search' && products.some((line) => line.plu === '404')) {
     return fail(step, 'PRODUCT_NOT_FOUND', 'No product found for PLU 404.', 'https://staging.example.test/search');
   }

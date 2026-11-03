@@ -81,10 +81,15 @@ export function removalOptions(plus: string[], othersLeft: number): AskOption[] 
   return options;
 }
 
+/** "10031, 46700 x2": PLUs with their quantities. */
+export const plusText = (lines: OrderLine[]) => lines.map((line) => (line.quantity > 1 ? `${line.plu} x${line.quantity}` : line.plu)).join(', ') || 'none';
+
 /**
  * Products the chosen delivery can't take, on the checkout page. `otherMode`: the other mode,
  * when it is offered and takes some of them; `othersLeft`: products that would remain if they were
- * removed.
+ * removed. `split`: the other mode takes all of them and the rest can go now (`kept`), so the order
+ * can be split in two (user's request 2026-11-03): this mode for `kept`, then a second order by the
+ * other mode for `rest`, which staging keeps in the bag. Offered first; the other choices stay.
  */
 export function eligibilityQuestion(input: {
   plus: string[];
@@ -93,9 +98,13 @@ export function eligibilityQuestion(input: {
   otherMode: DeliveryMode | null;
   othersLeft: number;
   triedMethods: DeliveryMethod[];
+  split?: { kept: OrderLine[]; rest: OrderLine[] } | null;
 }): Question {
   const { plus, mode, method, otherMode, othersLeft, triedMethods } = input;
-  const options = removalOptions(plus, othersLeft);
+  const split = otherMode ? input.split : null;
+  const options: AskOption[] = [];
+  if (split && otherMode) options.push({ action: 'split', mode: otherMode, label: `Split into 2 orders: ${MODE_NAMES[mode]}, then ${MODE_NAMES[otherMode]}` });
+  options.push(...removalOptions(plus, othersLeft));
   if (otherMode) options.push({ action: 'switch_mode', mode: otherMode, label: `Use ${MODE_NAMES[otherMode]} instead` });
   options.push(...otherMethods(method, triedMethods));
   options.push({ action: 'stop', label: 'Stop automation' });
@@ -105,6 +114,13 @@ export function eligibilityQuestion(input: {
     step: `${MODE_NAMES[mode]} Delivery Selection`,
     plus,
     message: `${listOf(plus)} ${verb} not eligible for ${MODE_NAMES[mode]} delivery with ${METHOD_NAMES[method]}.`,
+    ...(split && otherMode
+      ? {
+          detail:
+            `Split: order 1 by ${MODE_NAMES[mode]} for PLU ${plusText(split.kept)}, then order 2 by ${MODE_NAMES[otherMode]} for PLU ` +
+            `${plusText(split.rest)}, from the bag (staging keeps ${split.rest.length === 1 ? 'it' : 'them'} there).`,
+        }
+      : {}),
     options,
   };
 }

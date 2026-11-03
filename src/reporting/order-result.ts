@@ -1,9 +1,19 @@
 import type { OrderLine } from '../config/order';
 import type { Decision } from '../utils/ask';
-import type { Automation, OrderRunSnapshot } from './order-run';
+import type { Automation, OrderRunSnapshot, RunOrder } from './order-run';
 
 // The structured result of one order test run (PRD §24, §35), written to
 // reports/<run>/result.json. The launcher reads it to show PASS/FAIL and the order number.
+
+type ResultBackoffice = { approved: boolean; statuses: string[]; finalStatus?: string; extractionPending?: boolean };
+
+/** One order of a partial order (2026-11-03): its number once placed, its delivery, products and approval. */
+export interface ResultOrder {
+  orderNumber?: string;
+  delivery: { method?: string; mode?: string; store?: string };
+  ordered: OrderLine[];
+  backoffice?: ResultBackoffice;
+}
 
 export interface OrderTestResult {
   status: 'passed' | 'failed';
@@ -17,7 +27,10 @@ export interface OrderTestResult {
    */
   outcome: 'order_placed' | 'order_placed_unapproved' | 'ready_to_check_out' | 'approved' | 'no_change' | 'failed';
   runId: string;
+  /** The order placed; of a partial order, the first one. */
   orderNumber?: string;
+  /** A partial order (2026-11-03): each of its orders, in the order they were placed. */
+  orders?: ResultOrder[];
   durationMs: number;
   startedAt: string;
   finishedAt: string;
@@ -31,8 +44,11 @@ export interface OrderTestResult {
   /** Shell Station: no mode, the pickup store instead (2026-10-30). */
   delivery: { method?: string; mode?: string; store?: string };
   products: { ordered: OrderLine[]; soldOut: string[]; excludedNotEligible: string[]; freeGiftRemoved: string | null };
-  /** The backoffice approval (runs that place or approve an order): approved here or not, and the statuses seen. */
-  backoffice?: { approved: boolean; statuses: string[]; finalStatus?: string; extractionPending?: boolean };
+  /**
+   * The backoffice approval (runs that place or approve an order): approved here or not, and the
+   * statuses seen. A partial order's orders each have their own (`orders`).
+   */
+  backoffice?: ResultBackoffice;
   /** The questions the run asked the person, their answers and what came of them (2026-10-22). */
   decisions: Decision[];
   consoleErrors: string[];
@@ -52,6 +68,30 @@ export interface ResultInput {
 
 const stripColors = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, '');
 
+const withFinalStatus = (backoffice: RunOrder['backoffice']): ResultBackoffice | undefined =>
+  backoffice ? { ...backoffice, finalStatus: backoffice.statuses.at(-1) } : undefined;
+
+function resultOrder(order: RunOrder): ResultOrder {
+  return {
+    ...(order.orderNumber ? { orderNumber: order.orderNumber } : {}),
+    delivery: { method: order.deliveryMethod, mode: order.deliveryMode, ...(order.pickupStore ? { store: order.pickupStore } : {}) },
+    ordered: order.ordered,
+    ...(order.backoffice ? { backoffice: withFinalStatus(order.backoffice) } : {}),
+  };
+}
+
+/**
+ * The step a run failed at: its StepError's "Step: …", else the step going on. During order 2 of a
+ * partial order (2026-11-03) the steps are named "<step> (order 2)", while errors name the step as
+ * usual: the error's step then gets the order too.
+ */
+function errorStep(message: string, currentStep: string): string {
+  const said = message.match(/^Step: (.+)$/m)?.[1];
+  if (!said) return currentStep;
+  const order = currentStep.match(/ \(order \d+\)$/)?.[0];
+  return order && !said.endsWith(order) ? `${said}${order}` : said;
+}
+
 function outcomeOf(input: ResultInput, automation: Automation): OrderTestResult['outcome'] {
   if (!input.passed) return 'failed';
   if (automation === 'approve') return input.run.backoffice?.approved ? 'approved' : 'no_change';
@@ -70,6 +110,7 @@ export function buildOrderResult(input: ResultInput): OrderTestResult {
     outcome: outcomeOf(input, automation),
     runId: input.runId,
     orderNumber: run.orderNumber,
+    ...(run.orders?.length ? { orders: run.orders.map(resultOrder) } : {}),
     durationMs: input.durationMs,
     startedAt: run.startedAt,
     finishedAt,
@@ -78,7 +119,7 @@ export function buildOrderResult(input: ResultInput): OrderTestResult {
       ? {
           // StepError messages start with "❌ <CODE>" and contain "Step: <name>" (src/utils/errors.ts).
           code: message.match(/❌ ([A-Z_]+)/)?.[1],
-          step: message.match(/^Step: (.+)$/m)?.[1] ?? run.currentStep,
+          step: errorStep(message, run.currentStep),
           message: message.split('\n').filter((line) => !/^\s+at /.test(line)).slice(0, 15).join('\n'),
           at: run.failure?.at ?? finishedAt,
           pages: run.failure?.pages ?? [],
@@ -93,7 +134,7 @@ export function buildOrderResult(input: ResultInput): OrderTestResult {
       excludedNotEligible: run.excluded,
       freeGiftRemoved: run.freeGiftRemoved,
     },
-    backoffice: run.backoffice ? { ...run.backoffice, finalStatus: run.backoffice.statuses.at(-1) } : undefined,
+    backoffice: withFinalStatus(run.backoffice),
     // Runs from before 2026-10-22 have none.
     decisions: run.decisions ?? [],
     consoleErrors: run.consoleErrors,
@@ -122,20 +163,32 @@ export function formatResultBox(result: OrderTestResult): string {
   const approving = result.automation === 'approve';
   const title = result.outcome === 'failed' && approving ? 'APPROVAL FAILED' : TITLES[result.outcome];
   const rows: string[] = [];
+  // A partial order (2026-11-03): each order with its mode, then its number and status, or its products while not placed.
+  const orderRows = (orders: ResultOrder[]) =>
+    orders.forEach((order, index) => {
+      const products = order.ordered.map((line) => (line.quantity > 1 ? `${line.plu} x${line.quantity}` : line.plu)).join(', ');
+      rows.push(`Order ${index + 1} (${order.delivery.mode ?? '?'}): ${order.orderNumber ?? `PLU ${products}`}`);
+      if (order.backoffice?.finalStatus) rows.push(`  Status: ${order.backoffice.finalStatus}${order.backoffice.extractionPending ? ' (extraction pending)' : ''}`);
+    });
   if (result.status === 'passed') {
-    if (result.orderNumber) rows.push(`Order Number: ${result.orderNumber}`);
-    if (result.backoffice?.finalStatus) rows.push(`Backoffice: ${result.backoffice.finalStatus}${result.backoffice.extractionPending ? ' (extraction pending)' : ''}`);
+    if (result.orders?.length) orderRows(result.orders);
+    else {
+      if (result.orderNumber) rows.push(`Order Number: ${result.orderNumber}`);
+      if (result.backoffice?.finalStatus) rows.push(`Backoffice: ${result.backoffice.finalStatus}${result.backoffice.extractionPending ? ' (extraction pending)' : ''}`);
+    }
     if (result.outcome === 'order_placed_unapproved') rows.push('Backoffice: not approved yet');
     if (!approving) {
       // Shell Station: its pickup store instead of a mode (2026-10-30).
       if (result.delivery.method === 'shell_station') rows.push('Delivery: shell_station', `Pickup store: ${result.delivery.store ?? '?'}`);
+      else if (result.orders?.length) rows.push(`Delivery: ${result.delivery.method ?? '?'} (partial order)`);
       else rows.push(`Delivery: ${result.delivery.mode ?? '?'} (${result.delivery.method ?? '?'})`);
       rows.push(`Products: ${result.products.ordered.length}`);
       if (result.products.excludedNotEligible.length) rows.push(`Left out (not eligible): ${result.products.excludedNotEligible.join(', ')}`);
       if (result.products.soldOut.length) rows.push(`Skipped (sold out): ${result.products.soldOut.join(', ')}`);
     }
   } else {
-    if (result.orderNumber) rows.push(`Order Number: ${result.orderNumber}`);
+    if (result.orders?.some((order) => order.orderNumber)) orderRows(result.orders);
+    else if (result.orderNumber) rows.push(`Order Number: ${result.orderNumber}`);
     rows.push(`Step: ${result.error?.step ?? result.completedStep}`);
     if (result.error?.code) rows.push(`Code: ${result.error.code}`);
     const reason = result.error?.message.match(/^Reason: (.+)$/m)?.[1] ?? result.error?.message.split('\n')[0] ?? '';

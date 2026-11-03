@@ -45,8 +45,8 @@ const DELIVERY_ALIASES = { 'click and collect': 'click_collect', 'pickup at shel
  * follow from this list.
  */
 const MODES = {
-  express: { label: 'Express', available: true, tag: 'Fastest', note: 'Products that Express cannot deliver are left out and listed.' },
-  standard: { label: 'Standard', available: true, note: 'The regular delivery or pickup date. Products that Standard cannot deliver are left out and listed.' },
+  express: { label: 'Express', available: true, tag: 'Fastest', note: 'Products that Express cannot deliver can go in a second order by Standard (a partial order), or be left out.' },
+  standard: { label: 'Standard', available: true, note: 'The regular delivery or pickup date. Products that Standard cannot deliver can go in a second order by Express, or be left out.' },
 };
 
 /**
@@ -107,6 +107,24 @@ const PASS_LINES = [
   { pattern: /\[PASS\] Order approved successfully\. Order number: (\d+)/, outcome: 'approved' },
   { pattern: /\[PASS\] No change needed\. Order number: (\d+)/, outcome: 'no_change' },
 ];
+
+/**
+ * A partial order (user's request 2026-11-03; src/flows/partial-order.ts): the plan, logged once the
+ * run splits its order ("Partial order planned: order 1 by Express (PLU 10031, 46700), order 2 by
+ * Standard (PLU 17562)"), and each order once placed ("Order 1 of 2 placed: 07156003 (…)").
+ */
+const PARTIAL_PLAN = /Partial order planned: (.+)$/;
+const PARTIAL_PLACED = /\bOrder (\d+) of (\d+) placed: (\d{8})\b/;
+
+/** The orders of a "Partial order planned" line: [{ mode, products, orderNumber }], or null. */
+function partialPlan(text) {
+  const orders = [...String(text).matchAll(/order \d+ by ([^()]+?) \(PLU ([^)]*)\)/g)].map(([, how, plus]) => ({
+    mode: Object.keys(MODES).find((mode) => MODES[mode].label === how.trim()) ?? null,
+    products: parseProducts(plus.split(/,\s*/).join('\n')).products,
+    orderNumber: null,
+  }));
+  return orders.length > 1 ? { orders } : null;
+}
 
 /**
  * The time from one "add to bag" click to the next: fixed at 5 seconds (user's decision
@@ -424,7 +442,8 @@ function newRunId(root, reportsDir = null) {
 /** The settings that hold passwords: on the hosted server, each run gets its own (TestRunner option "env"). */
 const SECRET_SETTINGS = ['WATSONS_USERNAME', 'WATSONS_PASSWORD', 'WATSONS_BACKOFFICE_USERNAME', 'WATSONS_BACKOFFICE_PASSWORD'];
 
-const ASK_ACTIONS = new Set(['skip', 'replace', 'retry', 'switch_mode', 'switch_method', 'choose', 'buy', 'stop']);
+// split: a partial order, its second order by the option's mode (2026-11-03).
+const ASK_ACTIONS = new Set(['skip', 'replace', 'retry', 'switch_mode', 'switch_method', 'choose', 'buy', 'split', 'stop']);
 /** Buy: how many of a product with "Buy 1" / "Buy 2" choices (2026-11-02). */
 const isBuyQuantity = (value) => Number.isInteger(value) && value >= 1 && value <= 99;
 
@@ -483,6 +502,8 @@ function writeRecord(run, state) {
     startedAt: run.startedAt,
     finishedAt: run.finishedAt ?? null,
     orderNumber: run.orderNumber,
+    // A partial order's orders as the run logged them (2026-11-03), for a run that ends without a result.
+    partial: run.partial ?? null,
     deliveryMethod: run.deliveryMethod,
     mode: run.mode,
     pickupStore: run.pickupStore,
@@ -617,6 +638,8 @@ class TestRunner {
       extractionPending: false,
       // Approve runs know it from the start; order runs once the test logs it.
       orderNumber: request.orderNumber ?? null,
+      // A partial order (2026-11-03): { orders: [{ mode, products, orderNumber }] } once the test splits its order.
+      partial: null,
       // Products the delivery mode left out, as the test logs them.
       excluded: [],
       // The question the test is waiting on (ask.json), and what was decided (2026-10-22).
@@ -667,6 +690,15 @@ class TestRunner {
     // Express, …"); src/flows/shell-station.ts the ones the pickup store can't ("… at <store>, …").
     const excluded = line.match(/Not available (?:for|at) [^,]+, left out of this order: PLU (.+)$/)?.[1];
     if (excluded) run.excluded = excluded.split(/,\s*/);
+    // A partial order (2026-11-03): its orders, then each one's number as it is placed.
+    const plan = line.match(PARTIAL_PLAN)?.[1];
+    if (plan) run.partial = partialPlan(plan) ?? run.partial;
+    const placed = line.match(PARTIAL_PLACED);
+    const placedOrder = placed ? run.partial?.orders[Number(placed[1]) - 1] : null;
+    if (placedOrder) {
+      placedOrder.orderNumber = placed[3];
+      run.orderNumber ??= placed[3]; // the run's own: its first order's
+    }
     // The test waits for the person's answer: its question is in ask.json (src/utils/ask.ts).
     if (/\[ASK\] /.test(line)) run.question = readQuestion(run.dir);
     this.echo(line);
@@ -678,6 +710,7 @@ class TestRunner {
       extractionPending: run.extractionPending,
       orderNumber: run.orderNumber,
       excluded: run.excluded,
+      partial: run.partial,
       // A question's answer can change the delivery mode or method (answer()).
       mode: run.mode,
       deliveryMethod: run.deliveryMethod,
@@ -928,6 +961,7 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
   const shell = method === SHELL_STATION;
   const mode = shell ? null : (result?.delivery?.mode ?? record?.mode ?? fromFile?.mode ?? null);
   const store = shell && typeof result?.delivery?.store === 'string' ? result.delivery.store : null;
+  const orders = automation === 'order' ? ordersOf(result, record, method) : null;
   const row = {
     runId,
     folder,
@@ -941,11 +975,13 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
     durationMs: result?.durationMs ?? null,
     operator: record?.operator ?? null,
     orderNumber: result?.orderNumber ?? record?.orderNumber ?? null,
+    // A partial order (2026-11-03): each of its orders; null for a run with one order.
+    orders,
     delivery:
       automation === 'order' && (method || mode)
         ? shell
           ? { method, mode, store, label: [DELIVERY_METHODS[method], store].filter(Boolean).join(' · ') }
-          : { method, mode, label: `${MODES[mode]?.label ?? mode ?? '?'} · ${DELIVERY_METHODS[method] ?? method ?? '?'}` }
+          : { method, mode, label: `${orders ? orders.map((order) => modeLabel(order.delivery.mode)).join(', then ') : modeLabel(mode)} · ${DELIVERY_METHODS[method] ?? method ?? '?'}` }
         : null,
     products: {
       requested: record?.products ?? (fromFile ? parseProducts(fromFile.productLines.join('\n')).products : []),
@@ -971,6 +1007,33 @@ function rowFromFolder(folderPath, runId, { currentRunId = null, folder = runId 
     row.errorReport = errorReportText(row);
   }
   return row;
+}
+
+const modeLabel = (mode) => MODES[mode]?.label ?? mode ?? '?';
+
+/**
+ * A partial order's orders (2026-11-03), for Logs / History: [{ orderNumber, delivery, products,
+ * backoffice }], from result.json, else (a run that ended without one) as the launcher saw them
+ * logged. Null for a run with one order.
+ */
+function ordersOf(result, record, method) {
+  const deliveryOf = (mode, store) => ({ method, mode: mode ?? null, ...(store ? { store } : {}), label: `${modeLabel(mode)} · ${DELIVERY_METHODS[method] ?? method ?? '?'}` });
+  if (Array.isArray(result?.orders) && result.orders.length > 1) {
+    return result.orders.map((order) => ({
+      orderNumber: typeof order?.orderNumber === 'string' ? order.orderNumber : null,
+      delivery: deliveryOf(order?.delivery?.mode, order?.delivery?.store),
+      products: Array.isArray(order?.ordered) ? order.ordered : [],
+      backoffice: order?.backoffice ?? null,
+    }));
+  }
+  const logged = record?.partial?.orders;
+  if (!Array.isArray(logged) || logged.length < 2) return null;
+  return logged.map((order) => ({
+    orderNumber: typeof order?.orderNumber === 'string' ? order.orderNumber : null,
+    delivery: deliveryOf(order?.mode),
+    products: Array.isArray(order?.products) ? order.products : [],
+    backoffice: null,
+  }));
 }
 
 /**
@@ -1024,18 +1087,27 @@ function readHistory(root, currentRunId = null) {
 function markApprovedLater(rows) {
   for (const row of rows) {
     if (row.status !== 'awaiting_approval' || !row.orderNumber) continue;
-    const approval = rows.findLast(
-      (other) =>
-        other.automation === 'approve' && other.orderNumber === row.orderNumber && ['completed', 'no_change'].includes(other.status) && other.startedAt >= row.startedAt,
-    );
-    if (approval) {
-      Object.assign(row, {
-        status: 'completed',
-        statusLabel: STATUSES.completed,
-        approvedLater: { runId: approval.runId, by: approval.operator ?? 'unknown', at: approval.finishedAt ?? approval.startedAt },
-      });
-    }
+    const approvalOf = (orderNumber) => {
+      const approval = rows.findLast(
+        (other) => other.automation === 'approve' && other.orderNumber === orderNumber && ['completed', 'no_change'].includes(other.status) && other.startedAt >= row.startedAt,
+      );
+      return approval ? { runId: approval.runId, by: approval.operator ?? 'unknown', at: approval.finishedAt ?? approval.startedAt } : null;
+    };
+    // A partial order (2026-11-03): each order on its own; Completed once all of them are approved.
+    const placed = row.orders?.filter((order) => order.orderNumber) ?? [];
+    for (const order of placed) order.approvedLater = approvalOf(order.orderNumber) ?? undefined;
+    const approval = row.orders ? (placed.every((order) => order.approvedLater) ? placed.map((order) => order.approvedLater).sort((a, b) => a.at.localeCompare(b.at)).at(-1) : null) : approvalOf(row.orderNumber);
+    if (approval) Object.assign(row, { status: 'completed', statusLabel: STATUSES.completed, approvedLater: approval });
   }
+}
+
+/**
+ * A run's order as its backoffice code, "WTCSG07156003"; a partial order's each with its mode
+ * (2026-11-03): "WTCSG07156003 (Express) + WTCSG07156004 (Standard)", "not placed" for one that wasn't.
+ */
+function ordersText(row) {
+  if (!row.orders) return row.orderNumber ? `WTCSG${row.orderNumber}` : '';
+  return row.orders.map((order) => `${order.orderNumber ? `WTCSG${order.orderNumber}` : 'not placed'} (${modeLabel(order.delivery.mode)})`).join(' + ');
 }
 
 /** A failed run's error as plain text, to send to the team (telemetry, user's request 2026-10-07). */
@@ -1051,7 +1123,7 @@ function errorReportText(row) {
     `Step:        ${error.step ?? 'unknown'}`,
     ...(error.code ? [`Code:        ${error.code}`] : []),
     `Message:     ${error.reason || 'unknown'}`,
-    `Order:       ${row.orderNumber ? `WTCSG${row.orderNumber}` : 'none'}`,
+    `Order:       ${ordersText(row) || 'none'}`,
     `Page:        ${error.pages.length > 0 ? error.pages.join(indent) : 'not recorded'}`,
     `Screenshot:  ${error.screenshots.length > 0 ? error.screenshots.map((name) => path.join(row.folder, name)).join(indent) : 'none'}`,
     ...(row.automation === 'order' ? [`Products:    ${productsText(row.products.requested) || 'none'}`] : []),
@@ -1079,7 +1151,7 @@ function historyCsv(rows) {
       formatTime(row.startedAt),
       row.runId,
       row.automationLabel,
-      row.orderNumber ? `WTCSG${row.orderNumber}` : '',
+      ordersText(row),
       row.delivery?.label ?? '',
       productsText(row.products.ordered.length > 0 ? row.products.ordered : row.products.requested),
       row.products.excluded.join(', '),
@@ -1429,6 +1501,9 @@ module.exports = {
   ERROR_REPORT_FILE,
   stepsFor,
   windowSteps,
+  PARTIAL_PLAN,
+  PARTIAL_PLACED,
+  partialPlan,
   parseProducts,
   normalizeOrderNumber,
   orderFileText,

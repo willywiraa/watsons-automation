@@ -491,6 +491,12 @@ body{background:var(--canvas);min-width:1024px}
 .p-note--ok{background:var(--tint-success)}
 .p-note--ok > [data-icon], .p-note--ok > .wa-icon{color:var(--success)}
 .p-ok{color:var(--success);font-weight:var(--weight-semibold)}
+/* A partial order's orders (2026-11-03): one line each, number, delivery and products, status. */
+.p-orders{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.p-orders__item{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px}
+.p-orders__name{font-weight:var(--weight-semibold);white-space:nowrap}
+.p-orders__facts{color:var(--text-2);font-size:var(--text-small);line-height:var(--lh-small)}
+.p-orders__status{font-size:var(--text-small);line-height:var(--lh-small)}
 /* The workflow (side navigation) and the delivery choices are real radio buttons, laid over their labels. */
 .p-wfitem input,.p-segopt input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:inherit}
 .p-wfitem:has(input:checked){background:var(--tint-accent);color:var(--accent);font-weight:var(--weight-semibold)}
@@ -1385,10 +1391,15 @@ function renderOrderNumber(values) {
   $('order-code').classList.toggle('is-bad', Boolean(typed) && !orderNumber);
   if (typed && !orderNumber) $('order-number').setAttribute('aria-invalid', 'true');
   else $('order-number').removeAttribute('aria-invalid');
-  const placed = orderNumber ? history.find((row) => row.automation === 'order' && row.orderNumber === orderNumber) : null;
+  const hasIt = (row) => row.orderNumber === orderNumber || row.orders?.some((order) => order.orderNumber === orderNumber);
+  const placed = orderNumber ? history.find((row) => row.automation === 'order' && hasIt(row)) : null;
   $('order-placed').hidden = !placed;
   if (placed) {
-    $('order-placed').textContent = `Placed by ${placed.operator ?? 'an earlier run'} · ${formatTime(placed.startedAt, false)} · ${placed.approvedLater ? `approved later by ${placed.approvedLater.by}` : placed.statusLabel}`;
+    // One order of a partial order (2026-11-03): which one, and its own approval.
+    const index = ordersOfRow(placed) ? placed.orders.findIndex((order) => order.orderNumber === orderNumber) : -1;
+    const approvedLater = index >= 0 ? placed.orders[index].approvedLater : placed.approvedLater;
+    const which = index >= 0 ? `${orderName(index).toLowerCase()} of a partial order · ` : '';
+    $('order-placed').textContent = `Placed by ${placed.operator ?? 'an earlier run'} · ${formatTime(placed.startedAt, false)} · ${which}${approvedLater ? `approved later by ${approvedLater.by}` : placed.statusLabel}`;
   }
 }
 
@@ -1453,23 +1464,25 @@ function runStatus() {
       text: `Waiting for a free slot · ${ordinal(info.queuePosition)} in line. Your run starts as soon as one of the runs on the server ends.`,
     };
   }
-  const details =
-    run.automation === 'approve'
-      ? `WTCSG${run.orderNumber}`
-      : [plural(run.products?.length ?? 0, 'product'), deliveryText(run.deliveryMethod, run.mode)].join(' · ');
+  // A partial order (2026-11-03): its orders' modes, and their numbers once placed.
+  const partial = run.partial?.orders?.length > 1 ? run.partial.orders : null;
+  const how = partial ? `${deliveryText(run.deliveryMethod, run.mode)}, then ${partial.slice(1).map((order) => modeLabel(order.mode)).join(', then ')}` : deliveryText(run.deliveryMethod, run.mode);
+  const details = run.automation === 'approve' ? `WTCSG${run.orderNumber}` : [plural(run.products?.length ?? 0, 'product'), how].join(' · ');
+  const numbers = partial ? partial.map((order) => order.orderNumber).filter(Boolean) : [run.orderNumber];
+  const orders = numbers.length > 1 ? `Orders ${andList(numbers)}` : `Order ${numbers[0]}`;
   // Passed: the run ends by itself in a moment (2026-10-23: no keeping the last page open).
-  const extraction = run.extractionPending ? ': it is at Order Split, extraction still pending' : ' and extracted';
+  const extraction = run.extractionPending ? `: ${numbers.length > 1 ? 'extraction is still pending for one or more' : 'it is at Order Split, extraction still pending'}` : ' and extracted';
   if (run.passed === 'order_placed_unapproved') {
     return {
       tone: 'success',
       icon: 'check',
-      title: 'Order placed, awaiting approval',
+      title: numbers.length > 1 ? 'Orders placed, awaiting approval' : 'Order placed, awaiting approval',
       details,
-      text: `Order ${run.orderNumber} is placed and awaiting approval by someone with a backoffice account. Finishing the run…`,
+      text: `${orders} ${numbers.length > 1 ? 'are' : 'is'} placed and awaiting approval by someone with a backoffice account. Finishing the run…`,
     };
   }
   if (run.passed === 'order_placed') {
-    return { tone: 'success', icon: 'check', title: 'Order placed', details, text: `Order ${run.orderNumber} placed${run.extractionPending ? ' and approved' : ', approved'}${extraction}. Finishing the run…` };
+    return { tone: 'success', icon: 'check', title: numbers.length > 1 ? 'Orders placed' : 'Order placed', details, text: `${orders} placed${run.extractionPending ? ' and approved' : ', approved'}${extraction}. Finishing the run…` };
   }
   if (run.passed === 'approved') {
     return { tone: 'success', icon: 'check', title: 'Order approved', details, text: `Order WTCSG${run.orderNumber} approved${extraction}. Finishing the run…` };
@@ -1513,8 +1526,12 @@ function renderRun(view, queued) {
   $('stop').disabled = Boolean(current?.cancelled);
   $('stop').textContent = queued ? 'Leave queue' : 'Stop';
   const excluded = current?.excluded ?? [];
-  $('live-excluded').hidden = excluded.length === 0;
-  $('live-excluded-text').textContent = `Not available ${leftOutFor(current?.deliveryMethod, current?.mode)}, left out of this order: PLU ${excluded.join(', ')}`;
+  // A partial order (2026-11-03): what goes in each order, and the numbers placed so far.
+  const partial = current?.partial?.orders?.length > 1 ? current.partial.orders : null;
+  $('live-excluded').hidden = excluded.length === 0 && !partial;
+  $('live-excluded-text').textContent = partial
+    ? `Partial order: ${partial.map((order, index) => `${orderName(index).toLowerCase()} by ${modeLabel(order.mode)} for PLU ${productsText(order.products)}${order.orderNumber ? ` (placed: ${order.orderNumber})` : ''}`).join('; ')}. Order 2 is placed from the bag once order 1 is.`
+    : `Not available ${leftOutFor(current?.deliveryMethod, current?.mode)}, left out of this order: PLU ${excluded.join(', ')}`;
   $('run-grid').classList.toggle('p-run-grid--desktop', !liveAvailable());
   $('log-sub').hidden = liveAvailable();
   $('elapsed').textContent = current ? formatClock(elapsedSeconds()) : '';
@@ -1638,21 +1655,53 @@ const deliveryText = (method, mode, store) =>
   isShellStation(method) ? [methodLabel(method), store].filter(Boolean).join(' · ') : `${methodLabel(method)} · ${modeLabel(mode)}`;
 /** What products were left out for: the mode, or the pickup store. */
 const leftOutFor = (method, mode) => (isShellStation(method) ? 'at the pickup store' : `for ${modeLabel(mode)}`);
-/** Logs / History's Delivery cell: the mode over the method; Shell Station over its pickup store. */
-function historyDelivery(delivery) {
+/** Logs / History's Delivery cell: the mode over the method (a partial order's modes, 2026-11-03); Shell Station over its pickup store. */
+function historyDelivery(delivery, orders = null) {
   const shell = isShellStation(delivery.method);
+  const modes = orders ? orders.map((order) => modeLabel(order.delivery?.mode)).join(' + ') : modeLabel(delivery.mode);
   return el(
     'span',
     { className: 'p-l2' },
-    el('span', { textContent: shell ? methodLabel(delivery.method) : modeLabel(delivery.mode) }),
+    el('span', { textContent: shell ? methodLabel(delivery.method) : modes }),
     el('span', { className: 'p-l2__sub', textContent: shell ? (delivery.store ?? 'Pickup') : methodLabel(delivery.method) }),
   );
+}
+
+/**
+ * A partial order (user's request 2026-11-03): a run that split its order in two has its orders in
+ * `orders`, each { orderNumber, delivery: { method, mode }, products, backoffice, approvedLater };
+ * null for a run with one order. A run going on has them as its log said (`partial.orders`).
+ */
+const ordersOfRow = (row) => (row?.orders?.length > 1 ? row.orders : null);
+const orderName = (index) => `Order ${index + 1}`;
+/** "07156003 and 07156004" */
+const andList = (items) => (items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items.at(-1)}` : (items[0] ?? ''));
+/** The order of a row to approve next: its own, or a partial order's first one not approved yet. */
+const toApprove = (row) => (ordersOfRow(row) ? (row.orders.find((order) => order.orderNumber && !order.approvedLater)?.orderNumber ?? null) : row.orderNumber);
+
+/**
+ * The steps of a partial order (tests/order.e2e.spec.ts): order 2's checkout after order 1's
+ * confirmation, its approval after order 1's, its extraction last. `modes`: each order's mode.
+ */
+function partialSteps(steps, modes) {
+  const all = [...steps];
+  const named = (step, n) => (n > 1 ? `${step} (order ${n})` : step);
+  for (let n = 2; n <= modes.length; n++) {
+    const checkout = ['Cart validation', `${modeLabel(modes[n - 1])} Delivery Selection`, 'Checkout', 'Pay', 'OTP', 'Order confirmation'].map((step) => named(step, n));
+    all.splice(all.indexOf(named('Order confirmation', n - 1)) + 1, 0, ...checkout);
+    all.splice(all.indexOf(named('Approve order', n - 1)) + 1, 0, named('Find order in backoffice', n), named('Approve order', n));
+    all.push(named('Order extracted', n));
+  }
+  return all;
 }
 
 function stepsOf(run) {
   if (run.automation === 'approve') return info.steps.approve;
   if (isShellStation(run.deliveryMethod)) return info.steps.shellStation;
-  return info.steps.order[run.mode] ?? info.steps.order.express;
+  const steps = info.steps.order[run.mode] ?? info.steps.order.express;
+  // A partial order: order 2's steps too, once the run has split its order.
+  const orders = run.orders ?? run.partial?.orders;
+  return orders?.length > 1 ? partialSteps(steps, orders.map((order) => order.mode ?? order.delivery?.mode)) : steps;
 }
 
 const LOG_LINE = /^\[(\d\d):(\d\d):(\d\d)\] \[([A-Z]+)\] (.*)$/;
@@ -1696,7 +1745,7 @@ function renderSteps(view, queued) {
   const row = view === 'result' ? latestRow(last) : null;
   const values = formValues();
   const key = JSON.stringify([
-    view, queued, run?.runId, run?.step, run?.mode, run?.deliveryMethod, run?.passed, run?.cancelled, row, view === 'result' ? resultOpen.message : null, automation(), values.mode, values.deliveryMethod,
+    view, queued, run?.runId, run?.step, run?.mode, run?.deliveryMethod, run?.partial, run?.passed, run?.cancelled, row, view === 'result' ? resultOpen.message : null, automation(), values.mode, values.deliveryMethod,
   ]);
   if (key === stepsKey) return;
   stepsKey = key;
@@ -1705,10 +1754,12 @@ function renderSteps(view, queued) {
   // Placed without a backoffice account (2026-10-14): the approval steps didn't run in this run.
   const unapproved = view === 'run' ? run?.passed === 'order_placed_unapproved' : row.outcome === 'order_placed_unapproved';
   const halted = view === 'result' ? haltedStep(run, row, steps) : null;
+  // The last order's confirmation (a partial order has one per order, 2026-11-03).
+  const confirmed = steps.reduce((at, step, index) => (/^Order confirmation\b/.test(step) ? index : at), -1);
   const doneUpTo = !run
     ? -1
     : unapproved
-      ? steps.indexOf('Order confirmation')
+      ? confirmed
       : succeeded
         ? steps.length - 1
         : view === 'run'
@@ -1913,24 +1964,31 @@ $('live-screen').addEventListener('blur', () => {
 // ---- Side navigation and header: orders awaiting approval, the server, your run --------------
 
 function renderAwaiting() {
-  const waiting = history.filter((row) => row.status === 'awaiting_approval' && row.orderNumber);
+  // Each order still to approve: a partial order's (2026-11-03) one by one.
+  const waiting = history
+    .filter((row) => row.status === 'awaiting_approval' && row.orderNumber)
+    .flatMap((row) =>
+      ordersOfRow(row)
+        ? row.orders.filter((order) => order.orderNumber && !order.approvedLater).map((order) => ({ row, orderNumber: order.orderNumber }))
+        : [{ row, orderNumber: row.orderNumber }],
+    );
   $('history-count').hidden = waiting.length === 0;
   $('history-count').textContent = String(waiting.length);
   $('history-count').setAttribute('aria-label', `${waiting.length} awaiting approval`);
   $('side-awaiting').hidden = waiting.length === 0;
   $('side-awaiting-count').textContent = String(waiting.length);
   $('side-awaiting-list').replaceChildren(
-    ...waiting.slice(0, 3).map((row) =>
+    ...waiting.slice(0, 3).map(({ row, orderNumber }) =>
       el(
         'div',
         { className: 'p-sidequeue' },
         el(
           'span',
           { className: 'p-sidequeue__text' },
-          el('span', { className: 'wa-mono p-small', textContent: row.orderNumber }),
+          el('span', { className: 'wa-mono p-small', textContent: orderNumber }),
           el('span', { className: 'wa-meta', textContent: [row.operator, formatShort(row.startedAt)].filter(Boolean).join(' · ') }),
         ),
-        button('Approve', { variant: 'ghost', size: 'sm', onclick: () => prefillApprove(row.orderNumber), attrs: { 'aria-label': `Approve order ${row.orderNumber}` } }),
+        button('Approve', { variant: 'ghost', size: 'sm', onclick: () => prefillApprove(orderNumber), attrs: { 'aria-label': `Approve order ${orderNumber}` } }),
       ),
     ),
   );
@@ -1985,14 +2043,24 @@ const riskText = (automation) =>
 function sentenceOf(row, step = null) {
   const final = row.backoffice?.finalStatus;
   const at = step ?? row.error?.step ?? stoppedAt(row);
+  // A partial order (2026-11-03): its orders and their statuses are listed with it.
+  const orders = ordersOfRow(row);
+  const partial = orders ? `A partial order of ${orders.length} orders: ` : '';
   if (row.status === 'completed') {
     if (row.automation === 'approve') return `Approved in the backoffice: Approve Order was clicked once.${final ? ` The order is now ${final}.` : ''}`;
     // (An extraction still pending is said in the note under this sentence.)
-    if (row.outcome === 'ready_to_check_out') return 'Stopped at the Checkout button: no order was placed (placing an order was switched off, e.g. npm run test:e2e).';
+    if (row.outcome === 'ready_to_check_out') {
+      return `Stopped at the Checkout button: no order was placed (placing an order was switched off, e.g. npm run test:e2e).${orders ? ' The order would be split in two: a partial order.' : ''}`;
+    }
+    if (orders) return `${partial}${row.approvedLater ? 'placed without a backoffice account and approved later.' : 'each placed and approved in the backoffice.'}`;
     if (row.approvedLater) return 'Placed without a backoffice account and approved later.';
     return `Placed and approved in the backoffice.${final ? ` The order is now ${final}.` : ''}`;
   }
-  if (row.status === 'awaiting_approval') return 'Order placed. The run stopped at "Thank you for your order": there was no backoffice account to approve it.';
+  if (row.status === 'awaiting_approval') {
+    return orders
+      ? `${partial}${orders.length === 2 ? 'both' : 'all'} placed. The run stopped at "Thank you for your order": there was no backoffice account to approve them.`
+      : 'Order placed. The run stopped at "Thank you for your order": there was no backoffice account to approve it.';
+  }
   if (row.status === 'no_change') return `WTCSG${row.orderNumber} was already ${final ?? 'extracted'}, so Approve Order was not clicked.`;
   if (row.status === 'stopped') {
     return `Stopped${at ? ` during ${at}` : ''}. ${row.warning ? riskText(row.automation) : row.automation === 'approve' ? 'Nothing was approved.' : 'No order was placed.'}`;
@@ -2001,25 +2069,36 @@ function sentenceOf(row, step = null) {
   return [row.automationLabel, row.delivery ? deliveryText(row.delivery.method, row.delivery.mode, row.delivery.store) : null, row.operator].filter(Boolean).join(' · ');
 }
 
-/** What is still to come for a completed run's order (2026-10-23), or null. */
-function pendingNote(row) {
+/**
+ * A partial order's orders with how each is named in a note (" (order 2)"), else the run as its one
+ * order: [[{ orderNumber, backoffice }, which]].
+ */
+const noteOrders = (row) => (ordersOfRow(row) ? row.orders.map((order, index) => [order, ` (${orderName(index).toLowerCase()})`]) : [[row, '']]);
+
+/** What is still to come for a completed run's order (2026-10-23): a note for each order it concerns. */
+function pendingNotes(row) {
   if (row.status === 'awaiting_approval') {
-    return `Awaiting approval: someone with a backoffice account must approve order ${row.orderNumber}${approvesNewOrders() ? ' (Approve now)' : ' (Logs / History → Approve)'}. Until then it is not extracted.`;
+    const waiting = ordersOfRow(row) ? row.orders.filter((order) => order.orderNumber && !order.approvedLater).map((order) => order.orderNumber) : [row.orderNumber];
+    const one = waiting.length === 1;
+    return [
+      `Awaiting approval: someone with a backoffice account must approve ${one ? 'order' : 'orders'} ${andList(waiting)}${approvesNewOrders() ? ' (Approve now)' : ' (Logs / History → Approve)'}. Until then ${one ? 'it is' : 'they are'} not extracted.`,
+    ];
   }
-  if (row.backoffice?.extractionPending) {
-    return `Extraction still pending: WTCSG${row.orderNumber} is at ${row.backoffice.finalStatus ?? 'Order Split'}, not yet ORDER_EXTRACTED. ${extractionCheckText(row)}`;
-  }
-  return null;
+  return noteOrders(row).flatMap(([order, which]) =>
+    order.backoffice?.extractionPending
+      ? [`Extraction still pending: WTCSG${order.orderNumber}${which} is at ${order.backoffice.finalStatus ?? 'Order Split'}, not yet ORDER_EXTRACTED. ${extractionCheckText(row, order.backoffice)}`]
+      : [],
+  );
 }
 
 /**
  * How the hosted server's checks of a pending extraction stand (user's request 2026-11-03: the order
  * is checked in the shop until it is ORDER_EXTRACTED, and Logs / History updates by itself). The
- * desktop window doesn't check.
+ * desktop window doesn't check. `backoffice`: the order's (a partial order's own).
  */
-function extractionCheckText(row) {
+function extractionCheckText(row, backoffice = row.backoffice) {
   if (!serverMode) return 'Wait a few minutes, then check it in the backoffice.';
-  const check = row.backoffice.extractionCheck ?? {};
+  const check = backoffice.extractionCheck ?? {};
   const last = check.lastCheckedAt ? ` Last checked ${formatShort(check.lastCheckedAt)}${check.lastStatus ? `: ${check.lastStatus}` : ''}.` : '';
   const who = check.who?.length ? check.who.join(' and ') : row.operator ?? 'the person who placed it';
   if (check.state === 'paused' && check.reason === 'signed_out') {
@@ -2029,11 +2108,51 @@ function extractionCheckText(row) {
   if (check.state === 'stopped') return `It is no longer checked automatically (24 hours have passed): check it in the backoffice.${last}`;
   return `It is checked automatically, and this page updates by itself once it is extracted.${last}${check.problem ? ` ${check.problem}` : ''}`;
 }
-/** An order the automatic checks saw extracted after its run ended (2026-11-03), or null. */
-function extractedNote(row) {
-  const later = row.backoffice?.extractedLater;
-  if (!later) return null;
-  return `Order extracted: WTCSG${row.orderNumber} reached ORDER_EXTRACTED at ${formatShort(later.at)}, after the run (seen by the automatic check at ${formatShort(later.seenAt)}).`;
+/** The orders the automatic checks saw extracted after the run ended (2026-11-03): a note each. */
+function extractedNotes(row) {
+  return noteOrders(row).flatMap(([order, which]) => {
+    const later = order.backoffice?.extractedLater;
+    if (!later) return [];
+    return [`Order extracted: WTCSG${order.orderNumber}${which} reached ORDER_EXTRACTED at ${formatShort(later.at)}, after the run (seen by the automatic check at ${formatShort(later.seenAt)}).`];
+  });
+}
+
+/** A partial order's order, as its status says (2026-11-03): its backoffice status, its approval, or not placed. */
+function orderStatus(row, order) {
+  if (!order.orderNumber) {
+    if (row.outcome === 'ready_to_check_out') return { text: 'Not placed: placing orders was switched off', tone: '' };
+    return { text: row.status === 'running' ? 'Not placed yet' : 'Not placed', tone: row.status === 'running' ? '' : 'p-warn' };
+  }
+  const backoffice = order.backoffice;
+  if (backoffice?.extractedLater) return { text: `ORDER_EXTRACTED at ${formatShort(backoffice.extractedLater.at)}, after the run`, tone: 'p-ok' };
+  if (backoffice?.finalStatus) {
+    const pending = backoffice.extractionPending;
+    return { text: `${backoffice.finalStatus}${pending ? ', extraction pending' : ''}`, tone: pending ? 'p-warn' : /EXTRACTED/i.test(backoffice.finalStatus) ? 'p-ok' : '' };
+  }
+  // Approve Order clicked, then the run failed before reading its status (seen 2026-11-03).
+  if (backoffice?.approved) return { text: 'Approved by this run (its status was not read)', tone: '' };
+  if (order.approvedLater) return { text: `Approved later by ${order.approvedLater.by}`, tone: 'p-ok' };
+  if (row.status === 'awaiting_approval' || row.status === 'completed') return { text: 'Awaiting approval', tone: 'p-warn' };
+  return { text: 'Placed, not approved', tone: 'p-warn' };
+}
+
+/** A partial order's orders, one line each: its name, number (with Copy), mode and products, status. */
+function ordersList(row, size = 'small') {
+  return el(
+    'ol',
+    { className: 'p-orders', attrs: { 'aria-label': 'Orders of this run' } },
+    ...row.orders.map((order, index) => {
+      const status = orderStatus(row, order);
+      return el(
+        'li',
+        { className: 'p-orders__item' },
+        el('span', { className: 'p-orders__name', textContent: orderName(index) }),
+        order.orderNumber ? copyable(order.orderNumber, `Backoffice code WTCSG${order.orderNumber}`, size) : null,
+        el('span', { className: 'p-orders__facts', textContent: `${modeLabel(order.delivery?.mode)} · PLU ${productsText(order.products) || '—'}` }),
+        el('span', { className: `p-orders__status ${status.tone}`, textContent: status.text }),
+      );
+    }),
+  );
 }
 const noteBox = (text, ok = false) =>
   el('p', { className: `p-note${ok ? ' p-note--ok' : ''}`, attrs: { role: 'status' } }, iconNode(ok ? 'check' : 'circle-alert'), el('span', { textContent: text }));
@@ -2128,14 +2247,18 @@ function renderResult(view) {
 function resultHead(run, row, steps) {
   const facts = resultFacts(row);
   const sentence = row.status === 'failed' ? el('span', { className: 'wa-muted', textContent: sentenceOf(row) }) : sentenceOf(row, run.step);
+  // A partial order (2026-11-03): each order with its number, mode and status, instead of the one number.
+  const orders = ordersOfRow(row);
+  const number = !orders && row.orderNumber;
   return el(
     'section',
     { className: `wa-result tone-${TONES[shownStatus(row)] ?? 'neutral'}`, attrs: { 'aria-label': 'Result', 'data-state': row.status } },
-    el('div', { className: 'wa-result__row' }, statusBadge(shownStatus(row), resultTitle(run, row, steps), 'title'), row.orderNumber ? null : el('span', { className: 'wa-result__facts', textContent: facts })),
-    row.orderNumber ? el('div', { className: 'wa-result__row' }, copyable(row.orderNumber, `Backoffice code WTCSG${row.orderNumber}`, 'display'), el('span', { className: 'wa-result__facts', textContent: facts })) : null,
+    el('div', { className: 'wa-result__row' }, statusBadge(shownStatus(row), resultTitle(run, row, steps), 'title'), number ? null : el('span', { className: 'wa-result__facts', textContent: facts })),
+    number ? el('div', { className: 'wa-result__row' }, copyable(row.orderNumber, `Backoffice code WTCSG${row.orderNumber}`, 'display'), el('span', { className: 'wa-result__facts', textContent: facts })) : null,
+    orders ? ordersList(row) : null,
     el('p', { className: 'wa-result__sentence' }, sentence),
-    pendingNote(row) ? noteBox(pendingNote(row)) : null,
-    extractedNote(row) ? noteBox(extractedNote(row), true) : null,
+    ...pendingNotes(row).map((text) => noteBox(text)),
+    ...extractedNotes(row).map((text) => noteBox(text, true)),
     row.approvedLater ? el('span', { className: 'wa-muted p-small', textContent: approvedLaterText(row) }) : null,
     el('div', { className: 'wa-result__actions' }, ...resultActions(row)),
   );
@@ -2153,7 +2276,12 @@ function resultActions(row) {
       showCompose();
     },
   });
-  const copyNumber = (variant) => button('Copy order number', { variant, onclick: () => copyText(row.orderNumber, 'Order number copied.') });
+  // A partial order's numbers all at once (2026-11-03).
+  const numbers = ordersOfRow(row) ? row.orders.map((order) => order.orderNumber).filter(Boolean) : [row.orderNumber];
+  const copyNumber = (variant) =>
+    numbers.length > 1
+      ? button('Copy order numbers', { variant, onclick: () => copyText(numbers.join(', '), 'Order numbers copied.') })
+      : button('Copy order number', { variant, onclick: () => copyText(row.orderNumber, 'Order number copied.') });
   if (row.status === 'failed') {
     return [
       button('Copy error report', {
@@ -2167,7 +2295,7 @@ function resultActions(row) {
   }
   if (row.status === 'awaiting_approval') {
     return approvesNewOrders()
-      ? [button('Approve now', { variant: 'primary', onclick: () => prefillApprove(row.orderNumber) }), copyNumber('ghost'), newOrder('secondary')]
+      ? [button('Approve now', { variant: 'primary', onclick: () => prefillApprove(toApprove(row)) }), copyNumber('ghost'), newOrder('secondary')]
       : [copyNumber('primary'), newOrder('secondary')];
   }
   if (row.status === 'completed') return row.automation === 'approve' ? [newApproval] : [newOrder('primary'), again('secondary')];
@@ -2234,11 +2362,24 @@ function productRows(row) {
     for (const plu of decision.plus) chosen.set(plu, `Replaced by PLU ${added.join(', ')}`);
     for (const plu of added) if (!lines.some((line) => line.plu === plu)) lines.push({ plu, quantity: one?.quantity ?? 1, instead: decision.plus.join(', ') });
   }
+  // A partial order (2026-11-03): the order each product is in, and whether that one was placed.
+  const orders = ordersOfRow(row);
+  const inOrder = (plu) => {
+    const index = orders ? orders.findIndex((order) => order.products.some((line) => line.plu === plu)) : -1;
+    if (index < 0) return null;
+    const order = orders[index];
+    const which = `${orderName(index)}, ${modeLabel(order.delivery?.mode)}`;
+    const units = order.products.find((line) => line.plu === plu).quantity;
+    if (order.orderNumber) return { plu, quantity: units, status: `Ordered · ${which}`, ordered: true };
+    if (row.outcome === 'ready_to_check_out' || row.status === 'running') return { plu, quantity: units, status: `In the bag · ${which}` };
+    return { plu, quantity: units, status: `Not ordered · ${which}`, warn: true };
+  };
   return lines.map(({ plu, quantity, instead }) => {
     const ordered = row.products.ordered.find((line) => line.plu === plu);
     if (row.products.excluded.includes(plu)) return { plu, quantity, status: `Left out: not available ${leftOutFor(row.delivery?.method, row.delivery?.mode)}`, warn: true };
     if (chosen.has(plu) && !ordered) return { plu, quantity, status: chosen.get(plu), warn: true };
     if (row.products.soldOut.includes(plu)) return { plu, quantity, status: 'Skipped: sold out', warn: true };
+    if (inOrder(plu)) return inOrder(plu);
     if (instead && !ordered && !halted) return { plu, quantity, status: `Instead of PLU ${instead}` };
     if (halted) return { plu, quantity, status: 'Not ordered' };
     if (ordered && row.outcome === 'ready_to_check_out') return { plu, quantity: ordered.quantity, status: 'In the bag' };
@@ -2367,6 +2508,8 @@ function searchText(row) {
     row.runId,
     row.orderNumber,
     row.orderNumber ? `WTCSG${row.orderNumber}` : null,
+    // A partial order's other orders (2026-11-03).
+    ...(row.orders ?? []).flatMap((order) => (order.orderNumber ? [order.orderNumber, `WTCSG${order.orderNumber}`] : [])),
     row.automationLabel,
     row.statusLabel,
     row.delivery?.label,
@@ -2468,7 +2611,7 @@ function historyRowNodes(row) {
     el('td', {}, el('span', { className: 'p-l2' }, el('span', { className: 'wa-num', textContent: formatDate(row.startedAt) }), el('span', { className: 'p-l2__sub wa-num', textContent: formatHm(row.startedAt) }))),
     el('td', {}, el('span', { className: 'p-auto' }, iconNode(row.automation === 'approve' ? 'circle-check' : 'shopping-bag'), el('span', { textContent: row.automationLabel }))),
     el('td', {}, orderCell(row)),
-    el('td', {}, row.delivery ? historyDelivery(row.delivery) : el('span', { className: 'wa-muted', textContent: '—' })),
+    el('td', {}, row.delivery ? historyDelivery(row.delivery, ordersOfRow(row)) : el('span', { className: 'wa-muted', textContent: '—' })),
     el('td', {}, productsCell(row)),
     el('td', {}, statusCell(row)),
     el('td', {}, errorCell(row)),
@@ -2480,6 +2623,18 @@ function historyRowNodes(row) {
 }
 
 function orderCell(row) {
+  // A partial order (2026-11-03): each order's number, one under the other ("not placed" for one that wasn't).
+  if (ordersOfRow(row)) {
+    return el(
+      'span',
+      { className: 'p-l2' },
+      ...row.orders.map((order, index) =>
+        order.orderNumber
+          ? el('span', { className: 'p-rowcopy' }, copyable(order.orderNumber, `${orderName(index)}: WTCSG${order.orderNumber}`, 'small'))
+          : el('span', { className: 'p-l2__sub', textContent: `${orderName(index).toLowerCase()} not placed` }),
+      ),
+    );
+  }
   if (row.orderNumber) return el('span', { className: 'p-rowcopy' }, copyable(row.orderNumber, `WTCSG${row.orderNumber}`, 'small'));
   if (row.outcome === 'ready_to_check_out') return el('span', { className: 'p-l2' }, el('span', { className: 'wa-muted', textContent: '—' }), el('span', { className: 'p-l2__sub', textContent: 'no order placed' }));
   return el('span', { className: 'wa-muted', textContent: '—' });
@@ -2497,24 +2652,32 @@ function productsCell(row) {
   );
 }
 
-/** Approve (Logs / History, the side navigation, the result): the approval of that order, ready to confirm. */
+/**
+ * Approve (Logs / History, the side navigation, the result): the approval of that order, ready to
+ * confirm. A partial order's: the next of its orders not approved yet (2026-11-03).
+ */
 const approveButton = (row) =>
-  row.status === 'awaiting_approval' && row.orderNumber
+  row.status === 'awaiting_approval' && toApprove(row)
     ? button('Approve', {
         size: 'sm',
+        attrs: ordersOfRow(row) ? { 'aria-label': `Approve order ${toApprove(row)}` } : {},
         onclick: (event) => {
           event.stopPropagation();
-          prefillApprove(row.orderNumber);
+          prefillApprove(toApprove(row));
         },
       })
     : null;
 
 function statusCell(row) {
   const at = row.error?.step ?? stoppedAt(row);
-  // What is still to come for the order (2026-10-23).
-  const next = row.status === 'awaiting_approval' ? 'Awaiting approval' : row.backoffice?.extractionPending ? 'Extraction pending' : null;
-  // Extracted after the run, as the automatic checks saw (2026-11-03).
-  const extracted = row.backoffice?.extractedLater ? 'Order extracted' : null;
+  const orders = ordersOfRow(row);
+  // What is still to come for the order (2026-10-23); of a partial order, how many still wait.
+  const waiting = orders ? orders.filter((order) => order.orderNumber && !order.approvedLater).length : 1;
+  const awaiting = orders && waiting < orders.length ? `Awaiting approval (${waiting} of ${orders.length})` : 'Awaiting approval';
+  const next = row.status === 'awaiting_approval' ? awaiting : row.backoffice?.extractionPending ? 'Extraction pending' : null;
+  // Extracted after the run, as the automatic checks saw (2026-11-03); which ones of a partial order.
+  const later = orders ? orders.map((order, index) => (order.backoffice?.extractedLater ? orderName(index) : null)).filter(Boolean) : [];
+  const extracted = orders ? (later.length ? `${andList(later)} extracted` : null) : row.backoffice?.extractedLater ? 'Order extracted' : null;
   return el(
     'span',
     { className: 'p-lstatus' },
@@ -2567,6 +2730,8 @@ const factsList = (pairs) =>
   );
 
 function backofficeText(row) {
+  // A partial order (2026-11-03): each order's.
+  if (ordersOfRow(row)) return row.orders.map((order, index) => `${orderName(index)}: ${orderStatus(row, order).text}`).join(' · ');
   if (!row.backoffice) return row.outcome === 'order_placed_unapproved' ? (row.approvedLater ? `Approved later by ${row.approvedLater.by}` : 'Not approved yet') : null;
   const status = row.backoffice.finalStatus ?? '?';
   const pending = row.backoffice.extractionPending ? ', extraction pending' : '';
@@ -2576,7 +2741,7 @@ function backofficeText(row) {
 
 /** The expanded row: what happened, the run's facts, and its evidence. */
 function runDetails(row) {
-  const steps = stepsOf({ automation: row.automation, mode: row.delivery?.mode, deliveryMethod: row.delivery?.method });
+  const steps = stepsOf({ automation: row.automation, mode: row.delivery?.mode, deliveryMethod: row.delivery?.method, orders: ordersOfRow(row) });
   const halted = row.error?.step ?? stoppedAt(row);
   const stepsText =
     halted && steps.includes(halted)
@@ -2594,8 +2759,7 @@ function runDetails(row) {
     }
   } else {
     what.push(el('p', { className: 'p-x__msg', textContent: sentenceOf(row) }));
-    if (pendingNote(row)) what.push(noteBox(pendingNote(row)));
-    if (extractedNote(row)) what.push(noteBox(extractedNote(row), true));
+    what.push(...pendingNotes(row).map((text) => noteBox(text)), ...extractedNotes(row).map((text) => noteBox(text, true)));
   }
   if (row.approvedLater) what.push(el('div', { className: 'p-x__muted', textContent: approvedLaterText(row) }));
   if (row.evidenceState === 'deleted') what.push(el('div', { className: 'p-x__muted', textContent: 'Its screenshots and files were removed after the retention period; this summary stays.' }));
@@ -2610,10 +2774,12 @@ function runDetails(row) {
           ),
         )
       : null;
+  const orders = ordersOfRow(row);
   const facts = factsList([
-    ['Order', row.orderNumber ? el('span', { className: 'wa-mono', textContent: `WTCSG${row.orderNumber}` }) : 'No order number'],
+    // A partial order (2026-11-03): each of its orders.
+    [orders ? 'Orders' : 'Order', orders ? ordersList(row) : row.orderNumber ? el('span', { className: 'wa-mono', textContent: `WTCSG${row.orderNumber}` }) : 'No order number'],
     ['Products', products && products.childElementCount > 0 ? products : null],
-    ['Delivery', row.delivery ? deliveryText(row.delivery.method, row.delivery.mode, row.delivery.store) : null],
+    ['Delivery', row.delivery ? (orders ? row.delivery.label : deliveryText(row.delivery.method, row.delivery.mode, row.delivery.store)) : null],
     ['Decisions', row.decisions?.length ? el('ol', { className: 'p-decisions' }, ...decisionItems(row)) : null],
     ['Backoffice', backofficeText(row)],
     ['Steps', stepsText],
@@ -3259,6 +3425,8 @@ function connect() {
       extractionPending: data.extractionPending ?? false,
       orderNumber: data.orderNumber,
       excluded: data.excluded,
+      // A partial order's orders, once the run has split its order (2026-11-03).
+      partial: data.partial ?? current.partial ?? null,
       // The run's question to the person, and what they decided (2026-10-22).
       question: data.question ?? null,
       decisions: data.decisions ?? [],

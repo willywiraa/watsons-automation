@@ -29,6 +29,21 @@ test.describe('backoffice: signed out by the backoffice during the run', () => {
     expect(session.freshSessions).toBe(0);
   });
 
+  test('another order after the first one’s approval, in the same tab (a partial order, 2026-11-03): Orders, already selected, is found again', async ({ page }) => {
+    const seen = await standInBackoffice(page.context());
+    const session = new BackofficeSession(page, STAND_IN_ACCOUNT, FAST);
+    const orders = new BackofficeOrderPage(session);
+    await session.signIn();
+    expect(await orders.approve(ORDER, await orders.open(ORDER))).toBe(true);
+    // The menu row is now "Orders selected" (as on staging); finding the next order still works, at once.
+    await expect(page.getByRole('row', { name: 'Orders selected' })).toBeVisible();
+    const started = Date.now();
+    expect(await orders.open(ORDER)).toBe('Order Split');
+    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(seen.approveClicks).toBe(1);
+    expect(session.freshSessions).toBe(0);
+  });
+
   test('signed out right after choosing the role: the tab is closed and a new one signs in', async ({ page }) => {
     const seen = await standInBackoffice(page.context(), { signOut: (moment, count) => moment === 'after-role' && count === 1 });
     const session = new BackofficeSession(page, STAND_IN_ACCOUNT, FAST);
