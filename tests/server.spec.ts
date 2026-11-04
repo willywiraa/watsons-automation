@@ -600,9 +600,15 @@ test.describe('hosted server', () => {
     await expect(row).not.toContainText('Extraction pending');
     await row.click();
     const details = page.locator('tr.hdetail');
-    await expect(details).toContainText('Placed and approved in the backoffice. The order is now ORDER_EXTRACTED.');
-    await expect(details.locator('.p-note--ok')).toContainText('Order extracted: WTCSG12345678 reached ORDER_EXTRACTED at');
-    await expect(details).not.toContainText('Extraction still pending');
+    await expect(details.locator('.p-x__summary')).toHaveText('Placed and approved in the backoffice. The order is now ORDER_EXTRACTED.');
+    await expect(details.locator('.p-x__order .p-pill')).toHaveText('Extracted');
+    await expect(details.locator('.p-x__order')).toContainText('ORDER_EXTRACTED at');
+    const extracted = details.locator('.p-x__event[data-part="extracted-1"]');
+    await expect(extracted).toContainText('ORDER_EXTRACTED, after the run');
+    await extracted.getByRole('button').click();
+    await expect(extracted).toContainText('WTCSG12345678 reached ORDER_EXTRACTED at');
+    await expect(extracted).toContainText('seen by the automatic check at');
+    await expect(details).not.toContainText('Extraction pending');
     // The run's result on the Automation page too.
     await page.getByRole('tab', { name: 'Automation' }).click();
     await expect(page.locator('#result .p-note--ok')).toContainText('Order extracted: WTCSG12345678 reached ORDER_EXTRACTED');
@@ -714,7 +720,10 @@ test.describe('hosted server', () => {
     await expect(row).toContainText('Order 2 extracted', { timeout: 15_000 });
     await expect(row).not.toContainText('Extraction pending');
     await row.click();
-    await expect(page.locator('tr.hdetail .p-note--ok')).toContainText('Order extracted: WTCSG12345679 (order 2) reached ORDER_EXTRACTED at');
+    const details = page.locator('tr.hdetail');
+    await expect(details.locator('.p-x__order .p-pill')).toHaveText(['Extracted', 'Extracted']);
+    await expect(details.locator('.p-x__event[data-part="extracted-2"]')).toContainText('ORDER_EXTRACTED (order 2), after the run');
+    await expect(details).not.toContainText('Extraction pending');
     await page.getByRole('tab', { name: 'Automation' }).click();
     await expect(page.locator('#result .p-orders__item').nth(1)).toContainText('ORDER_EXTRACTED at');
     await expect(page.locator('#result')).not.toContainText('Extraction still pending');

@@ -432,27 +432,74 @@ body{background:var(--canvas);min-width:1024px}
 .p-ev__thumb img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
 .p-ev__n{color:var(--text-2);font-size:var(--text-small);font-variant-numeric:tabular-nums}
 .p-ltable .p-lx > td{padding:0 24px 24px 52px;background:var(--hover-row);border-top:0;cursor:auto}
-.p-x{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr);gap:32px;padding-top:16px;border-top:1px dashed var(--border)}
-.p-x__col{display:grid;gap:8px;align-content:start;min-width:0}
+/* A run's details (user's request 2026-11-04): a summary line; Order results beside Execution
+   activity; then Additional information, each part opening on its own. Two columns while the
+   details are wide enough, one under the other below that. */
+.p-x{container-type:inline-size;display:grid;gap:12px;padding-top:16px;border-top:1px dashed var(--border)}
+.p-x__head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 24px;min-height:32px}
+.p-x__summary{flex:1 1 360px;margin:0;min-width:0;max-width:var(--measure);font-size:var(--text-body);line-height:var(--lh-body);overflow-wrap:anywhere;text-wrap:pretty}
+.p-x__summary.is-fail{color:var(--danger);font-weight:var(--weight-semibold)}
+.p-x__stats{display:flex;align-items:center;flex-wrap:wrap;gap:4px 16px;color:var(--text-2);font-size:var(--text-small);line-height:var(--lh-small);font-variant-numeric:tabular-nums;white-space:nowrap}
+.p-x__split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-panel)}
+.p-x__panel{display:grid;gap:12px;align-content:start;min-width:0;padding:16px 20px 20px}
+.p-x__panel + .p-x__panel{border-left:1px solid var(--border)}
+@container (max-width:760px){
+  .p-x__split{grid-template-columns:minmax(0,1fr)}
+  .p-x__panel + .p-x__panel{border-left:0;border-top:1px solid var(--border)}
+}
 .p-x__h{margin:0;font-size:var(--text-small);line-height:var(--lh-small);font-weight:var(--weight-semibold);color:var(--text-2)}
-.p-x__headline{font-weight:var(--weight-semibold)}
+/* Order results: each order's number and status first, then its delivery and products. */
+.p-x__orders{display:grid;margin:0;padding:0;list-style:none}
+.p-x__order{display:grid;gap:4px;padding:12px 0;border-top:1px solid var(--border)}
+.p-x__order:first-child{padding-top:0;border-top:0}
+.p-x__order:last-child{padding-bottom:0}
+.p-x__ordertop{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;min-height:28px}
+.p-x__order .wa-copy__value{font-size:var(--text-heading);line-height:var(--lh-heading);font-weight:var(--weight-semibold)}
+.p-x__ordernone{font-size:var(--text-heading);line-height:var(--lh-heading);font-weight:var(--weight-semibold);color:var(--text-2)}
+.p-x__orderline{font-size:var(--text-small);line-height:var(--lh-small);color:var(--text-2);overflow-wrap:anywhere}
+.p-x__orderprods{font-family:var(--font-mono);color:var(--text)}
+.p-x__ordernote{font-size:var(--text-caption);line-height:var(--lh-caption);color:var(--text-3);overflow-wrap:anywhere}
+.p-x__orderacts{display:flex;gap:8px;padding-top:4px}
+/* Execution activity: numbered events, oldest first; an event with more to say opens below its line. */
+.p-x__timeline{display:grid;margin:0;padding:0;list-style:none}
+.p-x__event{position:relative;display:grid;grid-template-columns:22px minmax(0,1fr);column-gap:12px;padding-bottom:14px}
+.p-x__event:last-child{padding-bottom:0}
+.p-x__event:not(:last-child)::before{content:"";position:absolute;left:10.5px;top:26px;bottom:3px;width:1px;background:var(--border)}
+.p-x__mark{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;font-size:var(--text-caption);font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums;color:var(--_c);background:color-mix(in srgb,var(--_c) 14%,var(--surface))}
+.p-x__evmain{min-width:0}
+.p-x__evbtn,.p-x__evline{display:grid;grid-template-columns:minmax(0,1fr) auto 16px;column-gap:12px;align-items:baseline;width:100%;padding:1px 0 0;border:0;background:none;font:inherit;color:inherit;text-align:left}
+.p-x__evbtn{cursor:pointer}
+.p-x__evbtn:hover .p-x__evtitle{color:var(--accent)}
+.p-x__evtitle{min-width:0;font-weight:var(--weight-semibold)}
+.p-x__evtime{color:var(--text-3);font-size:var(--text-caption);line-height:var(--lh-caption);font-variant-numeric:tabular-nums;white-space:nowrap}
+.p-x__evsum{grid-column:1 / 3;color:var(--text-2);font-size:var(--text-small);line-height:var(--lh-small);overflow-wrap:anywhere}
+.p-x__evbtn > .wa-icon,.p-x__secbtn > .wa-icon{color:var(--text-3);transition:transform var(--dur-select) var(--ease)}
+.p-x__evbtn > .wa-icon{grid-row:1;grid-column:3;align-self:center}
+.p-x__evbtn[aria-expanded="true"] > .wa-icon,.p-x__secbtn[aria-expanded="true"] > .wa-icon{transform:rotate(180deg)}
+.p-x__evbody{display:grid;gap:6px;margin-top:8px;padding:2px 0 2px 12px;border-left:2px solid var(--border);font-size:var(--text-small);line-height:var(--lh-small);color:var(--text-2);overflow-wrap:anywhere}
+.p-x__evbody strong{color:var(--text);font-weight:var(--weight-semibold)}
+/* Additional information: one line each, opening below it. */
+.p-x__more{display:grid;gap:8px}
+.p-x__secs{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-panel);overflow:clip}
+.p-x__sec + .p-x__sec{border-top:1px solid var(--border)}
+.p-x__secbtn{display:grid;grid-template-columns:max-content minmax(0,1fr) 16px;align-items:center;column-gap:16px;width:100%;min-height:40px;padding:0 16px;border:0;background:none;font:inherit;color:var(--text);text-align:left;cursor:pointer}
+.p-x__secbtn:hover{background:var(--hover-row)}
+.p-x__sectitle{font-weight:var(--weight-semibold)}
+.p-x__secsum{min-width:0;color:var(--text-2);font-size:var(--text-small);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p-x__secbody{display:grid;gap:12px;padding:4px 16px 16px;min-width:0}
+.p-x__alloc{display:grid;grid-template-columns:max-content max-content minmax(0,1fr);gap:4px 16px;margin:0;font-size:var(--text-small);line-height:var(--lh-small)}
+.p-x__alloc .is-warn{color:var(--warning)}
 .p-x__code{font-family:var(--font-mono);font-size:var(--text-caption);line-height:var(--lh-caption);color:var(--danger);overflow-wrap:anywhere}
-.p-x__msg{margin:0;font-size:var(--text-body);line-height:var(--lh-body);max-width:var(--measure);overflow-wrap:anywhere;text-wrap:pretty}
 .p-x__muted{font-size:var(--text-small);line-height:var(--lh-small);color:var(--text-2);overflow-wrap:anywhere}
-.p-x__warn{color:var(--warning)}
 .p-x__facts{margin:0;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;font-size:var(--text-small);line-height:var(--lh-small)}
 .p-x__facts dt{color:var(--text-2)}
 .p-x__facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
-.p-x__prods{display:grid;gap:2px}
 .p-x__shots{display:flex;flex-wrap:wrap;gap:12px}
 .p-x__shot{display:grid;gap:6px;justify-items:start;padding:0;border:0;background:none;font:inherit;font-size:var(--text-caption);line-height:var(--lh-caption);color:var(--text-2);cursor:zoom-in;text-align:left;max-width:136px;overflow-wrap:anywhere}
 .p-x__shotimg{display:block;width:136px;aspect-ratio:16 / 10;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-panel);background:var(--surface);transition:border-color var(--dur-hover) var(--ease)}
 .p-x__shotimg img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
 .p-x__shot:hover .p-x__shotimg{border-color:var(--accent)}
 .p-x__shotimg.is-fail{border-color:var(--danger)}
-.p-x__actions{display:flex;flex-wrap:wrap;gap:8px;padding-top:4px}
-.p-x__more summary{cursor:pointer;font-size:var(--text-small);color:var(--accent);width:max-content}
-.p-x__more .wa-log{margin-top:8px}
 .p-lfoot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--border)}
 .p-lempty{padding:8px 24px}
 /* Live browser */
@@ -574,7 +621,7 @@ dialog.p-tour[open]{display:block}
   .p-hdr-tour__label{display:none}
 }
 @media (max-width:1100px){
-  .p-grid-compose,.p-grid-result,.p-run-grid,.p-run-grid--desktop,.p-x{grid-template-columns:minmax(0,1fr)}
+  .p-grid-compose,.p-grid-result,.p-run-grid,.p-run-grid--desktop{grid-template-columns:minmax(0,1fr)}
   .p-main--run{height:auto}
   .p-ready__list{grid-template-columns:repeat(2,minmax(0,1fr))}
   .wa-header{gap:var(--space-5)}
@@ -2623,14 +2670,16 @@ function historyRowNodes(row) {
 }
 
 function orderCell(row) {
-  // A partial order (2026-11-03): each order's number, one under the other ("not placed" for one that wasn't).
+  // A partial order (2026-11-03): each order's number, one under the other ("not placed" for one
+  // that wasn't). Their Copy buttons are in the run's details (Order results): two here would cover
+  // the Delivery column (2026-11-04).
   if (ordersOfRow(row)) {
     return el(
       'span',
       { className: 'p-l2' },
       ...row.orders.map((order, index) =>
         order.orderNumber
-          ? el('span', { className: 'p-rowcopy' }, copyable(order.orderNumber, `${orderName(index)}: WTCSG${order.orderNumber}`, 'small'))
+          ? el('span', { className: 'wa-mono p-small', title: `${orderName(index)}: WTCSG${order.orderNumber}`, textContent: order.orderNumber })
           : el('span', { className: 'p-l2__sub', textContent: `${orderName(index).toLowerCase()} not placed` }),
       ),
     );
@@ -2729,99 +2778,462 @@ const factsList = (pairs) =>
     ...pairs.filter(([, value]) => value !== null && value !== undefined && value !== '').flatMap(([label, value]) => [el('dt', { textContent: label }), el('dd', {}, value)]),
   );
 
-function backofficeText(row) {
-  // A partial order (2026-11-03): each order's.
-  if (ordersOfRow(row)) return row.orders.map((order, index) => `${orderName(index)}: ${orderStatus(row, order).text}`).join(' · ');
-  if (!row.backoffice) return row.outcome === 'order_placed_unapproved' ? (row.approvedLater ? `Approved later by ${row.approvedLater.by}` : 'Not approved yet') : null;
-  const status = row.backoffice.finalStatus ?? '?';
-  const pending = row.backoffice.extractionPending ? ', extraction pending' : '';
-  const later = row.backoffice.extractedLater ? ` at ${formatShort(row.backoffice.extractedLater.at)}` : '';
-  return `${status}${later}${pending}${row.backoffice.approved ? ' (approved by this run)' : ' (approved before this run)'}`;
+// ---- A run's details in Logs / History (user's request 2026-11-04) ----------------------------
+// A split layout, so a run can be understood without reading every detail: a one-line summary;
+// Order results (each order's number and final status first) beside Execution activity (what
+// happened, oldest first, each event opening for more); then Additional information (product
+// allocation, screenshots, technical logs, metadata), each opening on its own. Everything the
+// details showed before is still in one of these places.
+
+/** What has been opened or closed in the details: run id → Map(part → open). Parts not touched yet keep their default. */
+const detailParts = new Map();
+const partOpen = (runId, part, byDefault = false) => detailParts.get(runId)?.get(part) ?? byDefault;
+
+/**
+ * A part of a run's details that opens and closes (an event, an Additional information section):
+ * [its button, with `head` in it, and `body` below]. Classes `${className}btn` and `${className}body`.
+ * The page draws Logs / History again often, so what is open is remembered (detailParts).
+ */
+function disclosure(row, part, { className, head, body, byDefault = false }) {
+  const open = partOpen(row.runId, part, byDefault);
+  const id = `run-${row.runId}-${part}`;
+  const panel = el('div', { className: `${className}body`, id, hidden: !open }, ...body.map((item) => (typeof item === 'string' ? el('div', { textContent: item }) : item)));
+  const toggle = el('button', { type: 'button', className: `${className}btn`, attrs: { 'aria-expanded': String(open), 'aria-controls': id, 'data-part': part } }, ...head, iconNode('chevron-down'));
+  toggle.addEventListener('click', () => {
+    const now = toggle.getAttribute('aria-expanded') !== 'true';
+    if (!detailParts.has(row.runId)) detailParts.set(row.runId, new Map());
+    detailParts.get(row.runId).set(part, now);
+    toggle.setAttribute('aria-expanded', String(now));
+    panel.hidden = !now;
+  });
+  return [toggle, panel];
 }
 
-/** The expanded row: what happened, the run's facts, and its evidence. */
+const statusPill = (label, tone) =>
+  el('span', { className: `p-pill tone-${tone}` }, el('span', { className: 'p-pill__dot', attrs: { 'aria-hidden': 'true' } }), el('span', { textContent: label }));
+/** How an order went: its mode, or Shell Station. */
+const howDelivered = (delivery) => (isShellStation(delivery?.method) ? methodLabel(delivery.method) : modeLabel(delivery?.mode));
+/** "10321, 10031, 21679 +3 more" */
+const shortList = (items) => (items.length > 3 ? `${items.slice(0, 3).join(', ')} +${items.length - 3} more` : items.join(', '));
+
+/** The orders a run's details show: a partial order's, the run's one (placed or not), or the order it approved. */
+function detailOrders(row) {
+  if (ordersOfRow(row)) return row.orders.map((order, index) => ({ ...order, name: orderName(index) }));
+  if (row.automation === 'approve') return [{ orderNumber: row.orderNumber, backoffice: row.backoffice, products: [] }];
+  const products = row.products.ordered.length > 0 ? row.products.ordered : row.products.requested;
+  return [{ orderNumber: row.orderNumber, delivery: row.delivery, products, backoffice: row.backoffice, approvedLater: row.approvedLater }];
+}
+
+/** A short note on where a pending extraction's checks stand. */
+function checkNote(row, backoffice) {
+  if (!serverMode) return 'check it in the backoffice in a few minutes';
+  const check = backoffice.extractionCheck ?? {};
+  if (check.state === 'paused' && check.reason === 'signed_out') return 'checks paused until its person signs in again';
+  if (check.state === 'paused') return 'not checked: the shop doesn’t show it for the testing account';
+  if (check.state === 'stopped') return 'no longer checked (24 hours): check it in the backoffice';
+  return `checked automatically${check.lastCheckedAt ? `, last at ${formatShort(check.lastCheckedAt)}` : ''}`;
+}
+
+/** An order's final status (the badge, in a word or two) and a note with the backoffice's own status. */
+function orderState(row, order) {
+  if (!order.orderNumber) {
+    if (row.outcome === 'ready_to_check_out') return { label: 'Not placed', tone: 'neutral', note: 'Placing an order was switched off for this run.' };
+    if (row.status === 'running') return { label: 'Not placed yet', tone: 'neutral', note: '' };
+    return { label: 'Not placed', tone: 'neutral', note: row.status === 'failed' ? 'The run failed before placing it.' : `The run ended (${row.statusLabel.toLowerCase()}) before placing it.` };
+  }
+  const backoffice = order.backoffice;
+  if (backoffice?.extractedLater) return { label: 'Extracted', tone: 'success', note: `ORDER_EXTRACTED at ${formatShort(backoffice.extractedLater.at)}, after the run` };
+  if (backoffice?.extractionPending) return { label: 'Extraction pending', tone: 'warning', note: `${backoffice.finalStatus ?? 'Order Split'} · ${checkNote(row, backoffice)}` };
+  if (backoffice?.finalStatus) {
+    const extracted = /EXTRACTED/i.test(backoffice.finalStatus);
+    return { label: extracted ? 'Extracted' : backoffice.finalStatus, tone: extracted ? 'success' : 'neutral', note: `${backoffice.finalStatus} · ${backoffice.approved ? 'approved by this run' : 'approved before this run'}` };
+  }
+  // Approve Order clicked, then the run failed before reading the status (seen 2026-11-03).
+  if (backoffice?.approved) return { label: 'Approved', tone: 'success', note: 'Approved by this run; its status was not read.' };
+  if (order.approvedLater) return { label: 'Approved', tone: 'success', note: `Approved later by ${order.approvedLater.by} · ${formatShort(order.approvedLater.at)}` };
+  if (row.automation === 'approve') return { label: row.status === 'failed' ? 'Not approved' : row.statusLabel, tone: row.status === 'failed' ? 'danger' : 'neutral', note: '' };
+  if (row.status === 'awaiting_approval' || row.status === 'completed') return { label: 'Awaiting approval', tone: 'warning', note: 'No backoffice account in this run: someone with one approves it.' };
+  return { label: 'Placed', tone: 'neutral', note: 'Placed, not approved: the run ended before approving it.' };
+}
+
+/** Order results: each order's number (with Copy) and status first, then its delivery and products. */
+function orderResults(row) {
+  return el(
+    'ol',
+    { className: 'p-x__orders' },
+    ...detailOrders(row).map((order) => {
+      const state = orderState(row, order);
+      // The mode first, as Logs / History's Delivery column: "Express · Click & Collect"; Shell Station's store.
+      const method = order.delivery?.method;
+      const delivery = !order.delivery ? null : isShellStation(method) ? deliveryText(method, null, order.delivery.store) : `${modeLabel(order.delivery.mode)} · ${methodLabel(method)}`;
+      const facts = [order.name, row.automation === 'approve' ? 'Approve existing order' : null, delivery].filter(Boolean);
+      const waiting = row.status === 'awaiting_approval' && order.orderNumber && !order.approvedLater && !order.backoffice;
+      return el(
+        'li',
+        { className: 'p-x__order' },
+        el(
+          'div',
+          { className: 'p-x__ordertop' },
+          order.orderNumber ? copyable(order.orderNumber, `Backoffice code WTCSG${order.orderNumber}`, 'order') : el('span', { className: 'p-x__ordernone', textContent: 'No order placed' }),
+          statusPill(state.label, state.tone),
+        ),
+        facts.length ? el('div', { className: 'p-x__orderline', textContent: facts.join(' · ') }) : null,
+        order.products?.length ? el('div', { className: 'p-x__orderline p-x__orderprods', textContent: `PLU ${productsText(order.products)}` }) : null,
+        state.note ? el('div', { className: 'p-x__ordernote', textContent: state.note }) : null,
+        waiting ? el('div', { className: 'p-x__orderacts' }, approveOrderButton(order.orderNumber)) : null,
+      );
+    }),
+  );
+}
+const approveOrderButton = (orderNumber) =>
+  button('Approve', {
+    size: 'sm',
+    attrs: { 'aria-label': `Approve order ${orderNumber}` },
+    onclick: (event) => {
+      event.stopPropagation();
+      prefillApprove(orderNumber);
+    },
+  });
+
+const EVENT_TITLES = { not_eligible: 'Delivery eligibility', out_of_stock: 'Out of stock', not_found: 'Product not found', not_available: 'Can’t be added', choose_store: 'Pickup store', buy_option: 'Buy offer', error: 'Problem' };
+
+/** A question the run asked, as an event: what was wrong, what was chosen; the full question in its details. */
+function decisionEvent(decision, index) {
+  const plus = decision.plus ?? [];
+  const what = plus.length > 0 ? `PLU ${shortList(plus)}` : '';
+  const label = decision.label ?? '';
+  // "… not eligible for Express delivery with Home Delivery." / "… not available at SHELL BUKIT BATOK ROAD."
+  const where = decision.message.match(/not (eligible for|available at) (.+?)(?: delivery(?: with [^.]*)?)?\.$/);
+  const issue =
+    {
+      not_eligible: where ? `${what} not ${where[1]} ${where[2]}` : `${what} not eligible`,
+      out_of_stock: `${what} out of stock`,
+      not_found: `${what} not found`,
+      not_available: `${what} can’t be added to the bag`,
+      buy_option: `${what} has ${decision.message.match(/ has (.+?)\. /)?.[1] ?? 'a Buy 2 offer'}`,
+      choose_store: 'A pickup store to choose',
+      error: `A problem at ${decision.step}`,
+    }[decision.kind] ?? decision.message;
+  const replacements = String(decision.plu ?? '').split(/\s+/).filter(Boolean);
+  const done =
+    {
+      skip: decision.kind === 'not_eligible' ? 'removed' : 'skipped',
+      replace: `replaced by PLU ${shortList(replacements)}`,
+      split: `split into 2 orders${label.includes(': ') ? ` (${label.slice(label.indexOf(': ') + 2)})` : ''}`,
+      switch_mode: `switched to ${label.match(/^Use (.+) instead$/)?.[1] ?? 'the other mode'}`,
+      switch_method: `switched to ${label.match(/^Try (.+)$/)?.[1] ?? 'another method'}`,
+      choose: `chose ${decision.choice ?? 'a store'}`,
+      buy: label.match(/^Buy (\d+)/) ? `buying ${label.match(/^Buy (\d+)/)[1]}` : label,
+      retry: 'tried again',
+      stop: 'run stopped',
+    }[decision.action] ?? label;
+  return {
+    part: `decision-${index}`,
+    at: decision.at,
+    title: decision.action === 'split' ? 'Partial order' : decision.action === 'replace' ? 'Product replacement' : EVENT_TITLES[decision.kind] ?? 'Decision',
+    summary: `${issue} → ${done}`,
+    tone: decision.action === 'stop' ? 'danger' : 'warning',
+    details: [
+      decision.message,
+      el('div', {}, el('strong', { textContent: 'Choice: ' }), `${label}${replacements.length ? ` (PLU ${replacements.join(', ')})` : ''}${decision.choice ? ` (${decision.choice})` : ''}`),
+      decision.outcome ? el('div', {}, el('strong', { textContent: 'Result: ' }), decision.outcome) : null,
+      el('div', { className: 'wa-meta', textContent: [decision.step, decision.by, formatTime(decision.at)].filter(Boolean).join(' · ') }),
+    ],
+  };
+}
+
+/** A failed run's screenshots, taken when it failed (click one to enlarge it). */
+const shotButtons = (row, names) =>
+  el(
+    'div',
+    { className: 'p-x__shots' },
+    ...names.map((name) =>
+      el(
+        'button',
+        { type: 'button', className: 'p-x__shot', onclick: () => openViewer(row, row.screenshots.indexOf(name)), attrs: { 'aria-label': `View ${name}` } },
+        el('span', { className: `p-x__shotimg${row.error?.screenshots.includes(name) ? ' is-fail' : ''}` }, el('img', { src: shotUrl(row.runId, name), alt: '', loading: 'lazy', decoding: 'async' })),
+        el('span', { textContent: name }),
+      ),
+    ),
+  );
+
+/**
+ * Execution activity: the run's events, oldest first. Before Checkout what the run asked or did
+ * about products and delivery; the orders placed; the backoffice approval; how the run ended;
+ * after it, approvals and extractions seen later. Each: { part, at, title, summary, tone, details }.
+ */
+function activityOf(row) {
+  const events = [];
+  const decisions = row.decisions ?? [];
+  const orders = ordersOfRow(row);
+  const asked = (kind, plu) => decisions.some((decision) => decision.kind === kind && decision.plus?.includes(plu));
+  if (row.automation === 'order') {
+    // What a run decided by itself (from the command line, nobody to ask).
+    const leftOut = row.products.excluded.filter((plu) => !asked('not_eligible', plu));
+    if (leftOut.length) events.push({ part: 'left-out', title: 'Delivery eligibility', summary: `PLU ${shortList(leftOut)} left out: not available ${leftOutFor(row.delivery?.method, row.delivery?.mode)}`, tone: 'warning' });
+    const soldOut = row.products.soldOut.filter((plu) => !asked('out_of_stock', plu));
+    if (soldOut.length) events.push({ part: 'sold-out', title: 'Out of stock', summary: `PLU ${shortList(soldOut)} skipped`, tone: 'warning' });
+  }
+  decisions.forEach((decision, index) => events.push(decisionEvent(decision, index)));
+  if (orders && !decisions.some((decision) => decision.action === 'split')) {
+    events.push({ part: 'split', title: 'Partial order', summary: `Split into ${orders.length} orders (${orders.map((order) => howDelivered(order.delivery)).join(', then ')}) by the run itself`, tone: 'warning' });
+  }
+  const gift = row.products?.freeGiftRemoved;
+  if (gift) events.push({ part: 'gift', title: 'Free gift removed', summary: gift === true ? 'A free gift was taken out of the bag' : `Taken out of the bag (${gift})`, tone: 'neutral' });
+
+  // The orders placed, and their approval in this run.
+  if (row.automation === 'order') {
+    const placed = orders ? orders.filter((order) => order.orderNumber) : row.orderNumber ? [{ orderNumber: row.orderNumber, delivery: row.delivery }] : [];
+    if (placed.length > 0) {
+      const missing = orders ? orders.length - placed.length : 0;
+      events.push({
+        part: 'placed',
+        title: placed.length > 1 ? 'Orders placed' : 'Order placed',
+        summary: `${placed.map((order) => `${order.orderNumber} (${howDelivered(order.delivery)})`).join(', ')}${missing ? ` · ${plural(missing, 'order')} not placed` : ''}`,
+        tone: 'success',
+      });
+    } else if (row.outcome === 'ready_to_check_out') {
+      events.push({ part: 'ready', title: 'Ready to check out', summary: `Placing an order was switched off: no order placed${orders ? ' (it would be split in two)' : ''}`, tone: 'neutral' });
+    }
+    const approvals = (orders ?? [{ orderNumber: row.orderNumber, backoffice: row.backoffice }]).filter((order) => order.orderNumber && order.backoffice);
+    if (approvals.length > 0) {
+      const statuses = approvals.map((order) => `${orders ? `${orderName(orders.indexOf(order))}: ` : ''}${order.backoffice.finalStatus ?? 'status not read'}`);
+      const who = orders ? (approvals.length === orders.length ? (orders.length === 2 ? 'Both orders approved' : 'All orders approved') : `${plural(approvals.length, 'order')} approved`) : row.backoffice.approved ? 'Approved' : 'Approved before this run';
+      events.push({
+        part: 'approval',
+        title: 'Backoffice approval',
+        summary: `${who} · ${statuses.join(', ')}`,
+        tone: 'success',
+        details: approvals.map((order) => `WTCSG${order.orderNumber}: ${(order.backoffice.statuses ?? []).join(' → ') || 'no status read'}${order.backoffice.approved ? ' (Approve Order clicked by this run)' : ''}`),
+      });
+    } else if (placed.length > 0 && !row.error) {
+      events.push({ part: 'awaiting', title: 'Awaiting approval', summary: `No backoffice account in this run: ${placed.length > 1 ? 'the orders wait' : 'the order waits'} for someone with one`, tone: 'warning' });
+    }
+  } else if (row.backoffice) {
+    events.push({
+      part: 'approval',
+      title: row.backoffice.approved ? 'Approved' : 'No change',
+      summary: row.backoffice.approved ? `Approve Order clicked once · now ${row.backoffice.finalStatus ?? 'approved'}` : `Already ${row.backoffice.finalStatus ?? 'approved'}: Approve Order not clicked`,
+      tone: row.backoffice.approved ? 'success' : 'neutral',
+      details: [`WTCSG${row.orderNumber}: ${(row.backoffice.statuses ?? []).join(' → ') || 'no status read'}`],
+    });
+  }
+
+  // How the run ended, when not as planned.
+  if (row.error) {
+    const error = row.error;
+    events.push({
+      part: 'failure',
+      at: error.at,
+      title: `Failed${error.step ? ` at ${error.step}` : ''}`,
+      summary: [error.code, error.reason].filter(Boolean).join(' · '),
+      tone: 'danger',
+      byDefault: true,
+      details: [
+        el('div', {}, el('strong', { textContent: error.reason || 'The test failed.' })),
+        el('div', { className: 'p-x__code', textContent: [error.code, error.step, formatTime(error.at ?? row.finishedAt ?? row.startedAt)].filter(Boolean).join(' · ') }),
+        el('div', {}, 'Page: ', el('span', { className: 'wa-mono', textContent: error.pages.length > 0 ? error.pages.join('\n') : 'Not recorded' })),
+        error.screenshots.length > 0 ? shotButtons(row, error.screenshots) : null,
+      ],
+    });
+  } else if (row.status === 'stopped') {
+    events.push({ part: 'stopped', at: row.finishedAt, title: `Stopped${stoppedAt(row) ? ` at ${stoppedAt(row)}` : ''}`, summary: row.warning ? riskText(row.automation) : row.automation === 'approve' ? 'Nothing was approved' : 'No order was placed', tone: 'warning' });
+  } else if (row.status === 'interrupted') {
+    events.push({ part: 'interrupted', at: row.finishedAt, title: 'Interrupted', summary: 'The run ended without a result: check the order before running again', tone: 'warning' });
+  } else if (row.status === 'running') {
+    events.push({ part: 'running', title: 'Running', summary: 'The run is going on', tone: 'accent' });
+  }
+
+  // After the run: approved later, extracted later, or extraction still pending; in time order.
+  const after = [];
+  const each = orders ? orders.map((order, index) => [order, ` (${orderName(index).toLowerCase()})`, index + 1]) : [[row, '', 1]];
+  for (const [entry, which, number] of each) {
+    const later = entry.approvedLater;
+    if (later) after.push({ part: `later-${number}`, at: later.at, title: 'Approved later', summary: `by ${later.by}${which}`, tone: 'success', details: [`Approved in run ${later.runId} (Approve existing order), ${formatTime(later.at)}.`] });
+    const backoffice = entry.backoffice;
+    if (backoffice?.extractedLater) {
+      after.push({
+        part: `extracted-${number}`,
+        at: backoffice.extractedLater.at,
+        title: 'Extracted',
+        summary: `ORDER_EXTRACTED${which}, after the run`,
+        tone: 'success',
+        details: [`WTCSG${entry.orderNumber} reached ORDER_EXTRACTED at ${formatTime(backoffice.extractedLater.at)}; seen by the automatic check at ${formatTime(backoffice.extractedLater.seenAt)}.`],
+      });
+    } else if (backoffice?.extractionPending) {
+      after.push({
+        part: `pending-${number}`,
+        at: backoffice.extractionCheck?.lastCheckedAt ?? null,
+        title: 'Extraction pending',
+        summary: `${backoffice.finalStatus ?? 'Order Split'}${which} · ${checkNote(row, backoffice)}`,
+        tone: 'warning',
+        details: [`WTCSG${entry.orderNumber} is at ${backoffice.finalStatus ?? 'Order Split'}, not yet ORDER_EXTRACTED. ${extractionCheckText(row, backoffice)}`],
+      });
+    }
+  }
+  after.sort((a, b) => (a.at ?? '￿').localeCompare(b.at ?? '￿'));
+  return [...events, ...after];
+}
+
+/** Execution activity: a numbered list of the run's events; an event with details opens for them. */
+function activityList(row) {
+  const events = activityOf(row);
+  if (events.length === 0) return el('p', { className: 'p-x__muted', textContent: 'Nothing to report: the run went as planned.' });
+  return el(
+    'ol',
+    { className: 'p-x__timeline' },
+    ...events.map((event, index) => {
+      const head = [
+        el('span', { className: 'p-x__evtitle', textContent: event.title }),
+        el('span', { className: 'p-x__evtime', textContent: event.at ? formatShort(event.at) : '' }),
+        el('span', { className: 'p-x__evsum', textContent: event.summary }),
+      ];
+      const details = (event.details ?? []).filter(Boolean);
+      const line = details.length > 0 ? disclosure(row, event.part, { className: 'p-x__ev', head, body: details, byDefault: event.byDefault }) : [el('div', { className: 'p-x__evline' }, ...head)];
+      return el(
+        'li',
+        { className: `p-x__event tone-${event.tone}`, attrs: { 'data-part': event.part } },
+        el('span', { className: 'p-x__mark', attrs: { 'aria-hidden': 'true' }, textContent: String(index + 1) }),
+        el('div', { className: 'p-x__evmain' }, ...line),
+      );
+    }),
+  );
+}
+
+/** Additional information: product allocation, screenshots, technical logs, metadata; each closed until opened. */
+function moreInformation(row, steps) {
+  const sections = [];
+  if (row.automation === 'order') {
+    const lines = productRows(row);
+    if (lines.length > 0) {
+      const gift = row.products.freeGiftRemoved;
+      sections.push({
+        part: 'products',
+        title: 'Product allocation',
+        summary: `${plural(lines.length, 'product')} · ${lines.filter((line) => line.ordered).length} ordered`,
+        body: [
+          el(
+            'div',
+            { className: 'p-x__alloc' },
+            ...lines.flatMap((line) => [
+              el('span', { className: 'wa-mono', textContent: line.plu }),
+              el('span', { className: 'wa-num wa-muted', textContent: `×${line.quantity}` }),
+              el('span', { className: line.warn ? 'is-warn' : 'wa-muted', textContent: line.status }),
+            ]),
+          ),
+          gift ? el('div', { className: 'p-x__muted', textContent: gift === true ? 'A free gift was removed from the bag.' : `Free gift removed: ${gift}` }) : null,
+        ],
+      });
+    }
+  }
+  const shots = row.screenshots;
+  sections.push({
+    part: 'evidence',
+    title: 'Evidence screenshots',
+    summary: row.evidenceState === 'deleted' ? 'Removed after the retention period' : shots.length > 0 ? plural(shots.length, 'screenshot') : 'None',
+    body: [
+      row.evidenceState === 'deleted' ? 'Its screenshots and files were removed after the retention period; this summary stays.' : null,
+      shots.length > 0 ? shotButtons(row, shots) : row.evidenceState === 'deleted' ? null : 'No screenshots.',
+    ],
+  });
+  const error = row.error;
+  const backoffices = (ordersOfRow(row) ?? [{ orderNumber: row.orderNumber, backoffice: row.backoffice }]).filter((order) => order.backoffice);
+  sections.push({
+    part: 'logs',
+    title: 'Technical logs',
+    summary: error ? (error.code ?? 'Error') : row.warning ? 'Check the order' : 'No errors',
+    body: [
+      error
+        ? factsList([
+            ['Code', error.code],
+            ['Step', error.step],
+            ['Time', formatTime(error.at ?? row.finishedAt ?? row.startedAt)],
+            ['Reason', error.reason],
+            ['Pages', error.pages.length > 0 ? el('span', { className: 'wa-mono', textContent: error.pages.join('\n') }) : 'Not recorded'],
+          ])
+        : null,
+      error?.message && error.message.trim() !== error.reason ? el('pre', { className: 'wa-log', textContent: error.message }) : null,
+      row.warning,
+      ...backoffices.map((order) => `Backoffice, WTCSG${order.orderNumber}: ${(order.backoffice.statuses ?? []).join(' → ') || 'no status read'}${order.backoffice.extractionCheck ? ` · checks: ${order.backoffice.extractionCheck.state}${order.backoffice.extractionCheck.lastCheckedAt ? `, last ${formatTime(order.backoffice.extractionCheck.lastCheckedAt)}` : ''}` : ''}`),
+      !error && !row.warning && backoffices.length === 0 ? 'No errors or warnings in this run.' : null,
+      el('div', { className: 'p-x__muted', textContent: `The run’s full log is kept with its evidence (${row.folder}).` }),
+    ],
+  });
+  const halted = row.error?.step ?? stoppedAt(row);
+  sections.push({
+    part: 'meta',
+    title: 'Execution metadata',
+    summary: [row.runId, row.operator].filter(Boolean).join(' · '),
+    body: [
+      factsList([
+        ['Run', row.runId],
+        ['Automation', row.automationLabel],
+        ['Delivery', row.delivery?.label ?? null],
+        ['Started', formatTime(row.startedAt)],
+        ['Finished', row.finishedAt ? formatTime(row.finishedAt) : null],
+        ['Duration', row.durationMs != null ? formatDuration(row.durationMs) : null],
+        ['Steps', halted && steps.includes(halted) ? `${row.statusLabel} at ${halted}, step ${steps.indexOf(halted) + 1} of ${steps.length}` : plural(steps.length, 'step')],
+        ['Operator', row.operator ?? 'Not recorded (run from before the history)'],
+        ['Evidence', row.folder],
+      ]),
+    ],
+  });
+  return el(
+    'section',
+    { className: 'p-x__more', attrs: { 'aria-label': 'Additional information' } },
+    el('h3', { className: 'p-x__h', textContent: 'Additional information' }),
+    el(
+      'div',
+      { className: 'p-x__secs' },
+      ...sections.map((section) =>
+        el(
+          'div',
+          { className: 'p-x__sec', attrs: { 'data-part': section.part } },
+          ...disclosure(row, section.part, {
+            className: 'p-x__sec',
+            head: [el('span', { className: 'p-x__sectitle', textContent: section.title }), el('span', { className: 'p-x__secsum', textContent: section.summary })],
+            body: section.body.filter(Boolean),
+          }),
+        ),
+      ),
+    ),
+  );
+}
+
+/** The expanded row: a summary line, Order results beside Execution activity, then Additional information. */
 function runDetails(row) {
   const steps = stepsOf({ automation: row.automation, mode: row.delivery?.mode, deliveryMethod: row.delivery?.method, orders: ordersOfRow(row) });
   const halted = row.error?.step ?? stoppedAt(row);
-  const stepsText =
-    halted && steps.includes(halted)
-      ? `${row.status === 'failed' ? 'Failed' : row.status === 'stopped' ? 'Stopped' : 'Interrupted'} at ${halted}, step ${steps.indexOf(halted) + 1} of ${steps.length}`
-      : plural(steps.length, 'step');
-  const what = [];
-  if (row.error) {
-    what.push(
-      el('div', { className: 'p-x__headline', textContent: row.error.reason ?? 'The test failed.' }),
-      el('div', { className: 'p-x__code', textContent: [row.error.code, row.error.step, formatTime(row.error.at ?? row.finishedAt ?? row.startedAt)].filter(Boolean).join(' · ') }),
-      el('div', { className: 'p-x__muted' }, 'Page: ', el('span', { className: 'wa-mono', textContent: row.error.pages.length > 0 ? row.error.pages.join('\n') : 'Not recorded' })),
-    );
-    if (row.error.message && row.error.message.trim() !== row.error.reason) {
-      what.push(el('details', { className: 'p-x__more' }, el('summary', { textContent: 'Full message' }), el('pre', { className: 'wa-log', textContent: row.error.message })));
-    }
-  } else {
-    what.push(el('p', { className: 'p-x__msg', textContent: sentenceOf(row) }));
-    what.push(...pendingNotes(row).map((text) => noteBox(text)), ...extractedNotes(row).map((text) => noteBox(text, true)));
-  }
-  if (row.approvedLater) what.push(el('div', { className: 'p-x__muted', textContent: approvedLaterText(row) }));
-  if (row.evidenceState === 'deleted') what.push(el('div', { className: 'p-x__muted', textContent: 'Its screenshots and files were removed after the retention period; this summary stays.' }));
-
-  const products =
-    row.automation === 'order'
-      ? el(
-          'span',
-          { className: 'p-x__prods' },
-          ...productRows(row).map((line) =>
-            el('span', {}, el('span', { className: 'wa-mono', textContent: line.plu }), ` ×${line.quantity} `, el('span', { className: line.warn ? 'p-x__warn' : 'p-x__muted', textContent: line.status })),
-          ),
-        )
-      : null;
-  const orders = ordersOfRow(row);
-  const facts = factsList([
-    // A partial order (2026-11-03): each of its orders.
-    [orders ? 'Orders' : 'Order', orders ? ordersList(row) : row.orderNumber ? el('span', { className: 'wa-mono', textContent: `WTCSG${row.orderNumber}` }) : 'No order number'],
-    ['Products', products && products.childElementCount > 0 ? products : null],
-    ['Delivery', row.delivery ? (orders ? row.delivery.label : deliveryText(row.delivery.method, row.delivery.mode, row.delivery.store)) : null],
-    ['Decisions', row.decisions?.length ? el('ol', { className: 'p-decisions' }, ...decisionItems(row)) : null],
-    ['Backoffice', backofficeText(row)],
-    ['Steps', stepsText],
-    ['Started', formatTime(row.startedAt)],
-    ['Duration', row.durationMs != null ? formatDuration(row.durationMs) : null],
-    ['Operator', row.operator ?? 'Not recorded (run from before the history)'],
-    ['Run', row.runId],
-    ['Evidence', row.folder],
-  ]);
-
-  const shots = row.screenshots.length
-    ? el(
-        'div',
-        { className: 'p-x__shots' },
-        ...row.screenshots.map((name) =>
-          el(
-            'button',
-            { type: 'button', className: 'p-x__shot', onclick: () => openViewer(row, row.screenshots.indexOf(name)), attrs: { 'aria-label': `View ${name}` } },
-            el('span', { className: `p-x__shotimg${row.error?.screenshots.includes(name) ? ' is-fail' : ''}` }, el('img', { src: shotUrl(row.runId, name), alt: '', loading: 'lazy', decoding: 'async' })),
-            el('span', { textContent: name }),
-          ),
-        ),
-      )
-    : el('span', { className: 'p-x__muted', textContent: 'No screenshots' });
-  const actions = row.error
-    ? el(
-        'div',
-        { className: 'p-x__actions' },
-        button('Copy error report', {
-          size: 'sm',
-          variant: 'ghost',
-          iconName: 'copy',
-          onclick: () => copyText(row.errorReport, 'Error report copied. Paste it into Teams or an email, with the screenshot.', 'Could not copy the error report. Try again.'),
-        }),
-      )
+  const placed = ordersOfRow(row) ? row.orders.filter((order) => order.orderNumber).length : row.orderNumber ? 1 : 0;
+  const stats = [
+    row.automation === 'order' ? (placed > 0 ? plural(placed, 'order') : 'No order placed') : null,
+    row.durationMs != null ? formatDuration(row.durationMs) : null,
+    halted && steps.includes(halted) ? `${row.statusLabel} at step ${steps.indexOf(halted) + 1} of ${steps.length}` : plural(steps.length, 'step'),
+  ].filter(Boolean);
+  const copyReport = row.error
+    ? button('Copy error report', {
+        size: 'sm',
+        variant: 'ghost',
+        iconName: 'copy',
+        onclick: () => copyText(row.errorReport, 'Error report copied. Paste it into Teams or an email, with the screenshot.', 'Could not copy the error report. Try again.'),
+      })
     : null;
   const detail = el(
     'div',
     { className: 'p-x', id: `run-${row.runId}` },
-    el('section', { className: 'p-x__col', attrs: { 'aria-label': 'What happened' } }, el('h3', { className: 'p-x__h', textContent: 'What happened' }), ...what),
-    el('section', { className: 'p-x__col', attrs: { 'aria-label': 'Run' } }, el('h3', { className: 'p-x__h', textContent: 'Run' }), facts),
-    el('section', { className: 'p-x__col', attrs: { 'aria-label': 'Evidence' } }, el('h3', { className: 'p-x__h', textContent: 'Evidence' }), shots, actions),
+    el(
+      'div',
+      { className: 'p-x__head' },
+      el('p', { className: `p-x__summary${row.error ? ' is-fail' : ''}`, textContent: row.error ? row.error.reason || 'The test failed.' : sentenceOf(row) }),
+      el('div', { className: 'p-x__stats' }, ...stats.map((text) => el('span', { textContent: text })), copyReport),
+    ),
+    el(
+      'div',
+      { className: 'p-x__split' },
+      el('section', { className: 'p-x__panel', attrs: { 'aria-label': 'Order results' } }, el('h3', { className: 'p-x__h', textContent: 'Order results' }), orderResults(row)),
+      el('section', { className: 'p-x__panel', attrs: { 'aria-label': 'Execution activity' } }, el('h3', { className: 'p-x__h', textContent: 'Execution activity' }), activityList(row)),
+    ),
+    moreInformation(row, steps),
   );
   detail.addEventListener('click', (event) => event.stopPropagation());
   return detail;

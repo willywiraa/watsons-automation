@@ -249,12 +249,29 @@ screenshots. An order with status **Awaiting approval** ("Needs approval") has a
 button: it fills in an "Approve existing order" run for that order number; the header counts
 these orders. Once that approval completes (or finds the order already extracted), the order
 shows **Completed**, "approved later by …". A **partial order** (since 2026-11-03) shows both
-order numbers and both modes ("Express + Standard"); each of its orders is approved on its own
+order numbers (each with **Copy** in its details) and both modes ("Express + Standard"); each of its orders is approved on its own
 (**Approve** fills in the next one, "Awaiting approval (1 of 2)" meanwhile), and the run shows
 **Completed** once both are. Search by order number (either order of a partial order), PLU, error code or operator,
-filter by status or automation, and click a run for its details (what happened, the run's
-facts and its screenshots; **Copy error report** for a failed run). The first 40 runs show;
+filter by status or automation, and click a run for its details. The first 40 runs show;
 **Load 100 more** shows more.
+
+A run's details (redesigned 2026-11-04, so a run can be understood without reading everything):
+- **One line on top:** what happened (a failed run: its error, with **Copy error report**), and
+  how many orders, how long and how many steps.
+- **Order results** (left): each order's number with **Copy** and its final status as a badge
+  (Extracted, Extraction pending, Awaiting approval with its **Approve**, Approved, Not placed),
+  then its mode and delivery method, its products, and the backoffice's own status in small print.
+- **Execution activity** (right): the run's events, numbered, oldest first: eligibility problems,
+  replacements, skipped products, a partial order, the orders placed, the backoffice approval,
+  how the run ended, and approvals and extractions seen later. One short line each; click one
+  for more (the question asked, the choice and its result; a failure's page and screenshot,
+  open by default).
+- **Additional information** (below, each opening on its own): **Product allocation** (each
+  product and what became of it), **Evidence screenshots**, **Technical logs** (the error code,
+  pages and full message; the backoffice statuses seen) and **Execution metadata** (run id, times,
+  duration, steps, operator, evidence folder).
+- The two panels sit side by side, and one under the other when the space is narrow. What you
+  opened stays open while the page updates.
 **Export CSV** saves every run that matches the search and filters as
 `reports/history-<date_time>.csv` and opens it (order numbers as backoffice codes, so Excel
 keeps their zeros). Runs from before the history show what their evidence folder holds, without

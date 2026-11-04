@@ -636,7 +636,7 @@ test.describe('launcher window', () => {
     await expect(first).toContainText('Shell StationSHELL BUKIT BATOK ROAD');
     await expect(first).not.toContainText('Express');
     await first.click();
-    await expect(page.locator('tr.hdetail')).toContainText('DeliveryShell Station · SHELL BUKIT BATOK ROAD');
+    await expect(page.locator('tr.hdetail .p-x__order')).toContainText('Shell Station · SHELL BUKIT BATOK ROAD');
     // The next window starts with Shell Station and the same choice.
     await page.reload();
     await expect(page.getByLabel('Shell Station')).toBeChecked();
@@ -770,9 +770,18 @@ test.describe('launcher window', () => {
     expect(row.decisions).toMatchObject([{ step: 'Product Search', plus: ['3333'], action: 'skip', label: 'Skip product and continue', outcome: 'PLU 3333 left out of the order', by: 'Test Operator' }]);
     await page.getByRole('tab', { name: /Logs \/ History/ }).click();
     await page.locator('tr.hrow').first().click();
-    await expect(page.locator('tr.hdetail')).toContainText('Decisions');
-    await expect(page.locator('tr.hdetail')).toContainText('→ Skip product and continue: PLU 3333 left out of the order');
-    await expect(page.locator('tr.hdetail')).toContainText('3333 ×1 Skipped: sold out');
+    // The details (2026-11-04): the decision is an event of Execution activity, opening for the
+    // question, the choice and its result; the product's fate is under Product allocation.
+    const details = page.locator('tr.hdetail');
+    const event = details.locator('.p-x__event', { hasText: 'Out of stock' });
+    await expect(event).toContainText('PLU 3333 out of stock → skipped');
+    await expect(event.getByText('Choice: Skip product and continue')).toBeHidden();
+    await event.getByRole('button').click();
+    await expect(event.getByText('Choice: Skip product and continue')).toBeVisible();
+    await expect(event).toContainText('Result: PLU 3333 left out of the order');
+    await expect(event).toContainText('Product Search · Test Operator');
+    await details.getByRole('button', { name: /^Product allocation/ }).click();
+    await expect(details.locator('.p-x__alloc')).toContainText('3333×1Skipped: sold out');
   });
 
   test('a product can be replaced by another PLU; only the choices offered are taken (2026-10-22)', async ({ page }) => {
@@ -877,6 +886,36 @@ test.describe('launcher window', () => {
     await expect(historyRow).toContainText('Express + Standard');
     await page.locator('#history-search').fill('WTCSG12345679');
     await expect(page.locator('tr.hrow')).toHaveCount(1);
+
+    // Its details (2026-11-04): Order results beside Execution activity, then Additional information.
+    await historyRow.click();
+    const details = page.locator('tr.hdetail');
+    await expect(details.locator('.p-x__summary')).toHaveText('A partial order of 2 orders: each placed and approved in the backoffice.');
+    await expect(details.locator('.p-x__stats')).toHaveText('2 orders1 s23 steps');
+    const items = details.getByRole('region', { name: 'Order results' }).locator('.p-x__order');
+    await expect(items).toHaveCount(2);
+    await expect(items.nth(0)).toContainText('12345678');
+    await expect(items.nth(0).locator('.p-pill')).toHaveText('Extracted');
+    await expect(items.nth(0)).toContainText('Order 1 · Express · Click & Collect');
+    await expect(items.nth(0)).toContainText('PLU 10117');
+    await expect(items.nth(0)).toContainText('ORDER_EXTRACTED · approved by this run');
+    await expect(items.nth(1)).toContainText('Order 2 · Standard · Click & Collect');
+    await expect(items.nth(1)).toContainText('PLU 7777');
+    await expect(items.nth(1).getByRole('button', { name: 'Copy 12345679' })).toBeVisible();
+    const events = details.getByRole('region', { name: 'Execution activity' }).locator('.p-x__event');
+    await expect(events).toHaveCount(3);
+    await expect(events.nth(0)).toContainText('Partial order');
+    await expect(events.nth(0)).toContainText('PLU 7777 not eligible for Express → split into 2 orders (Express, then Standard)');
+    await expect(events.nth(1)).toContainText('Orders placed12345678 (Express), 12345679 (Standard)');
+    await expect(events.nth(2)).toContainText('Backoffice approvalBoth orders approved · Order 1: ORDER_EXTRACTED, Order 2: ORDER_EXTRACTED');
+    // Each part opens on its own, and stays open while the page updates.
+    const more = details.getByRole('region', { name: 'Additional information' });
+    await expect(more.locator('.p-x__secbtn')).toHaveText([/^Product allocation2 products · 2 ordered/, /^Evidence screenshots1 screenshot/, /^Technical logsNo errors/, /^Execution metadata/]);
+    await more.getByRole('button', { name: /^Product allocation/ }).click();
+    await expect(more.locator('.p-x__alloc')).toContainText('7777×1Ordered · Order 2, Standard');
+    await page.locator('#history-refresh').click();
+    await expect(more.getByRole('button', { name: /^Product allocation/ })).toHaveAttribute('aria-expanded', 'true');
+    await expect(more.locator('.p-x__alloc')).toBeVisible();
   });
 
   test('a partial order without a backoffice account: both orders await approval, approved one at a time (2026-11-03)', async ({ page }) => {
@@ -901,6 +940,11 @@ test.describe('launcher window', () => {
     // Two orders to approve; Approve fills in the first one.
     await expect(page.locator('#history-count')).toHaveText('2');
     const rows = page.locator('tr.hrow');
+    // The details show both waiting, each with its own Approve (2026-11-04).
+    await rows.first().click();
+    await expect(page.locator('tr.hdetail .p-x__order .p-pill')).toHaveText(['Awaiting approval', 'Awaiting approval']);
+    await expect(page.locator('tr.hdetail').getByRole('button', { name: 'Approve order 12345679' })).toBeVisible();
+    await expect(page.locator('tr.hdetail .p-x__event', { hasText: 'Awaiting approval' })).toContainText('No backoffice account in this run: the orders wait for someone with one');
     await rows.first().getByRole('button', { name: 'Approve order 12345678' }).click();
     await expect(page.locator('#order-number')).toHaveValue('12345678');
     await expect(page.locator('#order-placed')).toContainText('order 1 of a partial order');
@@ -1162,13 +1206,18 @@ test.describe('launcher window', () => {
     await page.locator('#history-status').selectOption('all');
     await page.locator('#history-type').selectOption('all');
 
-    // A failed run's details: its error, with the screenshot taken then.
+    // A failed run's details: its error first, and its failure event open, with the page and the
+    // screenshot taken then (2026-11-04).
     await rows.nth(1).click();
     const details = page.locator('tr.hdetail');
-    const happened = details.getByRole('region', { name: 'What happened' });
-    await expect(happened).toContainText("WTCSG00000404 is not in the backoffice's Orders list.");
-    await expect(happened).toContainText('https://backoffice.example.test/backoffice/');
-    await expect(details).toContainText('WTCSG00000404');
+    await expect(details.locator('.p-x__summary')).toHaveText("WTCSG00000404 is not in the backoffice's Orders list.");
+    await expect(details.locator('.p-x__stats')).toContainText('Failed at step 2 of 4');
+    const activity = details.getByRole('region', { name: 'Execution activity' });
+    await expect(activity.locator('.p-x__event')).toHaveCount(1);
+    await expect(activity).toContainText('Failed at Find order in backoffice');
+    await expect(activity.getByText('https://backoffice.example.test/backoffice/')).toBeVisible();
+    await expect(details.getByRole('region', { name: 'Order results' })).toContainText('00000404');
+    await expect(details.getByRole('region', { name: 'Order results' })).toContainText('Not approved');
     await details.locator('.p-x__shot').first().click();
     await expect(page.locator('#viewer-title')).toHaveText('screenshot-1-failure.png');
     await page.locator('#viewer-open').click();
