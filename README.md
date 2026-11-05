@@ -255,21 +255,21 @@ order numbers (each with **Copy** in its details) and both modes ("Express + Sta
 filter by status or automation, and click a run for its details. The first 40 runs show;
 **Load 100 more** shows more.
 
-A run's details (redesigned 2026-11-04, so a run can be understood without reading everything):
-- **One line on top:** what happened (a failed run: its error, with **Copy error report**), and
-  how many orders, how long and how many steps.
+A run's details (redesigned 2026-11-04 and simplified 2026-11-05, so a run can be understood
+without reading everything):
+- **One line on top:** what happened (a failed run: its error, with **Copy error report**, which
+  holds the full error), how many orders, how long and how many steps, and **Evidence (N)**: the
+  run's screenshots in the screenshot viewer (a failed run's starting with the one taken when it
+  failed). With several, a strip of them under the screenshot goes to any one; the arrow keys
+  and **Open file** (hosted: **Download**) work as before. No screenshots show in the details.
 - **Order results** (left): each order's number with **Copy** and its final status as a badge
   (Extracted, Extraction pending, Awaiting approval with its **Approve**, Approved, Not placed),
   then its mode and delivery method, its products, and the backoffice's own status in small print.
 - **Execution activity** (right): the run's events, numbered, oldest first: eligibility problems,
   replacements, skipped products, a partial order, the orders placed, the backoffice approval,
   how the run ended, and approvals and extractions seen later. One short line each; click one
-  for more (the question asked, the choice and its result; a failure's page and screenshot,
-  open by default).
-- **Additional information** (below, each opening on its own): **Product allocation** (each
-  product and what became of it), **Evidence screenshots**, **Technical logs** (the error code,
-  pages and full message; the backoffice statuses seen) and **Execution metadata** (run id, times,
-  duration, steps, operator, evidence folder).
+  for more (the question asked, the choice and its result; a failure's page and **View
+  screenshot**, open by default).
 - The two panels sit side by side, and one under the other when the space is narrow. What you
   opened stays open while the page updates.
 **Export CSV** saves every run that matches the search and filters as

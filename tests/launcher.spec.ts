@@ -771,7 +771,7 @@ test.describe('launcher window', () => {
     await page.getByRole('tab', { name: /Logs \/ History/ }).click();
     await page.locator('tr.hrow').first().click();
     // The details (2026-11-04): the decision is an event of Execution activity, opening for the
-    // question, the choice and its result; the product's fate is under Product allocation.
+    // question, the choice and its result; the order's products are in Order results.
     const details = page.locator('tr.hdetail');
     const event = details.locator('.p-x__event', { hasText: 'Out of stock' });
     await expect(event).toContainText('PLU 3333 out of stock → skipped');
@@ -780,8 +780,7 @@ test.describe('launcher window', () => {
     await expect(event.getByText('Choice: Skip product and continue')).toBeVisible();
     await expect(event).toContainText('Result: PLU 3333 left out of the order');
     await expect(event).toContainText('Product Search · Test Operator');
-    await details.getByRole('button', { name: /^Product allocation/ }).click();
-    await expect(details.locator('.p-x__alloc')).toContainText('3333×1Skipped: sold out');
+    await expect(details.getByRole('region', { name: 'Order results' }).locator('.p-x__orderprods')).toHaveText('PLU 10117');
   });
 
   test('a product can be replaced by another PLU; only the choices offered are taken (2026-10-22)', async ({ page }) => {
@@ -887,11 +886,12 @@ test.describe('launcher window', () => {
     await page.locator('#history-search').fill('WTCSG12345679');
     await expect(page.locator('tr.hrow')).toHaveCount(1);
 
-    // Its details (2026-11-04): Order results beside Execution activity, then Additional information.
+    // Its details (2026-11-04): Order results beside Execution activity; since 2026-11-05 nothing
+    // below them, and the screenshots behind Evidence (N) by the summary.
     await historyRow.click();
     const details = page.locator('tr.hdetail');
     await expect(details.locator('.p-x__summary')).toHaveText('A partial order of 2 orders: each placed and approved in the backoffice.');
-    await expect(details.locator('.p-x__stats')).toHaveText('2 orders1 s23 steps');
+    await expect(details.locator('.p-x__stats')).toHaveText('2 orders1 s23 stepsEvidence (1)');
     const items = details.getByRole('region', { name: 'Order results' }).locator('.p-x__order');
     await expect(items).toHaveCount(2);
     await expect(items.nth(0)).toContainText('12345678');
@@ -908,14 +908,21 @@ test.describe('launcher window', () => {
     await expect(events.nth(0)).toContainText('PLU 7777 not eligible for Express → split into 2 orders (Express, then Standard)');
     await expect(events.nth(1)).toContainText('Orders placed12345678 (Express), 12345679 (Standard)');
     await expect(events.nth(2)).toContainText('Backoffice approvalBoth orders approved · Order 1: ORDER_EXTRACTED, Order 2: ORDER_EXTRACTED');
-    // Each part opens on its own, and stays open while the page updates.
-    const more = details.getByRole('region', { name: 'Additional information' });
-    await expect(more.locator('.p-x__secbtn')).toHaveText([/^Product allocation2 products · 2 ordered/, /^Evidence screenshots1 screenshot/, /^Technical logsNo errors/, /^Execution metadata/]);
-    await more.getByRole('button', { name: /^Product allocation/ }).click();
-    await expect(more.locator('.p-x__alloc')).toContainText('7777×1Ordered · Order 2, Standard');
+    // An event opens on its own, and stays open while the page updates.
+    const split = events.nth(0).getByRole('button');
+    await split.click();
+    await expect(events.nth(0)).toContainText('Choice: Split into 2 orders: Express, then Standard');
     await page.locator('#history-refresh').click();
-    await expect(more.getByRole('button', { name: /^Product allocation/ })).toHaveAttribute('aria-expanded', 'true');
-    await expect(more.locator('.p-x__alloc')).toBeVisible();
+    await expect(split).toHaveAttribute('aria-expanded', 'true');
+    await expect(events.nth(0).getByText('Choice: Split into 2 orders: Express, then Standard')).toBeVisible();
+    // No Additional information (user's request 2026-11-05), and no screenshot in the details: Evidence opens it.
+    await expect(details.getByRole('region', { name: 'Additional information' })).toHaveCount(0);
+    await expect(details.locator('img')).toHaveCount(0);
+    await details.getByRole('button', { name: 'Evidence (1)' }).click();
+    await expect(page.locator('#viewer')).toBeVisible();
+    await expect(page.locator('#viewer-title')).toHaveText('screenshot-1-backoffice-order.png');
+    await expect(page.locator('#viewer-strip')).toBeHidden(); // one screenshot: no strip
+    await page.locator('#viewer-close').click();
   });
 
   test('a partial order without a backoffice account: both orders await approval, approved one at a time (2026-11-03)', async ({ page }) => {
@@ -1207,7 +1214,7 @@ test.describe('launcher window', () => {
     await page.locator('#history-type').selectOption('all');
 
     // A failed run's details: its error first, and its failure event open, with the page and the
-    // screenshot taken then (2026-11-04).
+    // screenshot taken then (2026-11-04; since 2026-11-05 a button, no thumbnail).
     await rows.nth(1).click();
     const details = page.locator('tr.hdetail');
     await expect(details.locator('.p-x__summary')).toHaveText("WTCSG00000404 is not in the backoffice's Orders list.");
@@ -1218,7 +1225,8 @@ test.describe('launcher window', () => {
     await expect(activity.getByText('https://backoffice.example.test/backoffice/')).toBeVisible();
     await expect(details.getByRole('region', { name: 'Order results' })).toContainText('00000404');
     await expect(details.getByRole('region', { name: 'Order results' })).toContainText('Not approved');
-    await details.locator('.p-x__shot').first().click();
+    await expect(details.locator('img')).toHaveCount(0);
+    await activity.getByRole('button', { name: 'View screenshot' }).click();
     await expect(page.locator('#viewer-title')).toHaveText('screenshot-1-failure.png');
     await page.locator('#viewer-open').click();
     await expect.poll(() => opened.at(-1)).toMatch(/screenshot-1-failure\.png$/);
@@ -1228,7 +1236,28 @@ test.describe('launcher window', () => {
     for (const name of ['Evidence folder', 'Playwright report', 'error-report.txt']) await expect(page.getByRole('button', { name })).toHaveCount(0);
     await expect(details.getByRole('button', { name: 'Copy error report' })).toBeVisible();
     const key = new URL(app.url).searchParams.get('token')!;
-    const runId = (await details.locator('.p-x__facts dt:has-text("Run") + dd').textContent())!.trim();
+    const runId = (await rows.nth(1).getAttribute('data-run'))!;
+
+    // Evidence (N), by the summary (2026-11-05): all the run's screenshots in the viewer, starting
+    // with the one taken when it failed; a strip of them to go to any one.
+    writeFileSync(join(root, 'reports', runId, 'screenshot-2-orders-list.png'), PNG);
+    await page.locator('#history-refresh').click();
+    await details.getByRole('button', { name: 'Evidence (2)' }).click();
+    await expect(page.locator('#viewer-title')).toHaveText('screenshot-1-failure.png');
+    await expect(page.locator('#viewer-count')).toHaveText('1 of 2');
+    const strip = page.locator('#viewer-strip').getByRole('button');
+    await expect(strip).toHaveCount(2);
+    await expect(strip.nth(0)).toHaveAttribute('aria-current', 'true');
+    await expect(strip.nth(0)).toHaveClass(/is-fail/);
+    await strip.nth(1).click();
+    await expect(page.locator('#viewer-title')).toHaveText('screenshot-2-orders-list.png');
+    await expect(page.locator('#viewer-count')).toHaveText('2 of 2');
+    await expect(strip.nth(1)).toHaveAttribute('aria-current', 'true');
+    await expect(strip.nth(0)).not.toHaveAttribute('aria-current', 'true');
+    await page.keyboard.press('ArrowLeft');
+    await expect(page.locator('#viewer-title')).toHaveText('screenshot-1-failure.png');
+    await page.locator('#viewer-close').click();
+    await expect(page.locator('#viewer')).toBeHidden();
     for (const what of ['folder', 'report', 'error-report']) {
       expect(await postJson(app.url, '/api/open', { runId, what }, key)).toMatchObject({ status: 400, body: { error: 'Only screenshots can be opened.' } });
     }
