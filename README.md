@@ -244,8 +244,8 @@ is saved as `error-report.txt` in the run's evidence folder.
 
 Every run in `reports/`, newest first: time, automation, order number (with **Copy**), delivery,
 products (and how many were left out), status (**Running**, **Completed**, **Awaiting approval**,
-**Failed**, **Stopped**, **No change**) and the step it ended at, error code, operator, and
-screenshots. An order with status **Awaiting approval** ("Needs approval") has an **Approve**
+**Failed**, **Stopped**, **No change**) and the step it ended at, error code and operator (its
+screenshots are in its details, under **Evidence**). An order with status **Awaiting approval** ("Needs approval") has an **Approve**
 button: it fills in an "Approve existing order" run for that order number; the header counts
 these orders. Once that approval completes (or finds the order already extracted), the order
 shows **Completed**, "approved later by …". A **partial order** (since 2026-11-03) shows both
@@ -261,15 +261,16 @@ without reading everything):
   holds the full error), how many orders, how long and how many steps, and **Evidence (N)**: the
   run's screenshots in the screenshot viewer (a failed run's starting with the one taken when it
   failed). With several, a strip of them under the screenshot goes to any one; the arrow keys
-  and **Open file** (hosted: **Download**) work as before. No screenshots show in the details.
+  and **Open file** (hosted: **Download**) work as before. This is the run's only Evidence
+  button (the table has no Evidence column since 2026-11-05), and no screenshots show in the details.
 - **Order results** (left): each order's number with **Copy** and its final status as a badge
   (Extracted, Extraction pending, Awaiting approval with its **Approve**, Approved, Not placed),
   then its mode and delivery method, its products, and the backoffice's own status in small print.
 - **Execution activity** (right): the run's events, numbered, oldest first: eligibility problems,
   replacements, skipped products, a partial order, the orders placed, the backoffice approval,
   how the run ended, and approvals and extractions seen later. One short line each; click one
-  for more (the question asked, the choice and its result; a failure's page and **View
-  screenshot**, open by default).
+  for more (the question asked, the choice and its result; a failure's code, time and page, open
+  by default).
 - The two panels sit side by side, and one under the other when the space is narrow. What you
   opened stays open while the page updates.
 **Export CSV** saves every run that matches the search and filters as

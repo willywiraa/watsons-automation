@@ -432,12 +432,6 @@ body{background:var(--canvas);min-width:1024px}
 .p-pill__dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
 .p-lstatus{display:grid;justify-items:start;gap:4px;min-width:0}
 .p-lstatus > *{max-width:100%}
-.p-ev{display:inline-flex;align-items:center;gap:8px}
-.p-ev__thumb{display:grid;place-items:center;width:56px;height:36px;padding:0;overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface-sunken);color:var(--text-3);cursor:zoom-in;transition:border-color var(--dur-hover) var(--ease)}
-.p-ev__thumb:hover{border-color:var(--accent)}
-.p-ev__thumb.is-fail{border-color:var(--danger)}
-.p-ev__thumb img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
-.p-ev__n{color:var(--text-2);font-size:var(--text-small);font-variant-numeric:tabular-nums}
 .p-ltable .p-lx > td{padding:0 24px 24px 52px;background:var(--hover-row);border-top:0;cursor:auto}
 /* A run's details (user's request 2026-11-04): a summary line with Evidence (2026-11-05); Order
    results beside Execution activity, two columns while the details are wide enough, one under
@@ -484,7 +478,6 @@ body{background:var(--canvas);min-width:1024px}
 .p-x__evbtn[aria-expanded="true"] > .wa-icon{transform:rotate(180deg)}
 .p-x__evbody{display:grid;gap:6px;margin-top:8px;padding:2px 0 2px 12px;border-left:2px solid var(--border);font-size:var(--text-small);line-height:var(--lh-small);color:var(--text-2);overflow-wrap:anywhere}
 .p-x__evbody strong{color:var(--text);font-weight:var(--weight-semibold)}
-.p-x__evbody > .wa-btn{justify-self:start;margin-left:calc(-1 * var(--space-2))}
 .p-x__code{font-family:var(--font-mono);font-size:var(--text-caption);line-height:var(--lh-caption);color:var(--danger);overflow-wrap:anywhere}
 .p-x__muted{font-size:var(--text-small);line-height:var(--lh-small);color:var(--text-2);overflow-wrap:anywhere}
 .p-lfoot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--border)}
@@ -908,8 +901,8 @@ dialog.p-tour[open]{display:block}
     </div>
     <div class="p-lcard">
       <table class="p-ltable" id="history-table" aria-label="Runs">
-        <colgroup><col style="width:40px"><col style="width:108px"><col style="width:12%"><col style="width:112px"><col style="width:10%"><col style="width:11%"><col style="width:176px"><col><col style="width:7%"><col style="width:96px"></colgroup>
-        <thead><tr><th><span class="sr-only">Details</span></th><th>Time</th><th>Automation</th><th>Order</th><th>Delivery</th><th>Products</th><th>Status</th><th>Error</th><th>Operator</th><th>Evidence</th></tr></thead>
+        <colgroup><col style="width:40px"><col style="width:108px"><col style="width:12%"><col style="width:112px"><col style="width:10%"><col style="width:11%"><col style="width:176px"><col><col style="width:7%"></colgroup>
+        <thead><tr><th><span class="sr-only">Details</span></th><th>Time</th><th>Automation</th><th>Order</th><th>Delivery</th><th>Products</th><th>Status</th><th>Error</th><th>Operator</th></tr></thead>
         <tbody id="history-body"></tbody>
       </table>
       <div class="p-lempty" id="history-empty" hidden></div>
@@ -2621,6 +2614,8 @@ function clearHistoryFilters() {
   renderHistory();
 }
 
+// No Evidence column since 2026-11-05 (user's request): a run's screenshots open from the one
+// Evidence button in its details.
 function historyRowNodes(row) {
   const open = expanded.has(row.runId);
   const tr = el(
@@ -2651,10 +2646,9 @@ function historyRowNodes(row) {
     el('td', {}, statusCell(row)),
     el('td', {}, errorCell(row)),
     el('td', { className: 'p-ell', title: row.operator ?? '' }, row.operator ?? '—'),
-    el('td', {}, evidenceCell(row)),
   );
   if (!open) return [tr];
-  return [tr, el('tr', { className: 'hdetail p-lx' }, el('td', { colSpan: 10 }, runDetails(row)))];
+  return [tr, el('tr', { className: 'hdetail p-lx' }, el('td', { colSpan: 9 }, runDetails(row)))];
 }
 
 function orderCell(row) {
@@ -2748,24 +2742,12 @@ function errorCell(row) {
   return el('span', { className: 'wa-muted', textContent: '—' });
 }
 
-function evidenceCell(row) {
-  if (row.screenshots.length === 0) return el('span', { className: 'wa-muted', textContent: '—' });
-  const preferred = row.error?.screenshots[0] ?? row.screenshots.at(-1);
-  return el(
-    'span',
-    { className: 'p-ev' },
-    thumb(row, preferred, `p-ev__thumb${row.error?.screenshots.includes(preferred) ? ' is-fail' : ''}`),
-    el('span', { className: 'p-ev__n', title: plural(row.screenshots.length, 'screenshot'), textContent: String(row.screenshots.length) }),
-  );
-}
-
 // ---- A run's details in Logs / History (user's request 2026-11-04) ----------------------------
 // A split layout, so a run can be understood without reading every detail: a one-line summary;
 // Order results (each order's number and final status first) beside Execution activity (what
 // happened, oldest first, each event opening for more). Since 2026-11-05 (user's request) no
-// Additional information below them: the screenshots open from Evidence (N) by the summary, in
-// the screenshot viewer, and a failure's from its event; a failed run's full error is in Copy
-// error report.
+// Additional information below them, and the screenshots only behind the one Evidence (N) button
+// by the summary, in the screenshot viewer; a failed run's full error is in Copy error report.
 
 /** What has been opened or closed in the details: run id → Map(part → open). Parts not touched yet keep their default. */
 const detailParts = new Map();
@@ -2925,16 +2907,6 @@ function decisionEvent(decision, index) {
 }
 
 /**
- * A button opening the run's screenshots in the screenshot viewer, on `first` (2026-11-05: no
- * thumbnails in the details). Null when the run has no such screenshot.
- */
-function evidenceButton(row, label, first) {
-  const index = row.screenshots.indexOf(first);
-  if (index < 0) return null;
-  return button(label, { size: 'sm', variant: 'ghost', iconName: 'image', attrs: { 'aria-haspopup': 'dialog' }, onclick: () => openViewer(row, index) });
-}
-
-/**
  * Execution activity: the run's events, oldest first. Before Checkout what the run asked or did
  * about products and delivery; the orders placed; the backoffice approval; how the run ended;
  * after it, approvals and extractions seen later. Each: { part, at, title, summary, tone, details }.
@@ -3010,7 +2982,6 @@ function activityOf(row) {
         el('div', {}, el('strong', { textContent: error.reason || 'The test failed.' })),
         el('div', { className: 'p-x__code', textContent: [error.code, error.step, formatTime(error.at ?? row.finishedAt ?? row.startedAt)].filter(Boolean).join(' · ') }),
         el('div', {}, 'Page: ', el('span', { className: 'wa-mono', textContent: error.pages.length > 0 ? error.pages.join('\n') : 'Not recorded' })),
-        evidenceButton(row, error.screenshots.length > 1 ? 'View screenshots' : 'View screenshot', error.screenshots[0]),
       ],
     });
   } else if (row.status === 'stopped') {
@@ -3077,6 +3048,18 @@ function activityList(row) {
   );
 }
 
+/**
+ * The run's one Evidence button (2026-11-05), by its summary: its screenshots in the screenshot
+ * viewer, a failed run's starting with the one taken when it failed. Null without screenshots.
+ */
+function evidenceButton(row) {
+  if (row.evidenceState === 'deleted') return el('span', { title: 'Its screenshots and files were removed after the retention period; this summary stays.', textContent: 'Evidence removed' });
+  const shots = row.screenshots;
+  if (shots.length === 0) return null;
+  const first = Math.max(0, shots.findIndex((name) => row.error?.screenshots.includes(name)));
+  return button(`Evidence (${shots.length})`, { size: 'sm', variant: 'ghost', iconName: 'image', attrs: { 'aria-haspopup': 'dialog' }, onclick: () => openViewer(row, first) });
+}
+
 /** The expanded row: a summary line (with Evidence), then Order results beside Execution activity. */
 function runDetails(row) {
   const steps = stepsOf({ automation: row.automation, mode: row.delivery?.mode, deliveryMethod: row.delivery?.method, orders: ordersOfRow(row) });
@@ -3095,11 +3078,6 @@ function runDetails(row) {
         onclick: () => copyText(row.errorReport, 'Error report copied. Paste it into Teams or an email, with the screenshot.', 'Could not copy the error report. Try again.'),
       })
     : null;
-  // Its screenshots (2026-11-05), a failed run's opening on the one taken when it failed.
-  const evidence =
-    row.evidenceState === 'deleted'
-      ? el('span', { title: 'Its screenshots and files were removed after the retention period; this summary stays.', textContent: 'Evidence removed' })
-      : evidenceButton(row, `Evidence (${row.screenshots.length})`, row.screenshots.find((name) => row.error?.screenshots.includes(name)) ?? row.screenshots[0]);
   const detail = el(
     'div',
     { className: 'p-x', id: `run-${row.runId}` },
@@ -3107,7 +3085,7 @@ function runDetails(row) {
       'div',
       { className: 'p-x__head' },
       el('p', { className: `p-x__summary${row.error ? ' is-fail' : ''}`, textContent: row.error ? row.error.reason || 'The test failed.' : sentenceOf(row) }),
-      el('div', { className: 'p-x__stats' }, ...stats.map((text) => el('span', { textContent: text })), evidence, copyReport),
+      el('div', { className: 'p-x__stats' }, ...stats.map((text) => el('span', { textContent: text })), evidenceButton(row), copyReport),
     ),
     el(
       'div',

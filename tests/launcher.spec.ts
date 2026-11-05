@@ -1198,6 +1198,9 @@ test.describe('launcher window', () => {
     await expect(rows.nth(3)).toContainText('1 left out (not eligible)');
     await expect(rows.nth(3)).toContainText('Completed');
     await expect(rows.nth(3)).toContainText('Test Operator');
+    // No Evidence column since 2026-11-05: a run's screenshots open from Evidence in its details.
+    await expect(page.locator('#history-table thead th')).toHaveText(['Details', 'Time', 'Automation', 'Order', 'Delivery', 'Products', 'Status', 'Error', 'Operator']);
+    await expect(rows.locator('img')).toHaveCount(0);
 
     // Logs / History has no "Reports folder" (2026-10-22); each run's evidence is in its details.
     await expect(page.getByRole('button', { name: 'Reports folder' })).toHaveCount(0);
@@ -1213,8 +1216,8 @@ test.describe('launcher window', () => {
     await page.locator('#history-status').selectOption('all');
     await page.locator('#history-type').selectOption('all');
 
-    // A failed run's details: its error first, and its failure event open, with the page and the
-    // screenshot taken then (2026-11-04; since 2026-11-05 a button, no thumbnail).
+    // A failed run's details: its error first, and its failure event open, with the page; the
+    // screenshot taken then opens first from Evidence (2026-11-04, 2026-11-05).
     await rows.nth(1).click();
     const details = page.locator('tr.hdetail');
     await expect(details.locator('.p-x__summary')).toHaveText("WTCSG00000404 is not in the backoffice's Orders list.");
@@ -1225,9 +1228,12 @@ test.describe('launcher window', () => {
     await expect(activity.getByText('https://backoffice.example.test/backoffice/')).toBeVisible();
     await expect(details.getByRole('region', { name: 'Order results' })).toContainText('00000404');
     await expect(details.getByRole('region', { name: 'Order results' })).toContainText('Not approved');
+    // One Evidence button (2026-11-05): in the summary line, none in the table or the activity, and no thumbnails.
     await expect(details.locator('img')).toHaveCount(0);
-    await activity.getByRole('button', { name: 'View screenshot' }).click();
+    await expect(page.locator('#history-table').getByRole('button', { name: /Evidence|screenshot/i })).toHaveCount(1);
+    await details.getByRole('button', { name: 'Evidence (1)' }).click();
     await expect(page.locator('#viewer-title')).toHaveText('screenshot-1-failure.png');
+    await expect(page.locator('#viewer-sub')).toContainText('taken when the run failed');
     await page.locator('#viewer-open').click();
     await expect.poll(() => opened.at(-1)).toMatch(/screenshot-1-failure\.png$/);
     await page.locator('#viewer-close').click();

@@ -1074,8 +1074,12 @@ test.describe('hosted server', () => {
     await page.locator('#history-who').selectOption('mine');
     await expect(rows).toHaveCount(1);
     await page.locator('#history-who').selectOption('all');
-    const thumbnail = rows.nth(1).locator('.p-ev__thumb img');
-    await expect.poll(() => thumbnail.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
+    // Bob's screenshot, from the Evidence button in his run's details (the only one since 2026-11-05).
+    await rows.nth(1).click();
+    await page.locator('tr.hdetail').getByRole('button', { name: /^Evidence \(\d+\)$/ }).click();
+    const screenshot = page.locator('#viewer-img');
+    await expect.poll(() => screenshot.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
+    await page.locator('#viewer-close').click();
 
     // Signing out (in the user menu) ends the session; signing in again brings her remembered accounts back.
     await page.locator('#user-button').click();
@@ -1131,8 +1135,10 @@ test.describe('hosted server', () => {
       // Without a backoffice account: Completed at once, the order awaiting approval (2026-10-23).
       await expect(page.locator('#result .verdict')).toHaveText('Completed', { timeout: 15_000 });
       await page.getByRole('tab', { name: /Logs \/ History/ }).click();
-      const thumbnail = page.locator('tr.hrow').first().locator('.p-ev__thumb img');
-      await expect.poll(() => thumbnail.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
+      await page.locator('tr.hrow').first().click();
+      await page.locator('tr.hdetail').getByRole('button', { name: /^Evidence \(\d+\)$/ }).click();
+      const screenshot = page.locator('#viewer-img');
+      await expect.poll(() => screenshot.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
       expect(outside).toEqual([]);
     } finally {
       iis.closeAllConnections();
