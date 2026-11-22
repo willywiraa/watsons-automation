@@ -21,7 +21,7 @@
 /* ---- Tokens. Light is the default; dark follows Windows, or the header's choice (data-theme). ---- */
 :root{
   --canvas:#f6f7f8;--surface:#ffffff;--surface-sunken:#f1f3f4;--border:#e2e5e8;--border-control:#8c949c;
-  --text:#15191d;--text-2:#4b5560;--text-3:#69727c;
+  --text:#15191d;--text-2:#4b5560;--text-3:#636c76;
   /* Accent: Watsons teal, darkened for AA on white */
   --accent:#00787a;--accent-hover:#00676a;--accent-active:#005759;--on-accent:#ffffff;
   --success:#18794e;--warning:#8f5500;--danger:#c2312b;--danger-hover:#a82924;
@@ -56,7 +56,7 @@
 }
 [data-theme="light"]{
   --canvas:#f6f7f8;--surface:#ffffff;--surface-sunken:#f1f3f4;--border:#e2e5e8;--border-control:#8c949c;
-  --text:#15191d;--text-2:#4b5560;--text-3:#69727c;
+  --text:#15191d;--text-2:#4b5560;--text-3:#636c76;
   --accent:#00787a;--accent-hover:#00676a;--accent-active:#005759;--on-accent:#ffffff;
   --success:#18794e;--warning:#8f5500;--danger:#c2312b;--danger-hover:#a82924;
   --scrim:rgb(15 18 20 / .32);
@@ -281,13 +281,16 @@
 }
 
 /* ---- Layout (the prototype's p-… rules) ---- */
-body{background:var(--canvas);min-width:1024px}
+/* No minimum width: 900px and wider is the designed range; narrower, the page goes to one column (PRD §13). */
+body{background:var(--canvas)}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .p-shell{display:flex;align-items:flex-start;min-height:calc(100vh - var(--header-h))}
 .p-main{--card-gap:16px;flex:1;min-width:0;max-width:1400px;box-sizing:border-box;padding:24px var(--page-pad) 32px;display:grid;gap:var(--card-gap);align-content:start}
 .p-grid-compose{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:var(--card-gap);align-items:stretch}
 .p-grid-result{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:var(--card-gap);align-items:start}
-.p-col{display:grid;gap:var(--card-gap);align-content:start;min-width:0}
+.p-col{display:flex;flex-direction:column;gap:var(--card-gap);min-width:0}
+/* The last card of each column fills it, so the two columns end on one line. */
+#section-products,#section-order-number,#section-accounts{flex:1 1 auto}
 .p-field{display:grid;grid-template-columns:150px minmax(0,1fr);align-items:center;gap:var(--space-4)}
 .p-field--stack{grid-template-columns:minmax(0,1fr);gap:var(--space-2)}
 .p-run-grid{display:grid;grid-template-columns:minmax(0,1fr) clamp(380px,34%,460px);gap:var(--card-gap);align-items:start}
@@ -296,10 +299,14 @@ body{background:var(--canvas);min-width:1024px}
 .p-prodrow:first-child{border-top:0}
 .p-search{position:relative;display:inline-flex;align-items:center}
 .p-search .wa-icon{position:absolute;left:12px;color:var(--text-3);pointer-events:none}
-.p-rowcopy{position:relative;display:inline-block}
-.p-rowcopy .wa-copy{display:inline}
-.p-rowcopy .wa-btn{position:absolute;left:calc(100% + 2px);top:50%;transform:translateY(-50%);visibility:hidden;background:var(--surface);box-shadow:0 0 0 4px var(--surface)}
-.hrow:hover .p-rowcopy .wa-btn,.hrow:focus-within .p-rowcopy .wa-btn{visibility:visible}
+/* A row's order number: its icon Copy shows on hover or focus, inside the cell. An open row has
+   no Copy or Approve of its own: Order results, below it, has them. */
+.p-rowcopy{display:inline-flex;align-items:center;gap:4px;max-width:100%}
+.p-rowcopy__btn{display:inline-grid;place-items:center;flex:none;width:24px;height:24px;padding:0;border:0;border-radius:var(--radius-badge);background:none;color:var(--text-2);cursor:pointer;visibility:hidden;transition:background-color var(--dur-hover) var(--ease),color var(--dur-hover) var(--ease)}
+.p-rowcopy__btn:hover{background:var(--surface-sunken);color:var(--accent)}
+.p-rowcopy__btn.is-done{color:var(--success);visibility:visible}
+.p-lrow:hover .p-rowcopy__btn,.p-lrow:focus-within .p-rowcopy__btn{visibility:visible}
+.p-lrow.is-open .p-rowcopy__btn,.p-lrow.is-open .p-lstatus > .wa-btn{display:none}
 .p-sidequeue{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);min-height:44px;padding:0 var(--space-1) 0 var(--space-3);border-radius:var(--radius-control)}
 .p-sidequeue:hover{background:var(--hover-row)}
 .p-sidequeue .wa-meta{white-space:nowrap}
@@ -393,25 +400,29 @@ body{background:var(--canvas);min-width:1024px}
 .p-theme{flex:none}
 .p-theme .wa-seg__opt{padding:0 9px}
 /* Logs / History */
-.p-hist{box-sizing:border-box;min-width:0;padding:24px var(--page-pad) 48px;display:grid;gap:16px;align-content:start}
-.p-hhead{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}
+.p-hist{box-sizing:border-box;min-width:0;padding:24px var(--page-pad) 48px;display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-content:start}
+.p-hhead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 24px;flex-wrap:wrap}
 .p-hhead__t{display:grid;gap:4px;min-width:0}
 .p-hhead__title{margin:0;font-size:var(--text-title);line-height:var(--lh-title);font-weight:var(--weight-semibold);color:var(--text)}
 .p-hhead__sum{margin:0;font-size:var(--text-body);line-height:var(--lh-body);color:var(--text-2);font-variant-numeric:tabular-nums}
 .p-hhead__acts{display:flex;align-items:center;gap:8px}
-.p-filters{display:flex;align-items:center;gap:12px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card);box-shadow:var(--shadow-card)}
-.p-filters .p-search{flex:1;min-width:240px}
-.p-filters .p-search .wa-input{width:100%;height:40px;padding-left:36px}
+/* The filters are the table's toolbar, in the same card. */
+.p-filters{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}
+.p-filters .p-search{flex:1 1 280px;min-width:0}
+.p-filters .p-search .wa-input{width:100%;height:var(--control-h-lg);padding-left:36px}
 .p-select{position:relative;display:inline-flex;align-items:center;flex:none}
-.p-select .wa-input{appearance:none;-webkit-appearance:none;height:40px;width:200px;padding:0 36px 0 12px;cursor:pointer}
+.p-select .wa-input{appearance:none;-webkit-appearance:none;height:var(--control-h-lg);width:200px;padding:0 36px 0 12px;cursor:pointer}
 .p-select .wa-icon{position:absolute;right:12px;color:var(--text-2);pointer-events:none}
 .p-lcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card);box-shadow:var(--shadow-card);overflow:clip}
-.p-ltable{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;font-size:var(--text-body);line-height:var(--lh-body)}
-.p-ltable th{position:sticky;top:var(--header-h);z-index:2;height:44px;padding:0 10px;text-align:left;font-size:var(--text-small);font-weight:var(--weight-semibold);color:var(--text-2);background:var(--surface-sunken);border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.p-ltable td{padding:14px 10px;vertical-align:middle;border-top:1px solid var(--border);color:var(--text);overflow:hidden}
+/* Cells line up on their first line; a pill, the row's Copy and the chevron are centred on it. */
+.p-ltable{width:100%;min-width:940px;table-layout:fixed;border-collapse:separate;border-spacing:0;font-size:var(--text-body);line-height:var(--lh-body)}
+.p-ltable th{position:sticky;top:var(--header-h);z-index:2;height:40px;padding:0 10px;text-align:left;font-size:var(--text-small);font-weight:var(--weight-semibold);color:var(--text-2);background:var(--surface-sunken);border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p-ltable td{padding:12px 10px;vertical-align:top;border-top:1px solid var(--border);color:var(--text);overflow:hidden}
 .p-ltable tbody tr:first-child td{border-top:0}
-.p-ltable th:first-child,.p-ltable td:first-child{padding:0 0 0 12px}
-.p-ltable td:has(.p-rowcopy){overflow:visible}
+.p-ltable th:first-child{padding:0 0 0 12px}
+.p-ltable td:first-child{padding:8px 0 0 12px}
+.p-ltable td:has(> .p-lstatus),.p-ltable td:has(> .p-rowcopy){padding-top:10px}
+.p-lop{overflow-wrap:anywhere}
 .p-lrow{cursor:pointer}
 .p-lrow td{transition:background-color var(--dur-hover) var(--ease)}
 .p-lrow:hover td,.p-lrow.is-open td{background:var(--hover-row)}
@@ -425,10 +436,11 @@ body{background:var(--canvas);min-width:1024px}
 .p-clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
 .p-mono13{font-family:var(--font-mono);font-size:var(--text-small);line-height:var(--lh-small)}
 .p-auto{display:flex;align-items:flex-start;gap:8px}
-.p-auto .wa-icon{color:var(--accent);margin-top:2px;flex:none}
-.p-err{font-family:var(--font-mono);font-size:var(--text-caption);line-height:var(--lh-caption);font-weight:var(--weight-semibold);color:var(--danger);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p-auto .wa-icon{color:var(--text-2);margin-top:2px;flex:none}
+.p-err{font-family:var(--font-mono);font-size:var(--text-caption);line-height:var(--lh-body);font-weight:var(--weight-semibold);color:var(--danger);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .p-warn{color:var(--warning);font-weight:var(--weight-semibold)}
-.p-pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:var(--radius-pill);font-size:var(--text-small);font-weight:var(--weight-semibold);white-space:nowrap;color:var(--_c);background:color-mix(in srgb,var(--_c) 12%,var(--surface))}
+/* The status tints (8%): status text on them stays at 4.7:1 or more in both themes. */
+.p-pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:var(--radius-pill);font-size:var(--text-small);font-weight:var(--weight-semibold);white-space:nowrap;color:var(--_c);background:var(--_t)}
 .p-pill__dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
 .p-lstatus{display:grid;justify-items:start;gap:4px;min-width:0}
 .p-lstatus > *{max-width:100%}
@@ -466,7 +478,8 @@ body{background:var(--canvas);min-width:1024px}
 .p-x__event{position:relative;display:grid;grid-template-columns:22px minmax(0,1fr);column-gap:12px;padding-bottom:14px}
 .p-x__event:last-child{padding-bottom:0}
 .p-x__event:not(:last-child)::before{content:"";position:absolute;left:10.5px;top:26px;bottom:3px;width:1px;background:var(--border)}
-.p-x__mark{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;font-size:var(--text-caption);font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums;color:var(--_c);background:color-mix(in srgb,var(--_c) 14%,var(--surface))}
+.p-x__mark{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;font-size:var(--text-caption);font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums;color:var(--_c);background:var(--_t)}
+.p-x__event.tone-neutral{--_c:var(--text-2)}
 .p-x__evmain{min-width:0}
 .p-x__evbtn,.p-x__evline{display:grid;grid-template-columns:minmax(0,1fr) auto 16px;column-gap:12px;align-items:baseline;width:100%;padding:1px 0 0;border:0;background:none;font:inherit;color:inherit;text-align:left}
 .p-x__evbtn{cursor:pointer}
@@ -480,7 +493,7 @@ body{background:var(--canvas);min-width:1024px}
 .p-x__evbody strong{color:var(--text);font-weight:var(--weight-semibold)}
 .p-x__code{font-family:var(--font-mono);font-size:var(--text-caption);line-height:var(--lh-caption);color:var(--danger);overflow-wrap:anywhere}
 .p-x__muted{font-size:var(--text-small);line-height:var(--lh-small);color:var(--text-2);overflow-wrap:anywhere}
-.p-lfoot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--border)}
+.p-lfoot{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--border)}
 .p-lempty{padding:8px 24px}
 /* Live browser */
 .p-live__sub{color:var(--text-2);font-size:var(--text-body);line-height:var(--lh-body);white-space:nowrap}
@@ -606,11 +619,38 @@ dialog.p-tour[open]{display:block}
   .p-ready__list{grid-template-columns:repeat(2,minmax(0,1fr))}
   .wa-header{gap:var(--space-5)}
 }
+/* Too narrow for the history table's 940px: it scrolls sideways in its card, its header no longer sticky. */
+@media (max-width:1005px){
+  .p-lscroll{overflow-x:auto}
+  .p-ltable th{position:static}
+}
+/* Below 900px (supported, not optimised): one column, the side navigation above the page. */
+@media (max-width:899px){
+  :root{--page-pad:16px;--card-pad:16px}
+  .wa-header{gap:var(--space-4);padding:0 var(--page-pad)}
+  .wa-header__nav{gap:var(--space-5)}
+  .p-shell{flex-direction:column;align-items:stretch}
+  .wa-sidenav{position:static;width:auto;height:auto;padding:var(--space-4) var(--page-pad);border-right:0;border-bottom:1px solid var(--border)}
+  .wa-sidenav__foot{margin-top:0}
+  .p-wfitem:has(input:checked)::after{display:none}
+  .p-ready__row{grid-template-columns:minmax(0,1fr);gap:var(--space-4)}
+  .p-ready__row > .wa-btn{min-width:0;width:100%}
+  .p-ready__list{grid-template-columns:minmax(0,1fr)}
+}
+/* Phones: the tabs get their own row; names and labels stay for screen readers only. */
+@media (max-width:639px){
+  .wa-header{flex-wrap:wrap;height:auto;column-gap:var(--space-3);padding-top:var(--space-2)}
+  .wa-header__nav{order:3;flex-basis:100%;height:44px}
+  .p-hdr-name,.p-hdr-new__label,#operator,#user-name,#header-run-step{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .wa-seg__opt{padding:0 var(--space-2)}
+  .p-select{flex:1 1 140px}
+  .p-select .wa-input{width:100%}
+}
 </style>
 </head>
 <body>
 <header class="wa-header" id="appbar">
-  <span class="wa-header__brand"><img id="logo" alt="" src="data:image/png;base64,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">Watsons Automation</span>
+  <span class="wa-header__brand"><img id="logo" alt="" src="data:image/png;base64,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"><span class="p-hdr-name">Watsons Automation</span></span>
   <nav class="wa-header__nav" role="tablist" aria-label="Pages" id="tabs">
     <button type="button" class="wa-header__link" role="tab" id="tab-automation" aria-controls="page-automation" aria-selected="true">Automation</button>
     <button type="button" class="wa-header__link" role="tab" id="tab-history" aria-controls="page-history" aria-selected="false" tabindex="-1">Logs / History<span class="wa-count" id="history-count" hidden></span></button>
@@ -630,7 +670,7 @@ dialog.p-tour[open]{display:block}
         <button type="button" role="menuitem" class="wa-header__menuitem" id="sign-out"><span data-icon="log-out"></span>Sign out</button>
       </div>
     </span>
-    <button type="button" class="wa-btn wa-btn--primary" id="header-new" hidden><span data-icon="plus"></span>New test order</button>
+    <button type="button" class="wa-btn wa-btn--primary" id="header-new" hidden><span data-icon="plus"></span><span class="p-hdr-new__label">New test order</span></button>
   </div>
 </header>
 
@@ -638,7 +678,7 @@ dialog.p-tour[open]{display:block}
   <!-- ======================================== Automation ======================================== -->
   <section id="page-automation" class="p-shell" role="tabpanel" aria-labelledby="tab-automation">
     <nav class="wa-sidenav" aria-label="Automation">
-      <div class="wa-sidenav__title">Automation</div>
+      <h1 class="wa-sidenav__title">Automation</h1>
       <div class="wa-sidenav__section" role="radiogroup" aria-labelledby="workflow-label" id="workflow">
         <div class="wa-sidenav__label" id="workflow-label">Workflow</div>
         <label class="wa-sidenav__item p-wfitem"><input type="radio" name="automation" value="order" checked><span data-icon="shopping-bag"></span><span class="wa-sidenav__text">Place new order</span></label>
@@ -893,18 +933,25 @@ dialog.p-tour[open]{display:block}
         <button type="button" class="wa-btn wa-btn--secondary" id="history-export"><span data-icon="download"></span>Export CSV</button>
       </div>
     </div>
-    <div class="p-filters" role="search">
-      <span class="p-search"><span data-icon="search"></span><input id="history-search" class="wa-input" type="search" placeholder="Search order number, PLU, error code, operator…" aria-label="Search runs"></span>
-      <span class="p-select"><select id="history-status" class="wa-input" aria-label="Status"><option value="all">All statuses</option></select><span data-icon="chevron-down"></span></span>
-      <span class="p-select"><select id="history-type" class="wa-input" aria-label="Automation"><option value="all">All automations</option></select><span data-icon="chevron-down"></span></span>
-      <span class="p-select" id="history-who-wrap" hidden><select id="history-who" class="wa-input" aria-label="Whose runs"><option value="all">Everyone's runs</option><option value="mine">My runs</option></select><span data-icon="chevron-down"></span></span>
+    <div class="wa-banner tone-danger" id="history-error" role="alert" hidden>
+      <span class="wa-banner__glyph" data-icon="circle-alert"></span>
+      <div class="p-banner__text"><div class="wa-banner__title" id="history-error-title"></div><div class="wa-banner__msg" id="history-error-text"></div></div>
+      <button type="button" class="wa-btn wa-btn--secondary wa-btn--sm" id="history-retry">Try again</button>
     </div>
-    <div class="p-lcard">
+    <div class="p-lcard" id="history-card">
+      <div class="p-filters" role="search">
+        <span class="p-search"><span data-icon="search"></span><input id="history-search" class="wa-input" type="search" placeholder="Search order number, PLU, error code, operator…" aria-label="Search runs"></span>
+        <span class="p-select"><select id="history-status" class="wa-input" aria-label="Status"><option value="all">All statuses</option></select><span data-icon="chevron-down"></span></span>
+        <span class="p-select"><select id="history-type" class="wa-input" aria-label="Automation"><option value="all">All automations</option></select><span data-icon="chevron-down"></span></span>
+        <span class="p-select" id="history-who-wrap" hidden><select id="history-who" class="wa-input" aria-label="Whose runs"><option value="all">Everyone's runs</option><option value="mine">My runs</option></select><span data-icon="chevron-down"></span></span>
+      </div>
+      <div class="p-lscroll">
       <table class="p-ltable" id="history-table" aria-label="Runs">
-        <colgroup><col style="width:40px"><col style="width:108px"><col style="width:12%"><col style="width:112px"><col style="width:10%"><col style="width:11%"><col style="width:176px"><col><col style="width:7%"></colgroup>
+        <colgroup><col style="width:40px"><col style="width:96px"><col style="width:12%"><col style="width:120px"><col style="width:10%"><col style="width:11%"><col style="width:164px"><col><col style="width:9%"></colgroup>
         <thead><tr><th><span class="sr-only">Details</span></th><th>Time</th><th>Automation</th><th>Order</th><th>Delivery</th><th>Products</th><th>Status</th><th>Error</th><th>Operator</th></tr></thead>
         <tbody id="history-body"></tbody>
       </table>
+      </div>
       <div class="p-lempty" id="history-empty" hidden></div>
       <div class="p-lfoot" id="history-foot">
         <span class="wa-meta" id="history-shown"></span>
@@ -982,7 +1029,7 @@ dialog.p-tour[open]{display:block}
     <ol class="p-tour__steps" id="tour-steps" aria-label="Steps of the walkthrough"></ol>
     <div class="p-tour__actions">
       <button type="button" class="wa-btn wa-btn--secondary" id="tour-replay"><span data-icon="rotate-ccw"></span>Watch again</button>
-      <button type="button" class="wa-btn wa-btn--primary" id="tour-start">Start using app</button>
+      <button type="button" class="wa-btn wa-btn--primary" id="tour-start">Start using the app</button>
     </div>
   </div>
 </dialog>
@@ -1576,7 +1623,7 @@ const ASK_TITLES = {
   not_eligible: 'Delivery not possible',
   choose_store: 'Choose the pickup store',
   buy_option: 'Choose how many to buy',
-  error: 'Something went wrong',
+  error: 'Unexpected error',
 };
 
 /** The question's list (e.g. pickup stores): one radio per choice, the one already in use chosen. */
@@ -2231,6 +2278,22 @@ function copyable(value, title, size) {
   return el('span', { className: `wa-copy wa-copy--${size}` }, el('span', { className: 'wa-copy__value order-number', title, textContent: value }), copy);
 }
 
+/** A history row's order number: its icon Copy fits in the Order column. */
+function rowCopy(value, title) {
+  const copy = el('button', { type: 'button', className: 'p-rowcopy__btn', title: 'Copy order number', attrs: { 'aria-label': `Copy ${value}` } }, iconNode('copy', 14));
+  copy.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    if (!(await writeClipboard(value))) return toast('Could not copy. Select the number instead.');
+    copy.classList.add('is-done');
+    copy.replaceChildren(iconNode('check', 14));
+    setTimeout(() => {
+      copy.classList.remove('is-done');
+      copy.replaceChildren(iconNode('copy', 14));
+    }, 1500);
+  });
+  return el('span', { className: 'p-rowcopy' }, el('span', { className: 'wa-copy__value order-number p-mono13', title, textContent: value }), copy);
+}
+
 let resultKey = '';
 /**
  * A finished run's row: Logs / History's once it has the finished run, since it can change after the
@@ -2304,12 +2367,9 @@ function resultActions(row) {
       showCompose();
     },
   });
-  // A partial order's numbers all at once (2026-11-03).
-  const numbers = ordersOfRow(row) ? row.orders.map((order) => order.orderNumber).filter(Boolean) : [row.orderNumber];
-  const copyNumber = (variant) =>
-    numbers.length > 1
-      ? button('Copy order numbers', { variant, onclick: () => copyText(numbers.join(', '), 'Order numbers copied.') })
-      : button('Copy order number', { variant, onclick: () => copyText(row.orderNumber, 'Order number copied.') });
+  // A partial order's numbers all at once (2026-11-03). One number has its own Copy beside it.
+  const numbers = ordersOfRow(row) ? row.orders.map((order) => order.orderNumber).filter(Boolean) : [];
+  const copyAll = (variant) => (numbers.length > 1 ? [button('Copy order numbers', { variant, onclick: () => copyText(numbers.join(', '), 'Order numbers copied.') })] : []);
   if (row.status === 'failed') {
     return [
       button('Copy error report', {
@@ -2323,8 +2383,8 @@ function resultActions(row) {
   }
   if (row.status === 'awaiting_approval') {
     return approvesNewOrders()
-      ? [button('Approve now', { variant: 'primary', onclick: () => prefillApprove(toApprove(row)) }), copyNumber('ghost'), newOrder('secondary')]
-      : [copyNumber('primary'), newOrder('secondary')];
+      ? [button('Approve now', { variant: 'primary', onclick: () => prefillApprove(toApprove(row)) }), ...copyAll('ghost'), newOrder('secondary')]
+      : [...copyAll('primary'), newOrder(numbers.length > 1 ? 'secondary' : 'primary')];
   }
   if (row.status === 'completed') return row.automation === 'approve' ? [newApproval] : [newOrder('primary'), again('secondary')];
   if (row.status === 'no_change') return [newApproval];
@@ -2523,9 +2583,23 @@ function pill(row) {
   );
 }
 
+let historyLoadedAt = null;
 async function loadHistory() {
-  const { ok, data } = await api('api/history').catch(() => ({ ok: false }));
+  const { ok, status, data } = await api('api/history').catch(() => ({ ok: false }));
+  // A 401 in server mode already shows the sign-in page.
+  if (!ok && !(serverMode && status === 401)) {
+    const hint = serverMode ? 'Check the network or VPN, then try again.' : 'Check that the launcher’s console window is still open, then try again.';
+    $('history-error-title').textContent = historyLoadedAt ? 'Couldn’t refresh the history' : 'Couldn’t load the history';
+    $('history-error-text').textContent = historyLoadedAt ? `It shows the runs as of ${formatHm(historyLoadedAt)}. ${hint}` : hint;
+    $('history-error').hidden = false;
+    $('history-card').hidden = !historyLoadedAt;
+    $('history-summary').hidden = !historyLoadedAt;
+  }
   if (!ok) return;
+  historyLoadedAt = new Date().toISOString();
+  $('history-error').hidden = true;
+  $('history-card').hidden = false;
+  $('history-summary').hidden = false;
   history = data.rows;
   renderHistory();
   render();
@@ -2581,7 +2655,8 @@ function renderHistory() {
   $('history-table').hidden = rows.length === 0;
   $('history-foot').hidden = rows.length === 0;
   $('history-empty').hidden = rows.length > 0;
-  $('history-shown').textContent = rows.length > visible.length ? `${visible.length} of ${rows.length} shown` : `All ${rows.length} shown`;
+  $('history-shown').textContent =
+    rows.length > visible.length ? `${visible.length} of ${rows.length} runs shown` : rows.length === 1 ? '1 run shown' : `All ${rows.length} runs shown`;
   $('history-more').hidden = rows.length <= visible.length;
   const query = $('history-search').value.trim();
   const filtered = Boolean(query) || $('history-status').value !== 'all' || $('history-type').value !== 'all' || (serverMode && $('history-who').value !== 'all');
@@ -2645,7 +2720,7 @@ function historyRowNodes(row) {
     el('td', {}, productsCell(row)),
     el('td', {}, statusCell(row)),
     el('td', {}, errorCell(row)),
-    el('td', { className: 'p-ell', title: row.operator ?? '' }, row.operator ?? '—'),
+    el('td', { className: 'p-lop' }, row.operator ?? '—'),
   );
   if (!open) return [tr];
   return [tr, el('tr', { className: 'hdetail p-lx' }, el('td', { colSpan: 9 }, runDetails(row)))];
@@ -2666,7 +2741,7 @@ function orderCell(row) {
       ),
     );
   }
-  if (row.orderNumber) return el('span', { className: 'p-rowcopy' }, copyable(row.orderNumber, `WTCSG${row.orderNumber}`, 'small'));
+  if (row.orderNumber) return rowCopy(row.orderNumber, `WTCSG${row.orderNumber}`);
   if (row.outcome === 'ready_to_check_out') return el('span', { className: 'p-l2' }, el('span', { className: 'wa-muted', textContent: '—' }), el('span', { className: 'p-l2__sub', textContent: 'no order placed' }));
   return el('span', { className: 'wa-muted', textContent: '—' });
 }
@@ -2713,7 +2788,7 @@ function statusCell(row) {
     'span',
     { className: 'p-lstatus' },
     pill(row),
-    at ? el('span', { className: 'p-l2__sub p-ell', textContent: `at ${at}` }) : null,
+    at ? el('span', { className: 'p-l2__sub', textContent: `at ${at}` }) : null,
     next ? el('span', { className: 'p-l2__sub p-warn', textContent: next }) : null,
     extracted ? el('span', { className: 'p-l2__sub p-ok', textContent: extracted }) : null,
     approveButton(row),
@@ -2737,7 +2812,6 @@ function errorCell(row) {
       el('span', { className: 'p-l2__sub p-clamp', textContent: row.automation === 'approve' ? 'Approve Order may have been clicked' : 'The order may have been created' }),
     );
   }
-  if (row.status === 'awaiting_approval') return el('span', { className: 'p-warn', textContent: 'Needs approval' });
   if (row.status === 'stopped') return el('span', { className: 'p-l2__sub', textContent: row.automation === 'approve' ? 'Nothing was approved' : 'No order was placed' });
   return el('span', { className: 'wa-muted', textContent: '—' });
 }
@@ -3229,8 +3303,8 @@ function openTour(byItself = false) {
   playTour(0, byItself && matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
 
-// Phones: the page is laid out at least 1024px wide (body), wider than the screen, so a dialog
-// centred on the page can be off screen. There, the walkthrough goes in the middle of what is seen.
+// Zoomed in (pinch zoom on a phone), a dialog centred on the page can be off screen: there, the
+// walkthrough goes in the middle of what is seen.
 function placeTour() {
   const dialog = $('tour');
   const view = window.visualViewport;
@@ -3620,6 +3694,10 @@ document.addEventListener('keydown', (event) => {
 });
 
 $('history-refresh').addEventListener('click', loadHistory);
+$('history-retry').addEventListener('click', async () => {
+  await loadHistory();
+  if ($('history-error').hidden) $('history-refresh').focus(); // the banner, and its button, are gone
+});
 $('history-search').addEventListener('input', () => {
   historyLimit = 40;
   renderHistory();

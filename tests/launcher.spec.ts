@@ -556,9 +556,15 @@ test.describe('launcher window', () => {
     await page.getByRole('tab', { name: /Logs \/ History/ }).click();
     const rows = page.locator('tr.hrow');
     await expect(rows.first()).toContainText('Awaiting approval');
-    await expect(rows.first()).toContainText('Needs approval');
+    await expect(rows.first().locator('td').nth(7)).toHaveText('—'); // waiting for approval is not an error
+    // A closed row has its own Approve and, on hover, Copy; an open row has them in its details only.
+    await expect(rows.first().getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+    await rows.first().hover();
+    await expect(rows.first().getByRole('button', { name: 'Copy 12345678' })).toBeVisible();
     await rows.first().click();
-    await rows.first().getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect(rows.first().getByRole('button', { name: 'Approve', exact: true })).toBeHidden();
+    await expect(rows.first().getByRole('button', { name: 'Copy 12345678' })).toBeHidden();
+    await page.locator('tr.hdetail').getByRole('button', { name: 'Approve order 12345678' }).click();
     await expect(page.locator('#order-number')).toHaveValue('12345678');
     await page.locator('#run').click();
     await page.locator('#confirm').getByRole('button', { name: 'Approve order' }).click();
@@ -952,7 +958,7 @@ test.describe('launcher window', () => {
     await expect(page.locator('tr.hdetail .p-x__order .p-pill')).toHaveText(['Awaiting approval', 'Awaiting approval']);
     await expect(page.locator('tr.hdetail').getByRole('button', { name: 'Approve order 12345679' })).toBeVisible();
     await expect(page.locator('tr.hdetail .p-x__event', { hasText: 'Awaiting approval' })).toContainText('No backoffice account in this run: the orders wait for someone with one');
-    await rows.first().getByRole('button', { name: 'Approve order 12345678' }).click();
+    await page.locator('tr.hdetail').getByRole('button', { name: 'Approve order 12345678' }).click();
     await expect(page.locator('#order-number')).toHaveValue('12345678');
     await expect(page.locator('#order-placed')).toContainText('order 1 of a partial order');
     await page.locator('#run').click();
@@ -963,7 +969,7 @@ test.describe('launcher window', () => {
     await expect(rows.nth(1)).toContainText('Awaiting approval (1 of 2)');
     await expect(page.locator('#history-count')).toHaveText('1');
     expect(launcher.readHistory(root)[1]).toMatchObject({ status: 'awaiting_approval', orders: [{ approvedLater: { by: 'Test Operator' } }, { orderNumber: '12345679' }] });
-    await rows.nth(1).getByRole('button', { name: 'Approve order 12345679' }).click();
+    await page.locator('tr.hdetail').getByRole('button', { name: 'Approve order 12345679' }).click();
     await expect(page.locator('#order-number')).toHaveValue('12345679');
     await page.locator('#run').click();
     await page.locator('#confirm').getByRole('button', { name: 'Approve order' }).click();
@@ -1278,5 +1284,30 @@ test.describe('launcher window', () => {
     expect(csv).toContain('"Test Operator"');
     // Nothing to remember between windows any more but the last order (2026-10-21).
     expect(existsSync(join(root, 'reports', 'launcher-settings.json'))).toBe(false);
+
+    // The history can't be refreshed: it says so and keeps showing the runs it had.
+    const error = page.locator('#history-error');
+    await page.route('**/api/history', (route) => route.abort());
+    await page.locator('#history-refresh').click();
+    await expect(error.locator('.wa-banner__title')).toHaveText('Couldn’t refresh the history');
+    await expect(error).toContainText('It shows the runs as of');
+    await expect(rows).toHaveCount(4);
+    await page.unroute('**/api/history');
+    await page.locator('#history-retry').click();
+    await expect(error).toBeHidden();
+    await expect(page.locator('#history-refresh')).toBeFocused();
+    // It can't be loaded at all: no table, no "Loading…", and Try again loads it.
+    await page.route('**/api/history', (route) => route.abort());
+    await page.reload();
+    await page.getByRole('tab', { name: /Logs \/ History/ }).click();
+    await expect(error.locator('.wa-banner__title')).toHaveText('Couldn’t load the history');
+    await expect(error).toContainText('Check that the launcher’s console window is still open, then try again.');
+    await expect(page.locator('#history-card')).toBeHidden();
+    await expect(page.locator('#history-summary')).toBeHidden();
+    await page.unroute('**/api/history');
+    await page.locator('#history-retry').click();
+    await expect(error).toBeHidden();
+    await expect(rows).toHaveCount(4);
+    await expect(page.locator('#history-shown')).toHaveText('All 4 runs shown');
   });
 });

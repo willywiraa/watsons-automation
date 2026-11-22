@@ -831,9 +831,9 @@ test.describe('hosted server', () => {
     await page.getByRole('tab', { name: /Logs \/ History/ }).click();
     const row = page.locator('tr.hrow').first();
     await expect(row).toContainText('Awaiting approval');
-    await expect(row).toContainText('Needs approval');
+    await expect(row).not.toContainText('Needs approval');
     await row.click();
-    await row.getByRole('button', { name: 'Approve', exact: true }).click();
+    await page.locator('tr.hdetail').getByRole('button', { name: 'Approve order 12345678' }).click();
     await expect(page.locator('input[name="automation"][value="approve"]')).toBeChecked();
     await expect(page.locator('#order-number')).toHaveValue('12345678');
     await expect(page.locator('#ready-fixes')).toContainText('Backoffice account entered');
@@ -1190,8 +1190,8 @@ test.describe('hosted server', () => {
     await expect.poll(time).toBeLessThan(guide.steps[1].start);
     await expect(tour.locator('.p-tour__step[aria-current="step"]')).toContainText(guide.steps[0].title);
 
-    // Start using app: closed, the page usable, and not again by itself in this browser.
-    await tour.getByRole('button', { name: 'Start using app' }).click();
+    // Start using the app: closed, the page usable, and not again by itself in this browser.
+    await tour.getByRole('button', { name: 'Start using the app' }).click();
     await expect(tour).toBeHidden();
     await page.locator('#testing-username').fill(PEOPLE.alice.testing.username);
     await page.reload();

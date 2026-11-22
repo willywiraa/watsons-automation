@@ -568,7 +568,7 @@ All ratios below were computed against the surface colours listed (WCAG 2 formul
 | `border-control` | `#8c949c` | `#646d75` | Input and segment outlines | 3.07 / 3.32 (non-text ≥ 3) |
 | `text` | `#15191d` | `#e7eaed` | Primary text | 17.67 / 14.50 |
 | `text-2` | `#4b5560` | `#a6afb8` | Secondary text | 7.59 / 7.87 |
-| `text-3` | `#69727c` | `#86909a` | Meta, placeholders | 4.89 / 5.39 |
+| `text-3` | `#636c76` | `#86909a` | Meta, placeholders | 5.33 / 5.39 |
 | `accent` | `#00787a` | `#2fb3b0` | Primary button, focus, selection, links, running | 5.29 / 6.83 |
 | `on-accent` | `#ffffff` | `#031b1b` | Text on the accent | 5.29 / 6.97 |
 | `success` | `#18794e` | `#49c08a` | Completed | 5.41 / 7.66 |
